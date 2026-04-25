@@ -1,14 +1,21 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
-  Plus, Minus, TrendingUp, TrendingDown, Trash2, Briefcase, 
-  RefreshCw, Activity, PieChart as PieIcon,
-  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, Globe, ArrowRightLeft, AlertCircle, CheckCircle2, Search
+  Plus, Minus, TrendingUp, TrendingDown, Trash2,
+  PieChart as PieIcon,
+  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, Globe, ArrowRightLeft, Search
 } from 'lucide-react';
+import DashboardHeader from './components/DashboardHeader';
+import SyncStatusToast from './components/SyncStatusToast';
+import TabNav from './components/TabNav';
+import { ASSET_COLORS, ASSETS_STORAGE_KEY, TRADES_STORAGE_KEY } from './constants';
+import { fetchBitcoinPrices, fetchDividends, fetchStockPrice, fetchUsdKrwRate } from './services/marketData';
+import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
+import { loadJson, saveJson } from './utils/storage';
 
 const App = () => {
   // 1. 상태 관리
   const [exchangeRate, setExchangeRate] = useState(0); 
-  const [isLiveMode, setIsLiveMode] = useState(true);
+  const [isLiveMode] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [activeTab, setActiveTab] = useState('portfolio');
   const [isFetching, setIsFetching] = useState(false);
@@ -74,24 +81,24 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   }, [newAsset.category, exchangeRate]);
 
   const [assets, setAssets] = useState(() => {
-    const saved = localStorage.getItem('portfolio_assets_v17'); 
-    return saved ? JSON.parse(saved) : [];
+    return loadJson(ASSETS_STORAGE_KEY, []);
   });
 
   const [trades, setTrades] = useState(() => {
-    const saved = localStorage.getItem('portfolio_trades_v17');
-    return saved ? JSON.parse(saved) : [];
+    return loadJson(TRADES_STORAGE_KEY, []);
   });
 
   const [autoDividends, setAutoDividends] = useState([]);
 
-  useEffect(() => { localStorage.setItem('portfolio_assets_v17', JSON.stringify(assets)); }, [assets]);
-  useEffect(() => { localStorage.setItem('portfolio_trades_v17', JSON.stringify(trades)); }, [trades]);
+  useEffect(() => { saveJson(ASSETS_STORAGE_KEY, assets); }, [assets]);
+  useEffect(() => { saveJson(TRADES_STORAGE_KEY, trades); }, [trades]);
 
   // 2. 완벽한 데이터 연동 로직
   const assetsRef = useRef(assets);
+  const exchangeRateRef = useRef(exchangeRate);
   const initialFetchDoneRef = useRef(false);
   useEffect(() => { assetsRef.current = assets; }, [assets]);
+  useEffect(() => { exchangeRateRef.current = exchangeRate; }, [exchangeRate]);
   
 
   useEffect(() => {
@@ -102,105 +109,20 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       addLog("데이터 연동을 시작합니다...", "info");
 
       try {
-        let currentRate = exchangeRate;
+        let currentRate = exchangeRateRef.current;
         
-        // [1] 환율 연동 (가장 확실한 오픈 API 우선)
-        try {
-          const exRes = await fetch(`https://open.er-api.com/v6/latest/USD`);
-          if (exRes.ok) {
-            const exData = await exRes.json();
-            currentRate = exData.rates.KRW;
-            addLog(`환율 연동 완료: 1$ = ${currentRate.toLocaleString(undefined, {maximumFractionDigits:2})}원`, "success");
-          } else throw new Error('1순위 실패');
-        } catch (e) {
-          try {
-            const exRes2 = await fetch(`https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json`);
-            if (exRes2.ok) {
-              const exData2 = await exRes2.json();
-              currentRate = exData2.usd.krw;
-              addLog(`환율 연동 완료: 1$ = ${currentRate.toLocaleString(undefined, {maximumFractionDigits:2})}원`, "success");
-            }
-          } catch(e2) {
-            addLog("환율 서버 응답 지연", "error");
-          }
+        // [1] 환율 연동
+        const fetchedRate = await fetchUsdKrwRate();
+        if (fetchedRate) {
+          currentRate = fetchedRate;
+          addLog(`환율 연동 완료: 1$ = ${currentRate.toLocaleString(undefined, {maximumFractionDigits:2})}원`, "success");
+        } else {
+          addLog("환율 서버 응답 지연", "error");
         }
         if (currentRate > 0) setExchangeRate(currentRate);
 
         // 코인 연동 (선택적)
-        let btcPriceKRW = null, btcPriceUSD = null;
-        try {
-          const coinRes = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=krw,usd`);
-          if (coinRes.ok) {
-            const coinData = await coinRes.json();
-            btcPriceKRW = coinData.bitcoin.krw;
-            btcPriceUSD = coinData.bitcoin.usd;
-          }
-        } catch(e) {}
-
-        // 💡 [해결] 꼬임 없는 안전한 프록시 함수 (에러 알림 원인 차단)
-        const fetchWithSafeProxy = async (url) => {
-          const encodedUrl = encodeURIComponent(url);
-          const proxies = [
-            `https://api.allorigins.win/get?url=${encodedUrl}`,
-            `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`
-          ];
-          
-          for (let proxy of proxies) {
-            try {
-              const res = await fetch(proxy, { cache: 'no-store' });
-              if (!res.ok) continue;
-              
-              const text = await res.text();
-              let data;
-              try { data = JSON.parse(text); } catch (e) { continue; } // JSON 파싱 실패시 다음 프록시 시도
-              
-              // allorigins의 경우 contents 내부에 실제 JSON이 스트링으로 들어있음
-              if (data && data.contents) {
-                try { return JSON.parse(data.contents); } catch(e) { continue; }
-              }
-              return data;
-            } catch (e) { continue; }
-          }
-          return null;
-        };
-
-        // [2] 주가 연동 함수
-        const fetchStockPrice = async (asset) => {
-          let ticker = asset.ticker.toUpperCase().trim();
-
-          // 1순위: 국내주식 -> 네이버 모바일 증권
-          if (asset.category === '국내주식') {
-            const cleanTicker = ticker.replace(/[^0-9]/g, '');
-            const naverUrl = `https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:${cleanTicker}`;
-            const data = await fetchWithSafeProxy(naverUrl);
-            if (data?.result?.areas?.[0]?.datas?.[0]?.nv) {
-              return parseFloat(data.result.areas[0].datas[0].nv);
-            }
-          }
-
-          // 2순위: 야후 파이낸스 차트 API (해외주식 및 국내주식 예비용)
-          let yfTicker = ticker;
-          if (asset.category === '국내주식' && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
-          
-          const yfUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d`;
-          const yfData = await fetchWithSafeProxy(yfUrl);
-          
-          if (yfData?.chart?.result?.[0]?.meta?.regularMarketPrice) {
-            return yfData.chart.result[0].meta.regularMarketPrice;
-          }
-          
-          return null; 
-        };
-
-        // [3] 배당금 연동
-        const fetchDividends = async (ticker) => {
-          const url = `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1mo&range=5y&events=div`;
-          const data = await fetchWithSafeProxy(url);
-          if (data?.chart?.result?.[0]?.events?.dividends) {
-             return data.chart.result[0].events.dividends;
-          }
-          return null;
-        };
+        const bitcoinPrices = await fetchBitcoinPrices();
 
         const currentAssets = assetsRef.current;
         let newAutoDividends = [];
@@ -215,8 +137,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             newCurrentPrice = 1; newOriginalCurrentPrice = 1;
             successCount++;
           } else if (asset.category === '가상화폐') {
-            if (asset.currency === 'KRW' && btcPriceKRW) { newCurrentPrice = btcPriceKRW; successCount++; }
-            else if (asset.currency === 'USD' && btcPriceUSD) { newCurrentPrice = btcPriceUSD; successCount++; }
+            if (asset.currency === 'KRW' && bitcoinPrices.krw) { newCurrentPrice = bitcoinPrices.krw; successCount++; }
+            else if (asset.currency === 'USD' && bitcoinPrices.usd) { newCurrentPrice = bitcoinPrices.usd; successCount++; }
             else failCount++;
           } else if (asset.ticker) {
             
@@ -303,8 +225,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   }, [assets, exchangeRate]);
 
   const totalConvertedKRW = useMemo(() => enhancedAssets.reduce((acc, a) => acc + a.currentKRW, 0), [enhancedAssets]);
-  const totalPurchaseKRW = useMemo(() => enhancedAssets.reduce((acc, a) => acc + a.purchaseKRW, 0), [enhancedAssets]);
-  const totalOverallReturn = totalPurchaseKRW > 0 ? ((totalConvertedKRW - totalPurchaseKRW) / totalPurchaseKRW) * 100 : 0;
   
   const categoryData = useMemo(() => {
     const grouped = enhancedAssets.reduce((acc, asset) => {
@@ -422,26 +342,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       return true;
     });
   }, [dividendSummary, selectedDividendAsset, dividendFilter]);
-
-  const formatMoney = (val, currency) => {
-    if (val === undefined || val === null || isNaN(val)) return '0';
-    if (currency === 'USD') {
-      return `$${Number(val).toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      })}`;
-    }
-    return `₩${Math.round(Number(val)).toLocaleString()}`;
-  };
-
-  const formatInputNumber = (value) => {
-  if (value === undefined || value === null || value === '') return '';
-  const numeric = String(value).replace(/,/g, '').replace(/[^\d.]/g, '');
-  if (!numeric) return '';
-  const [integerPart, decimalPart] = numeric.split('.');
-  const formattedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return decimalPart !== undefined ? `${formattedInteger}.${decimalPart}` : formattedInteger;
-};
 
   // 자산 및 기록 삭제 로직 강화 
   const removeAsset = (id, e) => {
@@ -611,8 +511,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     let krwAveragePrice = parsedAvgPrice;
     if (newAsset.currency === 'USD') krwAveragePrice = Math.round(parsedAvgPrice * parsedBuyRate);
 
-    const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#eab308'];
-    
     const asset = {
       id: Date.now(), 
       name: newAsset.name, 
@@ -627,7 +525,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       originalCurrentPrice: parsedAvgPrice, 
       buyDate: newAsset.buyDate, 
       buyExchangeRate: parsedBuyRate, 
-      color: colors[assets.length % colors.length]
+      color: ASSET_COLORS[assets.length % ASSET_COLORS.length]
     };
 
     setAssets(prevAssets => [...prevAssets, asset]);
@@ -645,52 +543,21 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     <div className="min-h-screen bg-slate-50 p-4 md:p-8 text-slate-900 font-sans relative">
       
       {/* 동기화 라이브 피드백 */}
-      <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
-        {syncStatus.map(log => (
-          <div key={log.id} className={`px-4 py-3 rounded-xl shadow-lg border text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-right-10 duration-300 ${log.type === 'error' ? 'bg-rose-50 border-rose-100 text-rose-600' : log.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-white border-slate-100 text-slate-600'}`}>
-            {log.type === 'error' ? <AlertCircle size={14}/> : log.type === 'success' ? <CheckCircle2 size={14}/> : <Activity size={14} className="animate-spin"/>}
-            {log.msg}
-          </div>
-        ))}
-      </div>
+      <SyncStatusToast syncStatus={syncStatus} />
 
       <div className="max-w-6xl mx-auto space-y-8">
         
         {/* Header */}
-        <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 md:p-8 rounded-[40px] shadow-sm border border-slate-100 relative overflow-hidden">
-          <div className="absolute top-0 left-0 w-2 h-full bg-blue-600"></div>
-          <div>
-            <h1 className="text-xl md:text-2xl font-black flex items-center gap-3 text-slate-800">
-              <div className="p-2 md:p-2.5 bg-blue-600 rounded-2xl text-white shadow-lg shadow-blue-100"><Briefcase size={20} className="md:w-6 md:h-6" /></div>
-              투자 통합 대시보드
-            </h1>
-            <p className="text-slate-400 text-[10px] md:text-[11px] mt-2 font-black uppercase tracking-[0.2em] leading-none flex items-center gap-2">
-              <span>{lastUpdated ? `Sync: ${lastUpdated}` : 'Loading...'}</span>
-              <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
-              <span>현재 환율: {exchangeRate === 0 ? '연동 중...' : `$1 = ${exchangeRate.toLocaleString(undefined, {maximumFractionDigits:2})}원`}</span>
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 w-full md:w-auto">
-            <button onClick={() => setRefreshTrigger(t => t+1)} disabled={isFetching} className="p-3 md:p-4 bg-slate-50 rounded-2xl hover:bg-slate-100 transition-all border border-slate-50 disabled:opacity-50 text-blue-600" title="수동 갱신">
-              <RefreshCw size={18} className={isFetching ? "animate-spin" : ""} />
-            </button>
-            <button onClick={() => setIsAdding(true)} className="flex-1 md:flex-none justify-center bg-slate-900 text-white px-5 md:px-6 py-3 md:py-4 rounded-2xl font-black text-xs shadow-xl shadow-slate-200 hover:scale-105 transition-transform flex items-center gap-2">
-              <Plus size={16} /> 자산 추가
-            </button>
-          </div>
-        </header>
+        <DashboardHeader
+          exchangeRate={exchangeRate}
+          isFetching={isFetching}
+          lastUpdated={lastUpdated}
+          onAddAsset={() => setIsAdding(true)}
+          onRefresh={() => setRefreshTrigger(t => t + 1)}
+        />
 
         {/* 탭 */}
-        <nav className="flex gap-2 p-1.5 bg-slate-200/50 rounded-2xl w-fit border border-slate-100">
-          {['portfolio', 'history'].map(tab => (
-            <button
-              key={tab} onClick={() => setActiveTab(tab)}
-              className={`px-6 md:px-8 py-3 md:py-3.5 rounded-xl font-black text-[11px] md:text-xs transition-all ${activeTab === tab ? 'bg-white text-blue-600 shadow-sm scale-105' : 'text-slate-400 hover:text-slate-700'}`}
-            >
-              {tab === 'portfolio' ? '내 포트폴리오' : '수익 및 배당 기록'}
-            </button>
-          ))}
-        </nav>
+        <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
         {activeTab === 'portfolio' && (
           <div className="grid lg:grid-cols-12 gap-8 animate-in fade-in duration-500">
@@ -1135,7 +1002,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               onChange={(e) =>
                 setNewAsset({
                   ...newAsset,
-                  averagePrice: e.target.value.replace(/,/g, '').replace(/[^\d.]/g, '')
+                  averagePrice: sanitizeNumericInput(e.target.value)
                 })
               }
             />
@@ -1154,7 +1021,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             onChange={(e) =>
               setNewAsset({
                 ...newAsset,
-                quantity: e.target.value.replace(/,/g, '').replace(/[^\d.]/g, '')
+                quantity: sanitizeNumericInput(e.target.value)
               })
             }
           />
@@ -1186,7 +1053,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                 onChange={(e) =>
                   setNewAsset({
                     ...newAsset,
-                    buyExchangeRate: e.target.value.replace(/,/g, '').replace(/[^\d.]/g, '')
+                    buyExchangeRate: sanitizeNumericInput(e.target.value)
                   })
                 }
               />
@@ -1237,7 +1104,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             onChange={(e) =>
               setAddBuyForm((prev) => ({
                 ...prev,
-                averagePrice: e.target.value.replace(/,/g, '').replace(/[^\d.]/g, '')
+                averagePrice: sanitizeNumericInput(e.target.value)
               }))
             }
           />
@@ -1255,7 +1122,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             onChange={(e) =>
               setAddBuyForm((prev) => ({
                 ...prev,
-                quantity: e.target.value.replace(/,/g, '').replace(/[^\d.]/g, '')
+                quantity: sanitizeNumericInput(e.target.value)
               }))
             }
           />
@@ -1321,7 +1188,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             onChange={(e) =>
               setSellForm((prev) => ({
                 ...prev,
-                sellPrice: e.target.value.replace(/,/g, '').replace(/[^\d.]/g, '')
+                sellPrice: sanitizeNumericInput(e.target.value)
               }))
             }
           />
@@ -1339,7 +1206,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             onChange={(e) =>
               setSellForm((prev) => ({
                 ...prev,
-                quantity: e.target.value.replace(/,/g, '').replace(/[^\d.]/g, '')
+                quantity: sanitizeNumericInput(e.target.value)
               }))
             }
           />
