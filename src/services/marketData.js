@@ -33,11 +33,27 @@ export const fetchBitcoinPrices = async () => {
   }
 };
 
-export const fetchWithSafeProxy = async (url) => {
+const toFinitePrice = (value) => {
+  const price = Number(value);
+  return Number.isFinite(price) && price > 0 ? price : null;
+};
+
+const parseJsonSafely = (text) => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+};
+
+export const fetchWithSafeProxy = async (url, { responseType = 'json' } = {}) => {
   const encodedUrl = encodeURIComponent(url);
   const proxies = [
+    url,
     `https://api.allorigins.win/get?url=${encodedUrl}`,
+    `https://api.allorigins.win/raw?url=${encodedUrl}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`,
+    `https://corsproxy.io/?${encodedUrl}`,
   ];
 
   for (const proxy of proxies) {
@@ -46,20 +62,18 @@ export const fetchWithSafeProxy = async (url) => {
       if (!res.ok) continue;
 
       const text = await res.text();
-      let data;
-
-      try {
-        data = JSON.parse(text);
-      } catch {
-        continue;
+      if (responseType === 'text') {
+        const wrapped = parseJsonSafely(text);
+        return wrapped?.contents ?? text;
       }
 
+      const data = parseJsonSafely(text);
+      if (!data) continue;
+
       if (data?.contents) {
-        try {
-          return JSON.parse(data.contents);
-        } catch {
-          continue;
-        }
+        const contents = parseJsonSafely(data.contents);
+        if (contents) return contents;
+        continue;
       }
 
       return data;
@@ -71,8 +85,100 @@ export const fetchWithSafeProxy = async (url) => {
   return null;
 };
 
+const getYahooTickerCandidates = (asset, ticker) => {
+  const normalizedTicker = ticker.toUpperCase().replace(/\s+/g, '');
+  let primaryTicker = normalizedTicker;
+  if (asset.category === '국내주식' && !primaryTicker.includes('.')) primaryTicker = `${primaryTicker}.KS`;
+
+  const candidates = [primaryTicker];
+
+  if (asset.category === '해외주식' || asset.currency === 'USD') {
+    if (primaryTicker.includes('.')) candidates.push(primaryTicker.replace(/\./g, '-'));
+    if (primaryTicker.includes('-')) candidates.push(primaryTicker.replace(/-/g, '.'));
+  }
+
+  return [...new Set(candidates)];
+};
+
+const extractYahooPrice = (data) => {
+  const result = data?.chart?.result?.[0];
+  if (!result) return null;
+
+  const meta = result.meta ?? {};
+  const metaPrices = [
+    meta.regularMarketPrice,
+    meta.postMarketPrice,
+    meta.preMarketPrice,
+    meta.previousClose,
+    meta.chartPreviousClose,
+  ];
+
+  for (const price of metaPrices) {
+    const parsed = toFinitePrice(price);
+    if (parsed) return parsed;
+  }
+
+  const closePrices = result.indicators?.quote?.[0]?.close ?? [];
+  for (let i = closePrices.length - 1; i >= 0; i -= 1) {
+    const parsed = toFinitePrice(closePrices[i]);
+    if (parsed) return parsed;
+  }
+
+  return null;
+};
+
+const parseStooqPrice = (csv) => {
+  const lines = csv?.trim().split(/\r?\n/);
+  if (!lines || lines.length < 2) return null;
+
+  const headers = lines[0].split(',').map(header => header.trim().toLowerCase());
+  const values = lines[1].split(',').map(value => value.trim());
+  const closeIndex = headers.indexOf('close');
+  if (closeIndex === -1 || values[closeIndex] === 'N/D') return null;
+
+  return toFinitePrice(values[closeIndex]);
+};
+
+const getStooqTickerCandidates = (ticker) => {
+  const normalizedTicker = ticker.toLowerCase().replace(/\s+/g, '');
+  const baseTickers = [
+    normalizedTicker,
+    normalizedTicker.replace(/-/g, '.'),
+    normalizedTicker.replace(/\./g, '-'),
+  ];
+
+  return [...new Set(baseTickers.map(symbol => `${symbol}.us`))];
+};
+
+const fetchYahooPrice = async (asset, ticker) => {
+  const yfTickers = getYahooTickerCandidates(asset, ticker);
+
+  for (const yfTicker of yfTickers) {
+    const yfUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yfTicker)}?interval=1m&range=1d`;
+    const yfData = await fetchWithSafeProxy(yfUrl);
+    const price = extractYahooPrice(yfData);
+    if (price) return price;
+  }
+
+  return null;
+};
+
+const fetchStooqPrice = async (ticker) => {
+  const stooqTickers = getStooqTickerCandidates(ticker);
+
+  for (const stooqTicker of stooqTickers) {
+    const stooqUrl = `https://stooq.com/q/l/?s=${encodeURIComponent(stooqTicker)}&f=sd2t2ohlcv&h&e=csv`;
+    const csv = await fetchWithSafeProxy(stooqUrl, { responseType: 'text' });
+    const price = parseStooqPrice(csv);
+    if (price) return price;
+  }
+
+  return null;
+};
+
 export const fetchStockPrice = async (asset) => {
-  const ticker = asset.ticker.toUpperCase().trim();
+  const ticker = asset.ticker.toUpperCase().replace(/\s+/g, '');
+  if (!ticker) return null;
 
   if (asset.category === '국내주식') {
     const cleanTicker = ticker.replace(/[^0-9]/g, '');
@@ -84,13 +190,14 @@ export const fetchStockPrice = async (asset) => {
     }
   }
 
-  let yfTicker = ticker;
-  if (asset.category === '국내주식' && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
+  const yahooPrice = await fetchYahooPrice(asset, ticker);
+  if (yahooPrice) return yahooPrice;
 
-  const yfUrl = `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d`;
-  const yfData = await fetchWithSafeProxy(yfUrl);
+  if (asset.category === '해외주식' || asset.currency === 'USD') {
+    return fetchStooqPrice(ticker);
+  }
 
-  return yfData?.chart?.result?.[0]?.meta?.regularMarketPrice ?? null;
+  return null;
 };
 
 export const fetchDividends = async (ticker) => {
