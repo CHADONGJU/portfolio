@@ -5,12 +5,72 @@ import {
   Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, Globe, ArrowRightLeft, Search
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
+import MemoTab from './components/MemoTab';
 import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
-import { ASSET_COLORS, ASSETS_STORAGE_KEY, TRADES_STORAGE_KEY } from './constants';
+import { ASSET_COLORS, ASSETS_STORAGE_KEY, MEMOS_STORAGE_KEY, TRADES_STORAGE_KEY } from './constants';
 import { fetchBitcoinPrices, fetchDividends, fetchStockPrice, fetchUsdKrwRate } from './services/marketData';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { loadJson, saveJson } from './utils/storage';
+import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
+
+const isDomesticStockCategory = (category) => category?.includes('국내') && category?.includes('주식');
+const isCommodityCategory = (category) => category?.includes('원자재');
+
+const TRADE_SORT_OPTIONS = [
+  { value: 'newest', label: '최신 날짜 우선' },
+  { value: 'oldest', label: '가장 오래된 날짜 우선' },
+  { value: 'profit-desc', label: '실현 손익(이득 큰 순)' },
+  { value: 'profit-asc', label: '실현 손익(손해 큰 순)' },
+];
+
+const parseNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
+const getRecordDate = (record) => record.sellDate || record.date || record.buyDate || '';
+const getRecordPnl = (record) => Number(record.pnl ?? record.realizedPnl ?? 0);
+const getTradeSide = (record) => {
+  if (record.side === 'buy' || record.type === 'buy') return 'buy';
+  if (record.side === 'sell' || record.type === 'sell') return 'sell';
+  if (record.action === '매수') return 'buy';
+  if (record.action === '매도') return 'sell';
+  if (record.sellDate || getRecordPnl(record) !== 0) return 'sell';
+  return 'buy';
+};
+const normalizeTradeAction = (record) => {
+  return getTradeSide(record) === 'sell' ? '매도' : '매수';
+};
+
+const numbersMatch = (left, right) => Math.abs(parseNumber(left) - parseNumber(right)) < 0.0001;
+const findMatchingSellTrade = (memo, trades) => trades.find((trade) => {
+  if (!memo.name || memo.name !== trade.name) return false;
+  if (!memo.date || memo.date !== trade.sellDate) return false;
+  if (parseNumber(memo.quantity) && !numbersMatch(memo.quantity, trade.quantity)) return false;
+  if (parseNumber(memo.price) && !numbersMatch(memo.price, trade.sellPrice)) return false;
+  return true;
+});
+
+const sortTradeRecords = (records, sortMode) => [...records].sort((a, b) => {
+  if (sortMode === 'oldest') return new Date(getRecordDate(a)) - new Date(getRecordDate(b));
+  if (sortMode === 'profit-desc') return getRecordPnl(b) - getRecordPnl(a);
+  if (sortMode === 'profit-asc') return getRecordPnl(a) - getRecordPnl(b);
+  return new Date(getRecordDate(b)) - new Date(getRecordDate(a));
+});
+
+const buildTradeSummary = (records, exchangeRate = 1) => records.reduce((summary, record) => {
+  const quantity = Number(record.quantity) || 0;
+  const action = normalizeTradeAction(record);
+  const pnl = getRecordPnl(record);
+  const pnlKRW = record.currency === 'USD' ? pnl * exchangeRate : pnl;
+
+  if (action === '매수') summary.totalBuyQuantity += quantity;
+  if (action === '매도') summary.totalSellQuantity += quantity;
+  summary.totalProfit += pnlKRW;
+
+  return summary;
+}, {
+  totalBuyQuantity: 0,
+  totalSellQuantity: 0,
+  totalProfit: 0,
+});
 
 const App = () => {
   // 1. 상태 관리
@@ -37,6 +97,21 @@ const App = () => {
 
   const [isAdding, setIsAdding] = useState(false);
   const defaultBuyDate = new Date().toISOString().split('T')[0];
+  const [tradeSortMode, setTradeSortMode] = useState('newest');
+  const [tradeStockFilter, setTradeStockFilter] = useState('all');
+  const [memoSortMode, setMemoSortMode] = useState('newest');
+  const [memoStockFilter, setMemoStockFilter] = useState('all');
+  const [manualMemo, setManualMemo] = useState({
+    stockName: '',
+    ticker: '',
+    action: '매수',
+    quantity: '',
+    price: '',
+    date: defaultBuyDate,
+    realizedPnl: '',
+    currency: 'KRW',
+    memo: '',
+  });
   const [isUpdatingAsset, setIsUpdatingAsset] = useState(false);
   const [selectedAssetToUpdate, setSelectedAssetToUpdate] = useState(null);
 
@@ -48,13 +123,15 @@ const App = () => {
   averagePrice: '',
   quantity: '',
   buyDate: defaultBuyDate,
-  buyExchangeRate: ''
+  buyExchangeRate: '',
+  memo: ''
 };
   const [newAsset, setNewAsset] = useState(initialAssetState);
   const initialAddBuyState = {
   quantity: '',
   averagePrice: '',
-  buyDate: defaultBuyDate
+  buyDate: defaultBuyDate,
+  memo: ''
 };
 
 const [addBuyForm, setAddBuyForm] = useState(initialAddBuyState);
@@ -65,7 +142,8 @@ const [selectedAssetToSell, setSelectedAssetToSell] = useState(null);
 const initialSellFormState = {
   sellPrice: '',
   quantity: '',
-  sellDate: defaultBuyDate
+  sellDate: defaultBuyDate,
+  memo: ''
 };
 
 const [sellForm, setSellForm] = useState(initialSellFormState);
@@ -88,10 +166,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     return loadJson(TRADES_STORAGE_KEY, []);
   });
 
+  const [memos, setMemos] = useState(() => {
+    return loadJson(MEMOS_STORAGE_KEY, []);
+  });
+
   const [autoDividends, setAutoDividends] = useState([]);
 
   useEffect(() => { saveJson(ASSETS_STORAGE_KEY, assets); }, [assets]);
   useEffect(() => { saveJson(TRADES_STORAGE_KEY, trades); }, [trades]);
+  useEffect(() => { saveJson(MEMOS_STORAGE_KEY, memos); }, [memos]);
 
   // 2. 완벽한 데이터 연동 로직
   const assetsRef = useRef(assets);
@@ -146,7 +229,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             const fetchedPrice = await fetchStockPrice(asset);
             
             if (fetchedPrice !== null) {
-              if (asset.currency === 'USD' || asset.category === '해외주식' || asset.category === '원자재') {
+              if (asset.currency === 'USD') {
                 newOriginalCurrentPrice = fetchedPrice; // 달러 현재가
                 newCurrentPrice = Math.round(newOriginalCurrentPrice * currentRate); // 원화 현재가
               } else {
@@ -160,9 +243,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             }
 
             // 배당 갱신 실행 
-            if (asset.buyDate && asset.category !== '원자재') {
+            if (asset.buyDate && !isCommodityCategory(asset.category)) {
               let yfTicker = asset.ticker.toUpperCase().trim();
-              if (asset.category === '국내주식' && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
+              if (isDomesticStockCategory(asset.category) && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
               
               const divs = await fetchDividends(yfTicker);
               if (divs) {
@@ -205,145 +288,91 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     return () => { if (interval) clearInterval(interval); };
   }, [isLiveMode, refreshTrigger]);
 
-  // 3. 통합 가치 및 차트 계산
-  const enhancedAssets = useMemo(() => {
-    return assets.map(a => {
-      // originalAveragePrice가 무조건 있어야 수학이 맞음
-      const safeOrigAvgPrice = a.originalAveragePrice || a.averagePrice;
-      const safeOrigCurrPrice = a.originalCurrentPrice || a.currentPrice;
+  const {
+    enhancedAssets,
+    currentChartData,
+    currentCategoryKRW,
+    currentCategoryUSD,
+    currentCategoryTotalConverted,
+    currentCategoryProfitKRW,
+    totalUsdPurchase,
+    avgBuyExchangeRate,
+    fxProfitPercent,
+    currentKrwValueForUsd,
+    krwNetProfit,
+    usdNetProfit,
+    totalConvertedNetProfit,
+    dividendSummary,
+    filteredHistory,
+  } = usePortfolioMetrics({
+    assets,
+    trades,
+    autoDividends,
+    exchangeRate,
+    selectedCategory,
+    selectedDividendAsset,
+    dividendFilter,
+  });
 
-      const purchaseNative = safeOrigAvgPrice * a.quantity;
-      const currentNative = safeOrigCurrPrice * a.quantity;
-      
-      const purchaseKRW = a.currency === 'USD' ? purchaseNative * (a.buyExchangeRate || exchangeRate || 1350) : purchaseNative;
-      const currentKRW = a.currency === 'USD' ? currentNative * (exchangeRate || 1350) : currentNative; 
-      
-      const returnPercent = (purchaseNative > 0 && a.category !== '현금') ? ((currentNative - purchaseNative) / purchaseNative) * 100 : 0;
-      
-      return { ...a, purchaseNative, currentNative, purchaseKRW, currentKRW, returnPercent };
-    });
-  }, [assets, exchangeRate]);
+  const isDomesticStockChart = selectedCategory?.includes('국내') && selectedCategory?.includes('주식');
+  const profitTone = currentCategoryProfitKRW >= 0 ? 'text-emerald-600' : 'text-rose-600';
+  const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
+  const tradeStockOptions = useMemo(() => (
+    [...new Set(trades.map((trade) => trade.name).filter(Boolean))].sort()
+  ), [trades]);
+  const enrichedMemos = useMemo(() => memos.map((memo) => {
+    const matchingSellTrade = findMatchingSellTrade(memo, trades);
+    if (!matchingSellTrade) return memo;
 
-  const totalConvertedKRW = useMemo(() => enhancedAssets.reduce((acc, a) => acc + a.currentKRW, 0), [enhancedAssets]);
-  
-  const categoryData = useMemo(() => {
-    const grouped = enhancedAssets.reduce((acc, asset) => {
-      if (!acc[asset.category]) acc[asset.category] = { id: asset.category, name: asset.category, value: 0, color: asset.color };
-      acc[asset.category].value += asset.currentKRW;
-      return acc;
-    }, {});
-    let cumulativePercent = 0;
-    return Object.values(grouped).sort((a, b) => b.value - a.value).map(cat => {
-      const percent = totalConvertedKRW > 0 ? (cat.value / totalConvertedKRW) * 100 : 0;
-      const startPercent = cumulativePercent;
-      cumulativePercent += percent;
-      return { ...cat, percent, startPercent };
-    });
-  }, [enhancedAssets, totalConvertedKRW]);
-
-  const subChartData = useMemo(() => {
-    if (!selectedCategory) return [];
-    const filtered = enhancedAssets.filter(a => a.category === selectedCategory);
-    const subTotalKRW = filtered.reduce((acc, curr) => acc + curr.currentKRW, 0);
-    let cumulativePercent = 0;
-    return filtered.sort((a, b) => b.currentKRW - a.currentKRW).map(asset => {
-      const percent = subTotalKRW > 0 ? (asset.currentKRW / subTotalKRW) * 100 : 0;
-      const startPercent = cumulativePercent;
-      cumulativePercent += percent;
-      return { ...asset, percent, startPercent, subTotal: subTotalKRW };
-    });
-  }, [enhancedAssets, selectedCategory]);
-
-  const currentChartData = selectedCategory ? subChartData : categoryData;
-  const currentCategoryKRW = selectedCategory ? enhancedAssets.filter(a => a.category === selectedCategory && a.currency === 'KRW').reduce((acc, a) => acc + a.currentNative, 0) : enhancedAssets.filter(a => a.currency === 'KRW').reduce((acc, a) => acc + a.currentNative, 0);
-  const currentCategoryUSD = selectedCategory ? enhancedAssets.filter(a => a.category === selectedCategory && a.currency === 'USD').reduce((acc, a) => acc + a.currentNative, 0) : enhancedAssets.filter(a => a.currency === 'USD').reduce((acc, a) => acc + a.currentNative, 0);
-  const currentCategoryTotalConverted = selectedCategory && subChartData.length > 0 ? subChartData[0].subTotal : totalConvertedKRW;
-
-  // 4. 환차익 & 매매 기록 계산
-  const { totalUsdPurchase, totalKrwPurchaseForUsd, currentKrwValueForUsd } = useMemo(() => {
-    const usdAssets = enhancedAssets.filter(a => a.currency === 'USD');
-    return { 
-      totalUsdPurchase: usdAssets.reduce((acc, a) => acc + a.purchaseNative, 0), 
-      totalKrwPurchaseForUsd: usdAssets.reduce((acc, a) => acc + a.purchaseKRW, 0), 
-      currentKrwValueForUsd: usdAssets.reduce((acc, a) => acc + a.currentKRW, 0) 
+    return {
+      ...memo,
+      side: 'sell',
+      action: '매도',
+      ticker: memo.ticker || matchingSellTrade.ticker,
+      category: memo.category || matchingSellTrade.category,
+      currency: memo.currency || matchingSellTrade.currency,
+      quantity: parseNumber(memo.quantity) || matchingSellTrade.quantity,
+      price: parseNumber(memo.price) || matchingSellTrade.sellPrice,
+      date: memo.date || matchingSellTrade.sellDate,
+      pnl: getRecordPnl(memo) || getRecordPnl(matchingSellTrade),
+      matchedTradeId: matchingSellTrade.id,
     };
-  }, [enhancedAssets]);
-  const avgBuyExchangeRate = totalUsdPurchase > 0 ? (totalKrwPurchaseForUsd / totalUsdPurchase) : 0;
-  const fxProfitPercent = totalKrwPurchaseForUsd > 0 ? ((currentKrwValueForUsd - totalKrwPurchaseForUsd) / totalKrwPurchaseForUsd) * 100 : 0;
+  }), [memos, trades]);
+  const memoStockOptions = useMemo(() => (
+    [...new Set([
+      ...assets.map((asset) => asset.name),
+      ...trades.map((trade) => trade.name),
+      ...enrichedMemos.map((memo) => memo.name),
+    ].filter(Boolean))].sort()
+  ), [assets, trades, enrichedMemos]);
+  const visibleTrades = useMemo(() => {
+    const filtered = tradeStockFilter === 'all'
+      ? trades
+      : trades.filter((trade) => trade.name === tradeStockFilter);
+    return sortTradeRecords(filtered, tradeSortMode);
+  }, [trades, tradeStockFilter, tradeSortMode]);
+  const visibleMemos = useMemo(() => {
+    const filtered = memoStockFilter === 'all'
+      ? enrichedMemos
+      : enrichedMemos.filter((memo) => memo.name === memoStockFilter);
+    return sortTradeRecords(filtered, memoSortMode);
+  }, [enrichedMemos, memoStockFilter, memoSortMode]);
+  const tradeSummary = useMemo(() => {
+    const matchingBuyMemos = enrichedMemos.filter((memo) => (
+      getTradeSide(memo) === 'buy'
+      && (tradeStockFilter === 'all' || memo.name === tradeStockFilter)
+    ));
+    const sellSummary = buildTradeSummary(visibleTrades, exchangeRate || 1350);
+    const buySummary = buildTradeSummary(matchingBuyMemos, exchangeRate || 1350);
 
-  const krwTrades = trades.filter(t => t.currency === 'KRW');
-  const usdTrades = trades.filter(t => t.currency === 'USD');
-  const krwNetProfit = krwTrades.reduce((acc, t) => acc + t.pnl, 0);
-  const usdNetProfit = usdTrades.reduce((acc, t) => acc + t.pnl, 0);
-  const totalConvertedNetProfit = krwNetProfit + (usdNetProfit * (exchangeRate || 1350));
+    return {
+      totalBuyQuantity: buySummary.totalBuyQuantity,
+      totalSellQuantity: sellSummary.totalSellQuantity,
+      totalProfit: sellSummary.totalProfit,
+    };
+  }, [enrichedMemos, visibleTrades, tradeStockFilter, exchangeRate]);
+  const memoSummary = useMemo(() => buildTradeSummary(visibleMemos, exchangeRate || 1350), [visibleMemos, exchangeRate]);
 
-  // 5. 배당금 그룹화
-  const dividendSummary = useMemo(() => {
-    const summary = {};
-    const today = new Date();
-    const currentMonth = today.getMonth() + 1;
-    const currentYear = today.getFullYear();
-
-    assets.forEach(asset => {
-      const assetDivs = autoDividends.filter(d => d.name === asset.name);
-      if (assetDivs.length === 0) return;
-
-      const totalAmount = assetDivs.reduce((sum, d) => sum + d.amount, 0);
-      let status = '';
-      let expectedAmount = 0;
-
-      const lastDiv = assetDivs[0];
-      const lastDate = new Date(lastDiv.date);
-      expectedAmount = lastDiv.amount;
-
-      let monthDiff = 3; 
-      if (assetDivs.length > 1) {
-        const prevDate = new Date(assetDivs[1].date);
-        const daysDiff = (lastDate - prevDate) / (1000 * 60 * 60 * 24);
-        if (daysDiff >= 20 && daysDiff <= 45) monthDiff = 1;
-        else if (daysDiff >= 80 && daysDiff <= 110) monthDiff = 3;
-        else if (daysDiff >= 150 && daysDiff <= 200) monthDiff = 6;
-        else if (daysDiff >= 330) monthDiff = 12;
-      }
-
-      const nextDate = new Date(lastDate);
-      nextDate.setMonth(nextDate.getMonth() + monthDiff);
-      const nextMonth = nextDate.getMonth() + 1;
-      const nextYear = nextDate.getFullYear();
-
-      if (lastDate.getMonth() + 1 === currentMonth && lastDate.getFullYear() === currentYear) {
-        status = '이번 달 지급 완료';
-      } else if (nextMonth === currentMonth && nextYear === currentYear) {
-        status = '이번 달 지급 예정';
-      } else {
-        status = `${nextMonth}월 지급 예정`;
-      }
-
-      summary[asset.name] = {
-        name: asset.name, currency: lastDiv.currency, totalAmount, status, expectedAmount, history: assetDivs
-      };
-    });
-    
-    return Object.values(summary).sort((a, b) => b.totalAmount - a.totalAmount);
-  }, [autoDividends, assets]);
-
-  const filteredHistory = useMemo(() => {
-    if (!selectedDividendAsset) return [];
-    const summary = dividendSummary.find(s => s.name === selectedDividendAsset);
-    if (!summary) return [];
-    const today = new Date();
-    const currentYear = today.getFullYear();
-    const currentMonth = today.getMonth();
-
-    return summary.history.filter(d => {
-      const divDate = new Date(d.date);
-      if (dividendFilter === '이번 달') return divDate.getFullYear() === currentYear && divDate.getMonth() === currentMonth;
-      if (dividendFilter === '올해') return divDate.getFullYear() === currentYear;
-      return true;
-    });
-  }, [dividendSummary, selectedDividendAsset, dividendFilter]);
-
-  // 자산 및 기록 삭제 로직 강화 
   const removeAsset = (id, e) => {
     if (e) e.stopPropagation();
     setAssets(prevAssets => prevAssets.filter(a => a.id !== id));
@@ -356,12 +385,85 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     addLog("매매 기록이 삭제되었습니다.", "success");
   };
 
+  const removeMemo = (id, e) => {
+    if (e) e.stopPropagation();
+    setMemos(prevMemos => prevMemos.filter(memo => memo.id !== id));
+    addLog("메모가 삭제되었습니다.", "success");
+  };
+
+  const updateMemoText = (id, memoText) => {
+    setMemos(prevMemos => prevMemos.map((memo) => (
+      memo.id === id
+        ? { ...memo, memo: memoText.trim(), updatedAt: new Date().toISOString() }
+        : memo
+    )));
+    addLog('메모가 수정되었습니다.', 'success');
+  };
+
+  const addTradeMemo = ({ asset, action, quantity, price, date, memo, realizedPnl = 0 }) => {
+    setMemos(prevMemos => [{
+      id: Date.now() + Math.random(),
+      assetId: asset.id,
+      name: asset.name,
+      ticker: asset.ticker,
+      category: asset.category,
+      currency: asset.currency,
+      side: action === '매도' ? 'sell' : 'buy',
+      action,
+      quantity,
+      price,
+      date,
+      pnl: realizedPnl,
+      memo: memo?.trim() || '',
+      createdAt: new Date().toISOString()
+    }, ...prevMemos]);
+  };
+
+  const handleAddManualMemo = () => {
+    if (!manualMemo.stockName || !manualMemo.date) {
+      addLog('주식명과 날짜를 입력해주세요.', 'error');
+      return;
+    }
+
+    const matchedAsset = assets.find((asset) => asset.name === manualMemo.stockName);
+    setMemos(prevMemos => [{
+      id: Date.now() + Math.random(),
+      assetId: matchedAsset?.id ?? null,
+      name: manualMemo.stockName,
+      ticker: matchedAsset?.ticker || manualMemo.ticker,
+      category: matchedAsset?.category || '',
+      currency: matchedAsset?.currency || manualMemo.currency,
+      side: manualMemo.action === '매도' ? 'sell' : 'buy',
+      action: manualMemo.action,
+      quantity: parseNumber(manualMemo.quantity),
+      price: parseNumber(manualMemo.price),
+      date: manualMemo.date,
+      pnl: parseNumber(manualMemo.realizedPnl),
+      memo: manualMemo.memo.trim(),
+      createdAt: new Date().toISOString()
+    }, ...prevMemos]);
+
+    setManualMemo({
+      stockName: '',
+      ticker: '',
+      action: '매수',
+      quantity: '',
+      price: '',
+      date: defaultBuyDate,
+      realizedPnl: '',
+      currency: 'KRW',
+      memo: '',
+    });
+    addLog('메모가 추가되었습니다.', 'success');
+  };
+
   const openAddBuyModal = (asset) => {
   setSelectedAssetToUpdate(asset);
   setAddBuyForm({
     quantity: '',
     averagePrice: '',
-    buyDate: new Date().toISOString().split('T')[0]
+    buyDate: new Date().toISOString().split('T')[0],
+    memo: ''
   });
   setIsUpdatingAsset(true);
 };
@@ -371,7 +473,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   setSellForm({
     sellPrice: '',
     quantity: '',
-    sellDate: new Date().toISOString().split('T')[0]
+    sellDate: new Date().toISOString().split('T')[0],
+    memo: ''
   });
   setIsSellingAsset(true);
 };
@@ -422,6 +525,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       };
     })
   );
+
+  addTradeMemo({
+    asset: selectedAssetToUpdate,
+    action: '매수',
+    quantity: addedQty,
+    price: addedAvgNative,
+    date: addBuyForm.buyDate,
+    memo: addBuyForm.memo
+  });
 
   addLog(`'${selectedAssetToUpdate.name}' 추가 매수 반영 완료`, "success");
   setIsUpdatingAsset(false);
@@ -487,6 +599,16 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     );
   }
 
+  addTradeMemo({
+    asset: selectedAssetToSell,
+    action: '매도',
+    quantity: sellQty,
+    price: sellPriceNative,
+    date: sellForm.sellDate,
+    memo: sellForm.memo,
+    realizedPnl: pnlNative
+  });
+
   addLog(`'${selectedAssetToSell.name}' 매도 반영 완료`, "success");
   setIsSellingAsset(false);
   setSelectedAssetToSell(null);
@@ -529,6 +651,14 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     };
 
     setAssets(prevAssets => [...prevAssets, asset]);
+    addTradeMemo({
+      asset,
+      action: '매수',
+      quantity: parsedQty,
+      price: parsedAvgPrice,
+      date: newAsset.buyDate,
+      memo: newAsset.memo
+    });
     setNewAsset(initialAssetState);
     setIsAdding(false);
     addLog(`'${asset.name}' 자산 추가됨. 최신 주가로 연동합니다...`, "info");
@@ -586,10 +716,27 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[9px] text-slate-300 font-bold">+</span>}
                     {currentCategoryUSD > 0 && <span className="text-base md:text-lg font-black text-blue-600 tracking-tighter">{formatMoney(currentCategoryUSD, 'USD')}</span>}
                   </div>
-                  <div className="mt-2 md:mt-3 bg-slate-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full border border-slate-100 flex items-center gap-1.5">
-                    <span className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">총 환산가치</span>
-                    <span className="text-[10px] md:text-[11px] font-black text-slate-700">≈ {formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
-                  </div>
+                  {isDomesticStockChart ? (
+                    <div className={`mt-2 md:mt-3 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${profitBgTone}`}>
+                      <span className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">총 수익금액</span>
+                      <span className={`text-[10px] md:text-[11px] font-black ${profitTone}`}>
+                        {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mt-2 md:mt-3 bg-slate-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full border border-slate-100 flex items-center gap-1.5">
+                        <span className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">총 환산가치</span>
+                        <span className="text-[10px] md:text-[11px] font-black text-slate-700">≈ {formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
+                      </div>
+                      <div className={`mt-1.5 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${profitBgTone}`}>
+                        <span className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">총 수익금액</span>
+                        <span className={`text-[10px] md:text-[11px] font-black ${profitTone}`}>
+                          {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
+                        </span>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
               <div className="mt-8 md:mt-12 w-full space-y-2">
@@ -661,8 +808,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                           </td>
                           <td className="px-4 py-4 md:px-6 md:py-5 text-right whitespace-nowrap">
                             {asset.category === '현금' ? <span className="text-[10px] md:text-xs font-black text-slate-300">-</span> : (
-                              <div className={`inline-flex items-center gap-1 px-3 py-1.5 md:px-4 md:py-2 rounded-[14px] text-[10px] md:text-[11px] font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                                {asset.returnPercent >= 0 ? <TrendingUp size={12}/> : <TrendingDown size={12}/>} {Math.abs(asset.returnPercent).toFixed(2)}%
+                              <div className="flex flex-col items-end gap-1.5">
+                                <div className={`inline-flex items-center gap-1 px-3 py-1.5 md:px-4 md:py-2 rounded-[14px] text-[10px] md:text-[11px] font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                  {asset.returnPercent >= 0 ? <TrendingUp size={12}/> : <TrendingDown size={12}/>} {Math.abs(asset.returnPercent).toFixed(2)}%
+                                </div>
+                                <div className={`inline-flex px-3 py-1.5 md:px-4 md:py-2 rounded-[14px] text-[10px] md:text-[11px] font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                  {asset.profitNative > 0 ? '+' : ''}{formatMoney(asset.profitNative, asset.currency)}
+                                </div>
                               </div>
                             )}
                           </td>
@@ -870,6 +1022,45 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               <div className="p-6 md:p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
                 <h3 className="text-base md:text-lg font-black text-slate-900">과거 매매 기록</h3>
               </div>
+              <div className="p-5 md:p-6 border-b border-slate-50 bg-white space-y-4">
+                <div className="flex flex-col md:flex-row gap-3">
+                  <select
+                    value={tradeStockFilter}
+                    onChange={(e) => setTradeStockFilter(e.target.value)}
+                    className="px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-slate-700"
+                  >
+                    <option value="all">?? ??</option>
+                    {tradeStockOptions.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={tradeSortMode}
+                    onChange={(e) => setTradeSortMode(e.target.value)}
+                    className="px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-slate-700"
+                  >
+                    {TRADE_SORT_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">? ?? ??</p>
+                    <p className="text-lg font-black text-slate-800">{tradeSummary.totalBuyQuantity.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">? ?? ??</p>
+                    <p className="text-lg font-black text-slate-800">{tradeSummary.totalSellQuantity.toLocaleString()}</p>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">? ??</p>
+                    <p className={`text-lg font-black ${tradeSummary.totalProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {tradeSummary.totalProfit > 0 ? '+' : ''}{formatMoney(tradeSummary.totalProfit, 'KRW')}
+                    </p>
+                  </div>
+                </div>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left table-auto">
                   <thead className="bg-slate-50/50 text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.3em]">
@@ -882,7 +1073,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {trades.map((trade) => (
+                    {visibleTrades.map((trade) => (
                       <tr key={trade.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="px-4 py-4 md:px-8 md:py-6 text-sm md:text-base font-black text-slate-800 whitespace-nowrap">{trade.name}</td>
                         <td className="px-4 py-4 md:px-8 md:py-6 text-[10px] md:text-xs text-slate-500 font-bold space-y-1 whitespace-nowrap">
@@ -905,11 +1096,30 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     ))}
                   </tbody>
                 </table>
-                {trades.length === 0 && <p className="p-8 md:p-10 text-center text-slate-400 font-bold text-xs md:text-sm">기록된 매매 내역이 없습니다.</p>}
+                {visibleTrades.length === 0 && <p className="p-8 md:p-10 text-center text-slate-400 font-bold text-xs md:text-sm">??? ?? ??? ????.</p>}
               </div>
             </div>
 
           </div>
+        )}
+
+        {activeTab === 'notes' && (
+          <MemoTab
+            memos={visibleMemos}
+            stockOptions={memoStockOptions}
+            stockFilter={memoStockFilter}
+            onStockFilterChange={setMemoStockFilter}
+            sortMode={memoSortMode}
+            onSortModeChange={setMemoSortMode}
+            sortOptions={TRADE_SORT_OPTIONS}
+            summary={memoSummary}
+            manualMemo={manualMemo}
+            onManualMemoChange={setManualMemo}
+            onAddManualMemo={handleAddManualMemo}
+            onRemoveMemo={removeMemo}
+            onUpdateMemo={updateMemoText}
+            formatMoney={formatMoney}
+          />
         )}
       </div>
 
@@ -1061,6 +1271,19 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           )}
         </div>
 
+
+        <div>
+          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+            매수 메모
+          </label>
+          <textarea
+            rows="3"
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm resize-none"
+            placeholder="매수 근거를 간단히 남겨두세요."
+            value={newAsset.memo}
+            onChange={(e) => setNewAsset({ ...newAsset, memo: e.target.value })}
+          />
+        </div>
         <button
           onClick={handleAddAsset}
           className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-slate-200 hover:scale-[1.02] transition-all uppercase tracking-widest"
@@ -1146,6 +1369,24 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         </div>
       </div>
 
+
+        <div>
+          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+            매수 메모
+          </label>
+          <textarea
+            rows="3"
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm resize-none"
+            placeholder="추가 매수 근거를 간단히 남겨두세요."
+            value={addBuyForm.memo}
+            onChange={(e) =>
+              setAddBuyForm((prev) => ({
+                ...prev,
+                memo: e.target.value
+              }))
+            }
+          />
+        </div>
       <button
         onClick={handleAddBuyToAsset}
         className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-slate-200 hover:scale-[1.02] transition-all uppercase tracking-widest"
@@ -1230,6 +1471,24 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         </div>
       </div>
 
+
+        <div>
+          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+            매도 메모
+          </label>
+          <textarea
+            rows="3"
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm resize-none"
+            placeholder="매도 근거를 간단히 남겨두세요."
+            value={sellForm.memo}
+            onChange={(e) =>
+              setSellForm((prev) => ({
+                ...prev,
+                memo: e.target.value
+              }))
+            }
+          />
+        </div>
       <button
         onClick={handleSellAsset}
         className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-slate-200 hover:scale-[1.02] transition-all uppercase tracking-widest"
