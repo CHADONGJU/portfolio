@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { 
+import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
-  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, Globe, ArrowRightLeft, Search, Folder
+  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, Globe, ArrowRightLeft, Search, Folder, Target
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
 import MemoTab from './components/MemoTab';
@@ -477,6 +477,21 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const isOverseasStockChart = selectedCategory?.includes('해외') && selectedCategory?.includes('주식');
   const profitTone = currentCategoryProfitKRW >= 0 ? 'text-emerald-600' : 'text-rose-600';
   const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
+  const dashboardSummary = useMemo(() => {
+    const purchaseKRW = enhancedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
+    const evaluationProfitKRW = enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
+    const dividendKRW = autoDividends.reduce((sum, dividend) => (
+      sum + (Number(dividend.amount) || 0) * (dividend.currency === 'USD' ? (exchangeRate || 1350) : 1)
+    ), 0);
+    const totalReturnPercent = purchaseKRW > 0 ? (evaluationProfitKRW / purchaseKRW) * 100 : 0;
+
+    return {
+      purchaseKRW,
+      evaluationProfitKRW,
+      totalReturnPercent,
+      dividendKRW,
+    };
+  }, [enhancedAssets, autoDividends, exchangeRate]);
   const filteredPerformanceSummary = useMemo(() => {
     const keyword = performanceSearchTerm.trim().toLowerCase();
     if (!keyword) return stockPerformanceSummary;
@@ -575,9 +590,26 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       };
     });
   }, [targetPortfolioGuide]);
+  const tradeRecords = useMemo(() => {
+    if (tradeLedger.length > 0) {
+      return tradeLedger.map((entry) => ({
+        ...entry,
+        sourceType: 'ledger',
+      }));
+    }
+
+    return trades.map((trade) => ({
+      ...trade,
+      side: 'sell',
+      action: '매도',
+      date: trade.sellDate,
+      price: trade.sellPrice,
+      sourceType: 'trade',
+    }));
+  }, [tradeLedger, trades]);
   const tradeStockOptions = useMemo(() => (
-    [...new Set(trades.map((trade) => trade.name).filter(Boolean))].sort()
-  ), [trades]);
+    [...new Set(tradeRecords.map((trade) => trade.name).filter(Boolean))].sort()
+  ), [tradeRecords]);
   const enrichedMemos = useMemo(() => memos.map((memo) => {
     const matchingSellTrade = findMatchingSellTrade(memo, trades);
     if (!matchingSellTrade) return memo;
@@ -604,10 +636,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   ), [tradeLedger, enrichedMemos]);
   const visibleTrades = useMemo(() => {
     const filtered = tradeStockFilter === 'all'
-      ? trades
-      : trades.filter((trade) => trade.name === tradeStockFilter);
+      ? tradeRecords
+      : tradeRecords.filter((trade) => trade.name === tradeStockFilter);
     return sortTradeRecords(filtered, tradeSortMode);
-  }, [trades, tradeStockFilter, tradeSortMode]);
+  }, [tradeRecords, tradeStockFilter, tradeSortMode]);
   const memoLedgerRecords = useMemo(() => {
     const matchedMemoIds = new Set();
     const ledgerRecords = tradeLedger.map((entry) => {
@@ -641,19 +673,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     return sortTradeRecords(filtered, memoSortMode);
   }, [memoLedgerRecords, memoStockFilter, memoSortMode]);
   const tradeSummary = useMemo(() => {
-    const matchingBuyMemos = enrichedMemos.filter((memo) => (
-      getTradeSide(memo) === 'buy'
-      && (tradeStockFilter === 'all' || memo.name === tradeStockFilter)
-    ));
-    const sellSummary = buildTradeSummary(visibleTrades, exchangeRate || 1350);
-    const buySummary = buildTradeSummary(matchingBuyMemos, exchangeRate || 1350);
-
-    return {
-      totalBuyQuantity: buySummary.totalBuyQuantity,
-      totalSellQuantity: sellSummary.totalSellQuantity,
-      totalProfit: sellSummary.totalProfit,
-    };
-  }, [enrichedMemos, visibleTrades, tradeStockFilter, exchangeRate]);
+    return buildTradeSummary(visibleTrades, exchangeRate || 1350);
+  }, [visibleTrades, exchangeRate]);
   const memoSummary = useMemo(() => buildTradeSummary(visibleMemos, exchangeRate || 1350), [visibleMemos, exchangeRate]);
 
   const removeAsset = (id, e) => {
@@ -662,9 +683,17 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     addLog("자산이 삭제되었습니다.", "success");
   };
 
-  const removeTrade = (id, e) => {
+  const removeTrade = (record, e) => {
     if (e) e.stopPropagation();
-    setTrades(prevTrades => prevTrades.filter(t => t.id !== id));
+    if (record.sourceType === 'ledger') {
+      setTradeLedger(prevLedger => prevLedger.filter(entry => entry.id !== record.id));
+      if (record.sourceId?.startsWith('trade-')) {
+        const tradeId = record.sourceId.replace('trade-', '');
+        setTrades(prevTrades => prevTrades.filter(trade => String(trade.id) !== tradeId));
+      }
+    } else {
+      setTrades(prevTrades => prevTrades.filter(t => t.id !== record.id));
+    }
     addLog("매매 기록이 삭제되었습니다.", "success");
   };
 
@@ -1192,68 +1221,134 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
         {activeTab === 'portfolio' && (
-          <div className="grid lg:grid-cols-12 gap-8 animate-in fade-in duration-500">
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+              {[
+                {
+                  label: '총 평가금액',
+                  value: formatMoney(totalConvertedKRW, 'KRW'),
+                  icon: Wallet,
+                  tone: 'text-slate-900',
+                  helper: `${enhancedAssets.length.toLocaleString()}개 자산`,
+                },
+                {
+                  label: '총 수익률',
+                  value: `${dashboardSummary.totalReturnPercent > 0 ? '+' : ''}${dashboardSummary.totalReturnPercent.toFixed(2)}%`,
+                  icon: dashboardSummary.totalReturnPercent >= 0 ? TrendingUp : TrendingDown,
+                  tone: dashboardSummary.totalReturnPercent >= 0 ? 'text-emerald-600' : 'text-rose-600',
+                  helper: formatMoney(dashboardSummary.evaluationProfitKRW, 'KRW'),
+                },
+                {
+                  label: '실현손익',
+                  value: `${totalConvertedNetProfit > 0 ? '+' : ''}${formatMoney(totalConvertedNetProfit, 'KRW')}`,
+                  icon: ArrowRightLeft,
+                  tone: totalConvertedNetProfit >= 0 ? 'text-emerald-600' : 'text-rose-600',
+                  helper: '매도 기록 기준',
+                },
+                {
+                  label: '배당 수익',
+                  value: `${dashboardSummary.dividendKRW > 0 ? '+' : ''}${formatMoney(dashboardSummary.dividendKRW, 'KRW')}`,
+                  icon: Receipt,
+                  tone: dashboardSummary.dividendKRW >= 0 ? 'text-blue-600' : 'text-rose-600',
+                  helper: '자동 추출 누적',
+                },
+              ].map((item) => {
+                const Icon = item.icon;
+                return (
+                  <div key={item.label} className="bg-white border border-slate-100 rounded-2xl p-4 md:p-5 shadow-sm">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <p className="text-[10px] md:text-xs font-bold text-slate-400">{item.label}</p>
+                      <div className="w-8 h-8 rounded-xl bg-slate-50 text-slate-500 flex items-center justify-center">
+                        <Icon size={16} />
+                      </div>
+                    </div>
+                    <p className={`text-lg md:text-2xl font-bold tracking-tight break-words ${item.tone}`}>{item.value}</p>
+                    <p className="mt-1 text-[10px] md:text-xs font-semibold text-slate-400">{item.helper}</p>
+                  </div>
+                );
+              })}
+            </section>
+
+            <div className="grid lg:grid-cols-12 gap-6 md:gap-8">
             {/* SVG 드릴다운 차트 */}
-            <div className="lg:col-span-4 bg-white p-6 md:p-10 rounded-[40px] md:rounded-[50px] shadow-sm border border-slate-100 flex flex-col items-center">
+            <div className="lg:col-span-4 bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center">
               <div className="w-full flex justify-between items-center mb-6 md:mb-8">
-                <h2 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2"><PieIcon className="text-blue-600" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
+                <h2 className="text-base md:text-lg font-bold text-slate-900 flex items-center gap-2"><PieIcon className="text-blue-600" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
                 {selectedCategory && (
-                  <button onClick={() => setSelectedCategory(null)} className="text-[9px] md:text-[10px] font-black text-blue-600 bg-blue-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center gap-1 hover:bg-blue-100 uppercase tracking-widest"><ArrowLeft size={10} /> 메인으로</button>
+                  <button onClick={() => setSelectedCategory(null)} className="text-[9px] md:text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center gap-1 hover:bg-blue-100 uppercase tracking-widest"><ArrowLeft size={10} /> 메인으로</button>
                 )}
               </div>
-              <div className="relative w-64 h-64 md:w-80 md:h-80">
-                <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90 scale-110">
-                  {currentChartData.map((dataItem) => {
-                    const strokeDash = `${dataItem.percent} ${100 - dataItem.percent}`;
-                    const strokeOffset = -dataItem.startPercent;
-                    return (
-                      <circle key={dataItem.id || dataItem.name} cx="18" cy="18" r="15.9" fill="transparent" stroke={dataItem.color} strokeWidth="3.2" strokeDasharray={strokeDash} strokeDashoffset={strokeOffset} className={`transition-all duration-700 ease-out ${!selectedCategory ? 'cursor-pointer hover:stroke-[4] hover:opacity-80' : 'opacity-90'}`} onClick={() => !selectedCategory && setSelectedCategory(dataItem.name)} />
-                    );
-                  })}
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none p-4">
-                  <span className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-[0.2em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
-                  <div className="flex flex-col items-center gap-0.5">
-                    {currentCategoryKRW > 0 && <span className="text-base md:text-lg font-black text-slate-900 tracking-tighter">{formatMoney(currentCategoryKRW, 'KRW')}</span>}
-                    {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[9px] text-slate-300 font-bold">+</span>}
-                    {currentCategoryUSD > 0 && <span className="text-base md:text-lg font-black text-blue-600 tracking-tighter">{formatMoney(currentCategoryUSD, 'USD')}</span>}
+              {enhancedAssets.length === 0 ? (
+                <div className="w-full min-h-[260px] md:min-h-[320px] flex flex-col items-center justify-center text-center px-4">
+                  <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-5">
+                    <Target size={28} />
                   </div>
-                  {isDomesticStockChart ? (
-                    <div className={`mt-2 md:mt-3 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${profitBgTone}`}>
-                      <span className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">총 수익금액</span>
-                      <span className={`text-[10px] md:text-[11px] font-black ${profitTone}`}>
-                        {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
-                      </span>
+                  <p className="text-lg font-bold text-slate-900">첫 자산을 추가해보세요</p>
+                  <p className="mt-2 text-sm font-medium text-slate-400 leading-relaxed max-w-xs">
+                    종목을 등록하면 비중, 수익률, 배당 기록이 이 화면에 바로 쌓입니다.
+                  </p>
+                  <button
+                    onClick={() => setIsAdding(true)}
+                    className="mt-6 inline-flex items-center gap-2 px-5 py-3 bg-blue-600 text-white rounded-2xl text-sm font-bold shadow-lg shadow-blue-100"
+                  >
+                    <Plus size={16} /> 자산 추가
+                  </button>
+                </div>
+              ) : (
+                <div className="relative w-64 h-64 md:w-72 md:h-72">
+                  <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                    {currentChartData.map((dataItem) => {
+                      const strokeDash = `${dataItem.percent} ${100 - dataItem.percent}`;
+                      const strokeOffset = -dataItem.startPercent;
+                      return (
+                        <circle key={dataItem.id || dataItem.name} cx="18" cy="18" r="15.9" fill="transparent" stroke={dataItem.color} strokeWidth="3.2" strokeDasharray={strokeDash} strokeDashoffset={strokeOffset} className={`transition-all duration-700 ease-out ${!selectedCategory ? 'cursor-pointer hover:stroke-[4] hover:opacity-80' : 'opacity-90'}`} onClick={() => !selectedCategory && setSelectedCategory(dataItem.name)} />
+                      );
+                    })}
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none p-4">
+                    <span className="text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
+                    <div className="flex flex-col items-center gap-0.5">
+                      {currentCategoryKRW > 0 && <span className="text-base md:text-lg font-bold text-slate-900 tracking-tight">{formatMoney(currentCategoryKRW, 'KRW')}</span>}
+                      {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[9px] text-slate-300 font-bold">+</span>}
+                      {currentCategoryUSD > 0 && <span className="text-base md:text-lg font-bold text-blue-600 tracking-tight">{formatMoney(currentCategoryUSD, 'USD')}</span>}
                     </div>
-                  ) : (
-                    <>
-                      <div className="mt-2 md:mt-3 bg-slate-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full border border-slate-100 flex items-center gap-1.5">
-                        <span className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">총 환산가치</span>
-                        <span className="text-[10px] md:text-[11px] font-black text-slate-700">≈ {formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
-                      </div>
-                      <div className={`mt-1.5 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${profitBgTone}`}>
-                        <span className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">총 수익금액</span>
-                        <span className={`text-[10px] md:text-[11px] font-black ${profitTone}`}>
+                    {isDomesticStockChart ? (
+                      <div className={`mt-2 md:mt-3 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${profitBgTone}`}>
+                        <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 수익금액</span>
+                        <span className={`text-[10px] md:text-[11px] font-bold ${profitTone}`}>
                           {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
                         </span>
-                        {isOverseasStockChart && currentCategoryProfitUSD !== 0 && (
-                          <span className={`text-[10px] md:text-[11px] font-black ${profitTone}`}>
-                            / {currentCategoryProfitUSD > 0 ? '+' : ''}{formatMoney(currentCategoryProfitUSD, 'USD')}
-                          </span>
-                        )}
                       </div>
-                    </>
-                  )}
+                    ) : (
+                      <>
+                        <div className="mt-2 md:mt-3 bg-slate-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full border border-slate-100 flex items-center gap-1.5">
+                          <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 환산가치</span>
+                          <span className="text-[10px] md:text-[11px] font-bold text-slate-700">≈ {formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
+                        </div>
+                        <div className={`mt-1.5 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${profitBgTone}`}>
+                          <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 수익금액</span>
+                          <span className={`text-[10px] md:text-[11px] font-bold ${profitTone}`}>
+                            {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
+                          </span>
+                          {isOverseasStockChart && currentCategoryProfitUSD !== 0 && (
+                            <span className={`text-[10px] md:text-[11px] font-bold ${profitTone}`}>
+                              / {currentCategoryProfitUSD > 0 ? '+' : ''}{formatMoney(currentCategoryProfitUSD, 'USD')}
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
               <div className="mt-8 md:mt-12 w-full space-y-2">
                 {currentChartData.map(data => (
-                  <button key={data.id || data.name} onClick={() => !selectedCategory && setSelectedCategory(data.name)} className={`w-full flex items-center justify-between p-3 md:p-4 rounded-2xl border transition-all ${!selectedCategory ? 'bg-slate-50 border-transparent hover:bg-white hover:shadow-md hover:scale-[1.02]' : 'bg-white border-slate-50'}`}>
+                  <button key={data.id || data.name} onClick={() => !selectedCategory && setSelectedCategory(data.name)} className={`w-full flex items-center justify-between p-3 md:p-4 rounded-2xl border transition-all ${!selectedCategory ? 'bg-slate-50 border-transparent hover:bg-white hover:shadow-md hover:scale-[1.01]' : 'bg-white border-slate-50'}`}>
                     <div className="flex items-center gap-3">
                       <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full shadow-inner" style={{ backgroundColor: data.color }}></div>
-                      <span className="text-[11px] md:text-xs font-black text-slate-700">{data.name}</span>
+                      <span className="text-[11px] md:text-xs font-bold text-slate-700">{data.name}</span>
                     </div>
-                    <span className="text-[10px] md:text-[11px] font-black text-slate-400">{data.percent.toFixed(1)}%</span>
+                    <span className="text-[10px] md:text-[11px] font-bold text-slate-400">{data.percent.toFixed(1)}%</span>
                   </button>
                 ))}
               </div>
@@ -1261,9 +1356,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
             {/* List 섹션 */}
             <div className="lg:col-span-8 space-y-6">
-              <div className="bg-white rounded-[30px] md:rounded-[40px] shadow-sm border border-slate-100 overflow-hidden">
+              <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
                 <div className="p-6 md:p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
-                  <h3 className="text-base md:text-lg font-black text-slate-900">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
+                  <h3 className="text-base md:text-lg font-bold text-slate-900">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left table-auto">
@@ -1366,9 +1461,18 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       ))}
                     </tbody>
                   </table>
-                  {enhancedAssets.length === 0 && <p className="p-16 text-center text-slate-400 font-bold text-sm">자산이 없습니다. 종목을 추가해주세요.</p>}
+                  {enhancedAssets.length === 0 && (
+                    <div className="p-8 md:p-12 text-center">
+                      <div className="mx-auto w-14 h-14 rounded-2xl bg-slate-50 text-slate-400 flex items-center justify-center mb-4">
+                        <Wallet size={24} />
+                      </div>
+                      <p className="text-slate-800 font-bold text-sm md:text-base">아직 등록된 자산이 없습니다.</p>
+                      <p className="mt-2 text-slate-400 font-medium text-xs md:text-sm">주식, 가상화폐, 현금을 추가하면 상세 가치와 수익률이 표시됩니다.</p>
+                    </div>
+                  )}
                 </div>
               </div>
+            </div>
             </div>
           </div>
         )}
@@ -1612,7 +1716,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     onChange={(e) => setTradeStockFilter(e.target.value)}
                     className="px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-slate-700"
                   >
-                    <option value="all">?? ??</option>
+                    <option value="all">전체 종목</option>
                     {tradeStockOptions.map((name) => (
                       <option key={name} value={name}>{name}</option>
                     ))}
@@ -1629,15 +1733,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">? ?? ??</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매수 수량</p>
                     <p className="text-lg font-black text-slate-800">{tradeSummary.totalBuyQuantity.toLocaleString()}</p>
                   </div>
                   <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">? ?? ??</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매도 수량</p>
                     <p className="text-lg font-black text-slate-800">{tradeSummary.totalSellQuantity.toLocaleString()}</p>
                   </div>
                   <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">? ??</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">실현 손익</p>
                     <p className={`text-lg font-black ${tradeSummary.totalProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {tradeSummary.totalProfit > 0 ? '+' : ''}{formatMoney(tradeSummary.totalProfit, 'KRW')}
                     </p>
@@ -1656,30 +1760,55 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {visibleTrades.map((trade) => (
-                      <tr key={trade.id} className="hover:bg-slate-50/50 transition-colors">
-                        <td className="px-4 py-4 md:px-8 md:py-6 text-sm md:text-base font-black text-slate-800 whitespace-nowrap">{trade.name}</td>
-                        <td className="px-4 py-4 md:px-8 md:py-6 text-[10px] md:text-xs text-slate-500 font-bold space-y-1 whitespace-nowrap">
-                          <div><span className="text-slate-400 mr-1 md:mr-2">매수:</span>{trade.buyDate}</div>
-                          <div><span className="text-slate-400 mr-1 md:mr-2">매도:</span>{trade.sellDate}</div>
-                        </td>
-                        <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-700 space-y-1 whitespace-nowrap">
-                          <div>{formatMoney(trade.buyPrice, trade.currency)}</div>
-                          <div className="text-slate-400">{formatMoney(trade.sellPrice, trade.currency)}</div>
-                        </td>
-                        <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
-                          <span className={`inline-flex font-black px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl text-[10px] md:text-xs ${trade.pnl >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                            {trade.pnl > 0 ? '+' : ''}{formatMoney(trade.pnl, trade.currency)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-4 md:px-8 md:py-6 text-center whitespace-nowrap">
-                          <button onClick={(e) => removeTrade(trade.id, e)} className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors p-1.5 md:p-2 rounded-xl" title="기록 삭제"><Trash2 size={16} /></button>
-                        </td>
-                      </tr>
-                    ))}
+                    {visibleTrades.map((trade) => {
+                      const side = getTradeSide(trade);
+                      const action = side === 'sell' ? '매도' : '매수';
+                      const date = getRecordDate(trade);
+                      const price = side === 'sell'
+                        ? (trade.price || trade.sellPrice)
+                        : (trade.price || trade.buyPrice);
+                      const pnl = getRecordPnl(trade);
+
+                      return (
+                        <tr key={`${trade.sourceType}-${trade.id}`} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <span className={`inline-flex px-2 py-1 rounded-lg text-[10px] font-black ${side === 'sell' ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600'}`}>
+                                {action}
+                              </span>
+                              <div>
+                                <p className="text-sm md:text-base font-black text-slate-800">{trade.name}</p>
+                                {trade.ticker && (
+                                  <p className="text-[9px] md:text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">{trade.ticker}</p>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-[10px] md:text-xs text-slate-500 font-bold whitespace-nowrap">
+                            <span className="text-slate-400 mr-1 md:mr-2">{action}일:</span>{date || '-'}
+                          </td>
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-700 space-y-1 whitespace-nowrap">
+                            <div>{formatMoney(price, trade.currency)}</div>
+                            <div className="text-slate-400">{Number(trade.quantity || 0).toLocaleString()}주</div>
+                          </td>
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
+                            {side === 'sell' ? (
+                              <span className={`inline-flex font-black px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl text-[10px] md:text-xs ${pnl >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                {pnl > 0 ? '+' : ''}{formatMoney(pnl, trade.currency)}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] md:text-xs font-black text-slate-300">-</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-center whitespace-nowrap">
+                            <button onClick={(e) => removeTrade(trade, e)} className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors p-1.5 md:p-2 rounded-xl" title="기록 삭제"><Trash2 size={16} /></button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
-                {visibleTrades.length === 0 && <p className="p-8 md:p-10 text-center text-slate-400 font-bold text-xs md:text-sm">??? ?? ??? ????.</p>}
+                {visibleTrades.length === 0 && <p className="p-8 md:p-10 text-center text-slate-400 font-bold text-xs md:text-sm">표시할 매매 기록이 없습니다.</p>}
               </div>
             </div>
 
