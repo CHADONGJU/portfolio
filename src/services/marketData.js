@@ -103,18 +103,65 @@ export const fetchTextWithSafeProxy = async (url) => {
   return null;
 };
 
+const normalizeTicker = (ticker) => ticker
+  .toUpperCase()
+  .trim()
+  .replace(/^NASDAQ:/, '')
+  .replace(/^NYSE:/, '')
+  .replace(/^AMEX:/, '')
+  .replace(/\s+/g, '');
+
+const getUsTickerAliases = (ticker) => {
+  const cleanTicker = normalizeTicker(ticker);
+  const aliases = [cleanTicker];
+  const baseTicker = cleanTicker.replace(/\.US$/, '');
+
+  if (baseTicker.includes('.')) aliases.push(baseTicker.replace(/\./g, '-'));
+  if (baseTicker.includes('-')) aliases.push(baseTicker.replace(/-/g, '.'));
+  if (baseTicker.includes('/')) aliases.push(baseTicker.replace(/\//g, '-'), baseTicker.replace(/\//g, '.'));
+
+  if (cleanTicker.endsWith('.US')) aliases.push(cleanTicker.replace(/\.US$/, ''));
+  else if (!cleanTicker.includes('.')) aliases.push(`${cleanTicker}.US`);
+
+  return [...new Set(aliases)];
+};
+
+const pickMarketAwarePrice = (quote) => {
+  if (!quote) return null;
+
+  const marketState = quote.marketState;
+  const candidates = [];
+
+  if (marketState?.includes('PRE')) candidates.push(quote.preMarketPrice);
+  if (marketState?.includes('POST')) candidates.push(quote.postMarketPrice);
+  if (marketState === 'REGULAR') candidates.push(quote.regularMarketPrice);
+
+  candidates.push(
+    quote.regularMarketPrice,
+    quote.postMarketPrice,
+    quote.preMarketPrice,
+    quote.currentPrice,
+    quote.previousClose,
+  );
+
+  const price = candidates.find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
+  return price === undefined ? null : Number(price);
+};
+
 const readYahooPrice = (data) => {
   const meta = data?.chart?.result?.[0]?.meta;
   const quote = data?.chart?.result?.[0]?.indicators?.quote?.[0];
   const close = quote?.close?.findLast((value) => typeof value === 'number');
 
-  return close
-    ?? meta?.preMarketPrice
-    ?? meta?.postMarketPrice
-    ?? meta?.regularMarketPrice
+  return pickMarketAwarePrice(meta)
+    ?? close
     ?? meta?.chartPreviousClose
-    ?? meta?.previousClose
     ?? null;
+};
+
+const readYahooQuotePrice = (data) => {
+  const quote = data?.quoteResponse?.result?.[0];
+  return pickMarketAwarePrice(quote);
 };
 
 const isDomesticStock = (asset, ticker) => {
@@ -141,7 +188,7 @@ const readNaverPrice = (data) => {
 };
 
 const toStooqSymbol = (ticker) => {
-  const cleanTicker = ticker.toLowerCase().trim();
+  const cleanTicker = normalizeTicker(ticker).replace(/\./g, '-').toLowerCase();
   if (cleanTicker.includes('.')) return cleanTicker;
   return `${cleanTicker}.us`;
 };
@@ -159,7 +206,7 @@ const readStooqPrice = (csv) => {
 };
 
 export const fetchStockPrice = async (asset) => {
-  const ticker = asset.ticker.toUpperCase().trim();
+  const ticker = normalizeTicker(asset.ticker);
 
   if (isDomesticStock(asset, ticker)) {
     const cleanTicker = ticker.replace(/[^0-9]/g, '');
@@ -170,24 +217,45 @@ export const fetchStockPrice = async (asset) => {
     if (naverPrice !== null) return naverPrice;
   }
 
-  let yfTicker = ticker;
-  if (isDomesticStock(asset, ticker) && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
+  const yahooTickers = isDomesticStock(asset, ticker)
+    ? [ticker.includes('.') ? ticker : `${ticker}.KS`]
+    : getUsTickerAliases(ticker).map((symbol) => symbol.replace(/\.US$/, ''));
 
-  const yahooUrls = [
-    `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1d&range=5d`,
-  ];
+  const yahooUrls = yahooTickers.flatMap((yfTicker) => [
+    {
+      url: `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${yfTicker}`,
+      reader: readYahooQuotePrice,
+    },
+    {
+      url: `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yfTicker}`,
+      reader: readYahooQuotePrice,
+    },
+    {
+      url: `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
+      reader: readYahooPrice,
+    },
+    {
+      url: `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
+      reader: readYahooPrice,
+    },
+    {
+      url: `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1d&range=5d`,
+      reader: readYahooPrice,
+    },
+  ]);
 
-  for (const yfUrl of yahooUrls) {
-    const yfData = await fetchWithSafeProxy(yfUrl);
-    const yfPrice = readYahooPrice(yfData);
+  for (const { url, reader } of yahooUrls) {
+    const yfData = await fetchWithSafeProxy(url);
+    const yfPrice = reader(yfData);
     if (yfPrice !== null) return yfPrice;
   }
 
   if (asset.currency === 'USD') {
-    const stooqUrl = `https://stooq.com/q/l/?s=${toStooqSymbol(ticker)}&f=sd2t2ohlcv&h&e=csv`;
-    return readStooqPrice(await fetchTextWithSafeProxy(stooqUrl));
+    for (const alias of getUsTickerAliases(ticker)) {
+      const stooqUrl = `https://stooq.com/q/l/?s=${toStooqSymbol(alias)}&f=sd2t2ohlcv&h&e=csv`;
+      const stooqPrice = readStooqPrice(await fetchTextWithSafeProxy(stooqUrl));
+      if (stooqPrice !== null) return stooqPrice;
+    }
   }
 
   return null;

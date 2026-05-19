@@ -1,6 +1,8 @@
 export const ASSETS_STORAGE_KEY = 'portfolio_assets_v17';
 export const TRADES_STORAGE_KEY = 'portfolio_trades_v17';
 export const MEMOS_STORAGE_KEY = 'portfolio_trade_memos_v1';
+export const TRADE_LEDGER_STORAGE_KEY = 'portfolio_trade_ledger_v1';
+export const TARGET_PORTFOLIO_STORAGE_KEY = 'portfolio_target_plan_v1';
 
 export const ASSET_COLORS = [
   '#3b82f6',

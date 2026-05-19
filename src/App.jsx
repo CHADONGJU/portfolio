@@ -2,13 +2,20 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
-  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, Globe, ArrowRightLeft, Search
+  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, Globe, ArrowRightLeft, Search, Folder
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
 import MemoTab from './components/MemoTab';
 import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
-import { ASSET_COLORS, ASSETS_STORAGE_KEY, MEMOS_STORAGE_KEY, TRADES_STORAGE_KEY } from './constants';
+import {
+  ASSET_COLORS,
+  ASSETS_STORAGE_KEY,
+  MEMOS_STORAGE_KEY,
+  TARGET_PORTFOLIO_STORAGE_KEY,
+  TRADE_LEDGER_STORAGE_KEY,
+  TRADES_STORAGE_KEY,
+} from './constants';
 import { fetchBitcoinPrices, fetchDividends, fetchStockPrice, fetchUsdKrwRate } from './services/marketData';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { loadJson, saveJson } from './utils/storage';
@@ -48,6 +55,16 @@ const findMatchingSellTrade = (memo, trades) => trades.find((trade) => {
   return true;
 });
 
+const findMatchingMemoForLedger = (entry, memos) => memos.find((memo) => {
+  if (entry.sourceId === `memo-${memo.id}`) return true;
+  if (!entry.name || entry.name !== memo.name) return false;
+  if (!entry.date || entry.date !== memo.date) return false;
+  if (getTradeSide(entry) !== getTradeSide(memo)) return false;
+  if (parseNumber(entry.quantity) && parseNumber(memo.quantity) && !numbersMatch(entry.quantity, memo.quantity)) return false;
+  if (parseNumber(entry.price) && parseNumber(memo.price) && !numbersMatch(entry.price, memo.price)) return false;
+  return true;
+});
+
 const sortTradeRecords = (records, sortMode) => [...records].sort((a, b) => {
   if (sortMode === 'oldest') return new Date(getRecordDate(a)) - new Date(getRecordDate(b));
   if (sortMode === 'profit-desc') return getRecordPnl(b) - getRecordPnl(a);
@@ -55,22 +72,142 @@ const sortTradeRecords = (records, sortMode) => [...records].sort((a, b) => {
   return new Date(getRecordDate(b)) - new Date(getRecordDate(a));
 });
 
-const buildTradeSummary = (records, exchangeRate = 1) => records.reduce((summary, record) => {
+  const buildTradeSummary = (records, exchangeRate = 1) => records.reduce((summary, record) => {
   const quantity = Number(record.quantity) || 0;
   const action = normalizeTradeAction(record);
   const pnl = getRecordPnl(record);
   const pnlKRW = record.currency === 'USD' ? pnl * exchangeRate : pnl;
 
-  if (action === '매수') summary.totalBuyQuantity += quantity;
-  if (action === '매도') summary.totalSellQuantity += quantity;
+  if (action === '매수') {
+    summary.totalBuyQuantity += quantity;
+    summary.totalBuyCount += 1;
+  }
+  if (action === '매도') {
+    summary.totalSellQuantity += quantity;
+    summary.totalSellCount += 1;
+  }
   summary.totalProfit += pnlKRW;
 
   return summary;
 }, {
   totalBuyQuantity: 0,
   totalSellQuantity: 0,
+  totalBuyCount: 0,
+  totalSellCount: 0,
   totalProfit: 0,
 });
+
+const DEFAULT_TARGET_PORTFOLIO = {
+  budget: '',
+  categories: [
+    { id: '국내주식', percent: 30 },
+    { id: '해외주식', percent: 50 },
+    { id: '현금', percent: 20 },
+  ],
+  items: {
+    국내주식: [],
+    해외주식: [],
+    현금: [],
+  },
+  groups: {
+    국내주식: [],
+    해외주식: [],
+    현금: [],
+  },
+};
+
+const buildLedgerEntry = ({ sourceId, asset, side, quantity, price, date, pnl = 0 }) => ({
+  id: sourceId || `${Date.now()}-${Math.random()}`,
+  sourceId,
+  name: asset.name,
+  ticker: asset.ticker || '',
+  category: asset.category || '',
+  currency: asset.currency || 'KRW',
+  side,
+  action: side === 'sell' ? '매도' : '매수',
+  quantity: Number(quantity) || 0,
+  price: Number(price) || 0,
+  date,
+  pnl: Number(pnl) || 0,
+  createdAt: new Date().toISOString(),
+});
+
+const buildInitialTradeLedger = ({ assets, trades, memos }) => {
+  const entries = [];
+  const pushOnce = (entry) => {
+    if (!entry.name || !entry.date) return;
+    if (entries.some((item) => item.sourceId === entry.sourceId)) return;
+    entries.push(entry);
+  };
+
+  memos.forEach((memo) => {
+    pushOnce(buildLedgerEntry({
+      sourceId: `memo-${memo.id}`,
+      asset: memo,
+      side: getTradeSide(memo),
+      quantity: memo.quantity,
+      price: memo.price,
+      date: memo.date,
+      pnl: getRecordPnl(memo),
+    }));
+  });
+
+  trades.forEach((trade) => {
+    pushOnce(buildLedgerEntry({
+      sourceId: `trade-${trade.id}`,
+      asset: trade,
+      side: 'sell',
+      quantity: trade.quantity,
+      price: trade.sellPrice,
+      date: trade.sellDate,
+      pnl: trade.pnl,
+    }));
+  });
+
+  assets.forEach((asset) => {
+    const alreadyHasBuy = entries.some((entry) => (
+      entry.side === 'buy'
+      && entry.name === asset.name
+      && entry.date === asset.buyDate
+      && numbersMatch(entry.quantity, asset.quantity)
+    ));
+    if (alreadyHasBuy || !asset.buyDate || asset.category === '현금') return;
+
+    pushOnce(buildLedgerEntry({
+      sourceId: `asset-${asset.id}`,
+      asset,
+      side: 'buy',
+      quantity: asset.quantity,
+      price: asset.originalAveragePrice || asset.averagePrice,
+      date: asset.buyDate,
+    }));
+  });
+
+  return entries.sort((a, b) => new Date(b.date) - new Date(a.date));
+};
+
+const getTargetGroups = (targetPortfolio, categoryId) => {
+  const savedGroups = targetPortfolio.groups?.[categoryId] || [];
+  const legacyItems = targetPortfolio.items?.[categoryId] || [];
+
+  if (savedGroups.length > 0) {
+    return savedGroups.map((group) => ({
+      ...group,
+      items: group.items || [],
+    }));
+  }
+
+  if (legacyItems.length > 0) {
+    return [{
+      id: `${categoryId}-default-group`,
+      name: '직접 설정',
+      percent: 100,
+      items: legacyItems,
+    }];
+  }
+
+  return [];
+};
 
 const App = () => {
   // 1. 상태 관리
@@ -99,8 +236,11 @@ const App = () => {
   const defaultBuyDate = new Date().toISOString().split('T')[0];
   const [tradeSortMode, setTradeSortMode] = useState('newest');
   const [tradeStockFilter, setTradeStockFilter] = useState('all');
+  const [performanceSearchTerm, setPerformanceSearchTerm] = useState('');
   const [memoSortMode, setMemoSortMode] = useState('newest');
   const [memoStockFilter, setMemoStockFilter] = useState('all');
+  const [targetViewMode, setTargetViewMode] = useState('table');
+  const [targetCategoryDraft, setTargetCategoryDraft] = useState('가상화폐');
   const [manualMemo, setManualMemo] = useState({
     stockName: '',
     ticker: '',
@@ -170,11 +310,26 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     return loadJson(MEMOS_STORAGE_KEY, []);
   });
 
+  const [tradeLedger, setTradeLedger] = useState(() => {
+    return loadJson(TRADE_LEDGER_STORAGE_KEY, []);
+  });
+
+  const [targetPortfolio, setTargetPortfolio] = useState(() => {
+    return loadJson(TARGET_PORTFOLIO_STORAGE_KEY, DEFAULT_TARGET_PORTFOLIO);
+  });
+
   const [autoDividends, setAutoDividends] = useState([]);
 
   useEffect(() => { saveJson(ASSETS_STORAGE_KEY, assets); }, [assets]);
   useEffect(() => { saveJson(TRADES_STORAGE_KEY, trades); }, [trades]);
   useEffect(() => { saveJson(MEMOS_STORAGE_KEY, memos); }, [memos]);
+  useEffect(() => { saveJson(TRADE_LEDGER_STORAGE_KEY, tradeLedger); }, [tradeLedger]);
+  useEffect(() => { saveJson(TARGET_PORTFOLIO_STORAGE_KEY, targetPortfolio); }, [targetPortfolio]);
+  useEffect(() => {
+    if (tradeLedger.length > 0) return;
+    const initialLedger = buildInitialTradeLedger({ assets, trades, memos });
+    if (initialLedger.length > 0) setTradeLedger(initialLedger);
+  }, [assets, trades, memos, tradeLedger.length]);
 
   // 2. 완벽한 데이터 연동 로직
   const assetsRef = useRef(assets);
@@ -290,11 +445,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   const {
     enhancedAssets,
+    totalConvertedKRW,
     currentChartData,
     currentCategoryKRW,
     currentCategoryUSD,
     currentCategoryTotalConverted,
     currentCategoryProfitKRW,
+    currentCategoryProfitUSD,
     totalUsdPurchase,
     avgBuyExchangeRate,
     fxProfitPercent,
@@ -302,11 +459,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     krwNetProfit,
     usdNetProfit,
     totalConvertedNetProfit,
+    stockPerformanceSummary,
     dividendSummary,
     filteredHistory,
   } = usePortfolioMetrics({
     assets,
     trades,
+    tradeLedger,
     autoDividends,
     exchangeRate,
     selectedCategory,
@@ -315,8 +474,107 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   });
 
   const isDomesticStockChart = selectedCategory?.includes('국내') && selectedCategory?.includes('주식');
+  const isOverseasStockChart = selectedCategory?.includes('해외') && selectedCategory?.includes('주식');
   const profitTone = currentCategoryProfitKRW >= 0 ? 'text-emerald-600' : 'text-rose-600';
   const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
+  const filteredPerformanceSummary = useMemo(() => {
+    const keyword = performanceSearchTerm.trim().toLowerCase();
+    if (!keyword) return stockPerformanceSummary;
+
+    return stockPerformanceSummary.filter((summary) => (
+      summary.name.toLowerCase().includes(keyword)
+      || summary.ticker?.toLowerCase().includes(keyword)
+      || summary.category?.toLowerCase().includes(keyword)
+    ));
+  }, [stockPerformanceSummary, performanceSearchTerm]);
+  const targetBudgetKRW = parseNumber(targetPortfolio.budget) || totalConvertedKRW;
+  const targetCategoryTotalPercent = targetPortfolio.categories.reduce((sum, category) => sum + (Number(category.percent) || 0), 0);
+  const targetPortfolioGuide = useMemo(() => {
+    const rate = exchangeRate || 1350;
+
+    return targetPortfolio.categories.map((categoryTarget) => {
+      const categoryAssets = enhancedAssets.filter((asset) => asset.category === categoryTarget.id);
+      const currentValue = categoryAssets.reduce((sum, asset) => sum + asset.currentKRW, 0);
+      const targetValue = targetBudgetKRW * ((Number(categoryTarget.percent) || 0) / 100);
+      const groups = getTargetGroups(targetPortfolio, categoryTarget.id);
+      const groupTotalPercent = groups.reduce((sum, group) => sum + (Number(group.percent) || 0), 0);
+
+      return {
+        ...categoryTarget,
+        currentValue,
+        targetValue,
+        gapValue: targetValue - currentValue,
+        currentPercent: targetBudgetKRW > 0 ? (currentValue / targetBudgetKRW) * 100 : 0,
+        groupTotalPercent,
+        groups: groups.map((group) => {
+          const groupTargetValue = targetValue * ((Number(group.percent) || 0) / 100);
+          const items = group.items || [];
+          const itemTotalPercent = items.reduce((sum, item) => sum + (Number(item.percent) || 0), 0);
+          const enrichedItems = items.map((item) => {
+            const matchedAsset = categoryAssets.find((asset) => (
+              asset.name === item.name || (item.ticker && asset.ticker === item.ticker)
+            ));
+            const currentItemValue = matchedAsset?.currentKRW || 0;
+            const itemTargetValue = groupTargetValue * ((Number(item.percent) || 0) / 100);
+            const gapValue = itemTargetValue - currentItemValue;
+            const currentPriceKRW = matchedAsset
+              ? (matchedAsset.currency === 'USD' ? (matchedAsset.originalCurrentPrice || matchedAsset.currentPrice) * rate : matchedAsset.currentPrice)
+              : parseNumber(item.price);
+
+            return {
+              ...item,
+              currentValue: currentItemValue,
+              targetValue: itemTargetValue,
+              gapValue,
+              currentPriceKRW,
+              quantityToBuy: gapValue > 0 && currentPriceKRW > 0 ? gapValue / currentPriceKRW : 0,
+              matchedQuantity: matchedAsset?.quantity || 0,
+            };
+          });
+
+          return {
+            ...group,
+            targetValue: groupTargetValue,
+            currentValue: enrichedItems.reduce((sum, item) => sum + item.currentValue, 0),
+            itemTotalPercent,
+            items: enrichedItems,
+          };
+        }),
+      };
+    });
+  }, [targetPortfolio, enhancedAssets, targetBudgetKRW, exchangeRate]);
+  const targetCurrentChartData = useMemo(() => {
+    let cumulativePercent = 0;
+    return targetPortfolioGuide.map((category, index) => {
+      const percent = targetBudgetKRW > 0 ? (category.currentValue / targetBudgetKRW) * 100 : 0;
+      const startPercent = cumulativePercent;
+      cumulativePercent += percent;
+      return {
+        id: `current-${category.id}`,
+        name: category.id,
+        value: category.currentValue,
+        percent,
+        startPercent,
+        color: ASSET_COLORS[index % ASSET_COLORS.length],
+      };
+    });
+  }, [targetPortfolioGuide, targetBudgetKRW]);
+  const targetGoalChartData = useMemo(() => {
+    let cumulativePercent = 0;
+    return targetPortfolioGuide.map((category, index) => {
+      const percent = Number(category.percent) || 0;
+      const startPercent = cumulativePercent;
+      cumulativePercent += percent;
+      return {
+        id: `goal-${category.id}`,
+        name: category.id,
+        value: category.targetValue,
+        percent,
+        startPercent,
+        color: ASSET_COLORS[index % ASSET_COLORS.length],
+      };
+    });
+  }, [targetPortfolioGuide]);
   const tradeStockOptions = useMemo(() => (
     [...new Set(trades.map((trade) => trade.name).filter(Boolean))].sort()
   ), [trades]);
@@ -340,23 +598,48 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   }), [memos, trades]);
   const memoStockOptions = useMemo(() => (
     [...new Set([
-      ...assets.map((asset) => asset.name),
-      ...trades.map((trade) => trade.name),
+      ...tradeLedger.map((entry) => entry.name),
       ...enrichedMemos.map((memo) => memo.name),
     ].filter(Boolean))].sort()
-  ), [assets, trades, enrichedMemos]);
+  ), [tradeLedger, enrichedMemos]);
   const visibleTrades = useMemo(() => {
     const filtered = tradeStockFilter === 'all'
       ? trades
       : trades.filter((trade) => trade.name === tradeStockFilter);
     return sortTradeRecords(filtered, tradeSortMode);
   }, [trades, tradeStockFilter, tradeSortMode]);
+  const memoLedgerRecords = useMemo(() => {
+    const matchedMemoIds = new Set();
+    const ledgerRecords = tradeLedger.map((entry) => {
+      const matchedMemo = findMatchingMemoForLedger(entry, enrichedMemos);
+      if (matchedMemo) matchedMemoIds.add(matchedMemo.id);
+
+      return {
+        ...entry,
+        id: `ledger-${entry.id}`,
+        ledgerId: entry.id,
+        memoId: matchedMemo?.id,
+        memo: matchedMemo?.memo || '',
+        sourceType: 'ledger',
+      };
+    });
+    const memoOnlyRecords = enrichedMemos
+      .filter((memo) => !matchedMemoIds.has(memo.id))
+      .map((memo) => ({
+        ...memo,
+        id: `memo-${memo.id}`,
+        memoId: memo.id,
+        sourceType: 'memo',
+      }));
+
+    return [...ledgerRecords, ...memoOnlyRecords];
+  }, [tradeLedger, enrichedMemos]);
   const visibleMemos = useMemo(() => {
     const filtered = memoStockFilter === 'all'
-      ? enrichedMemos
-      : enrichedMemos.filter((memo) => memo.name === memoStockFilter);
+      ? memoLedgerRecords
+      : memoLedgerRecords.filter((memo) => memo.name === memoStockFilter);
     return sortTradeRecords(filtered, memoSortMode);
-  }, [enrichedMemos, memoStockFilter, memoSortMode]);
+  }, [memoLedgerRecords, memoStockFilter, memoSortMode]);
   const tradeSummary = useMemo(() => {
     const matchingBuyMemos = enrichedMemos.filter((memo) => (
       getTradeSide(memo) === 'buy'
@@ -387,17 +670,199 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   const removeMemo = (id, e) => {
     if (e) e.stopPropagation();
-    setMemos(prevMemos => prevMemos.filter(memo => memo.id !== id));
+    if (String(id).startsWith('ledger-')) {
+      const ledgerId = String(id).replace('ledger-', '');
+      const entry = tradeLedger.find((record) => String(record.id) === ledgerId);
+      const matchedMemo = entry ? findMatchingMemoForLedger(entry, memos) : null;
+      if (matchedMemo) {
+        setMemos(prevMemos => prevMemos.filter(memo => memo.id !== matchedMemo.id));
+        addLog("메모가 삭제되었습니다.", "success");
+      }
+      return;
+    }
+    setMemos(prevMemos => prevMemos.filter(memo => memo.id !== id && `memo-${memo.id}` !== id));
     addLog("메모가 삭제되었습니다.", "success");
   };
 
   const updateMemoText = (id, memoText) => {
+    if (String(id).startsWith('ledger-')) {
+      const ledgerId = String(id).replace('ledger-', '');
+      const entry = tradeLedger.find((record) => String(record.id) === ledgerId);
+      if (!entry) return;
+
+      const matchedMemo = findMatchingMemoForLedger(entry, memos);
+      if (matchedMemo) {
+        setMemos(prevMemos => prevMemos.map((memo) => (
+          memo.id === matchedMemo.id
+            ? { ...memo, memo: memoText.trim(), updatedAt: new Date().toISOString() }
+            : memo
+        )));
+      } else {
+        setMemos(prevMemos => [{
+          id: Date.now() + Math.random(),
+          assetId: entry.assetId ?? null,
+          name: entry.name,
+          ticker: entry.ticker,
+          category: entry.category,
+          currency: entry.currency,
+          side: entry.side,
+          action: entry.action || (entry.side === 'sell' ? '매도' : '매수'),
+          quantity: entry.quantity,
+          price: entry.price,
+          date: entry.date,
+          pnl: entry.pnl || 0,
+          memo: memoText.trim(),
+          createdAt: new Date().toISOString(),
+          ledgerId: entry.id,
+        }, ...prevMemos]);
+      }
+      addLog('메모가 수정되었습니다.', 'success');
+      return;
+    }
+
     setMemos(prevMemos => prevMemos.map((memo) => (
-      memo.id === id
+      memo.id === id || `memo-${memo.id}` === id
         ? { ...memo, memo: memoText.trim(), updatedAt: new Date().toISOString() }
         : memo
     )));
     addLog('메모가 수정되었습니다.', 'success');
+  };
+
+  const addLedgerEntry = ({ asset, side, quantity, price, date, pnl = 0 }) => {
+    const entry = buildLedgerEntry({
+      asset,
+      side,
+      quantity,
+      price,
+      date,
+      pnl,
+    });
+    setTradeLedger(prevLedger => [entry, ...prevLedger]);
+  };
+
+  const updateTargetCategoryPercent = (categoryId, percent) => {
+    setTargetPortfolio(prev => ({
+      ...prev,
+      categories: prev.categories.map(category => (
+        category.id === categoryId ? { ...category, percent: parseNumber(percent) } : category
+      )),
+    }));
+  };
+
+  const addTargetCategory = () => {
+    if (!targetCategoryDraft) return;
+    setTargetPortfolio(prev => {
+      if (prev.categories.some(category => category.id === targetCategoryDraft)) return prev;
+      return {
+        ...prev,
+        categories: [...prev.categories, { id: targetCategoryDraft, percent: 0 }],
+        items: { ...prev.items, [targetCategoryDraft]: [] },
+        groups: { ...prev.groups, [targetCategoryDraft]: [] },
+      };
+    });
+  };
+
+  const removeTargetCategory = (categoryId) => {
+    setTargetPortfolio(prev => {
+      const nextItems = { ...prev.items };
+      const nextGroups = { ...prev.groups };
+      delete nextItems[categoryId];
+      delete nextGroups[categoryId];
+      return {
+        ...prev,
+        categories: prev.categories.filter(category => category.id !== categoryId),
+        items: nextItems,
+        groups: nextGroups,
+      };
+    });
+  };
+
+  const addTargetGroup = (categoryId) => {
+    setTargetPortfolio(prev => ({
+      ...prev,
+      groups: {
+        ...prev.groups,
+        [categoryId]: [
+          ...getTargetGroups(prev, categoryId),
+          { id: `${Date.now()}-${Math.random()}`, name: '새 폴더', percent: 0, items: [] },
+        ],
+      },
+    }));
+  };
+
+  const updateTargetGroup = (categoryId, groupId, patch) => {
+    setTargetPortfolio(prev => ({
+      ...prev,
+      groups: {
+        ...prev.groups,
+        [categoryId]: getTargetGroups(prev, categoryId).map(group => (
+          group.id === groupId ? { ...group, ...patch } : group
+        )),
+      },
+    }));
+  };
+
+  const removeTargetGroup = (categoryId, groupId) => {
+    setTargetPortfolio(prev => ({
+      ...prev,
+      groups: {
+        ...prev.groups,
+        [categoryId]: getTargetGroups(prev, categoryId).filter(group => group.id !== groupId),
+      },
+    }));
+  };
+
+  const addTargetItem = (categoryId, groupId) => {
+    setTargetPortfolio(prev => ({
+      ...prev,
+      groups: {
+        ...prev.groups,
+        [categoryId]: getTargetGroups(prev, categoryId).map(group => (
+          group.id === groupId
+            ? {
+              ...group,
+              items: [
+                ...(group.items || []),
+                { id: `${Date.now()}-${Math.random()}`, name: '', ticker: '', percent: 0, price: '' },
+              ],
+            }
+            : group
+        )),
+      },
+    }));
+  };
+
+  const updateTargetItem = (categoryId, groupId, itemId, patch) => {
+    setTargetPortfolio(prev => ({
+      ...prev,
+      groups: {
+        ...prev.groups,
+        [categoryId]: getTargetGroups(prev, categoryId).map(group => (
+          group.id === groupId
+            ? {
+              ...group,
+              items: (group.items || []).map(item => (
+                item.id === itemId ? { ...item, ...patch } : item
+              )),
+            }
+            : group
+        )),
+      },
+    }));
+  };
+
+  const removeTargetItem = (categoryId, groupId, itemId) => {
+    setTargetPortfolio(prev => ({
+      ...prev,
+      groups: {
+        ...prev.groups,
+        [categoryId]: getTargetGroups(prev, categoryId).map(group => (
+          group.id === groupId
+            ? { ...group, items: (group.items || []).filter(item => item.id !== itemId) }
+            : group
+        )),
+      },
+    }));
   };
 
   const addTradeMemo = ({ asset, action, quantity, price, date, memo, realizedPnl = 0 }) => {
@@ -426,13 +891,20 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     }
 
     const matchedAsset = assets.find((asset) => asset.name === manualMemo.stockName);
-    setMemos(prevMemos => [{
-      id: Date.now() + Math.random(),
-      assetId: matchedAsset?.id ?? null,
+    const manualMemoAsset = {
+      id: matchedAsset?.id ?? null,
       name: manualMemo.stockName,
       ticker: matchedAsset?.ticker || manualMemo.ticker,
       category: matchedAsset?.category || '',
       currency: matchedAsset?.currency || manualMemo.currency,
+    };
+    setMemos(prevMemos => [{
+      id: Date.now() + Math.random(),
+      assetId: manualMemoAsset.id,
+      name: manualMemoAsset.name,
+      ticker: manualMemoAsset.ticker,
+      category: manualMemoAsset.category,
+      currency: manualMemoAsset.currency,
       side: manualMemo.action === '매도' ? 'sell' : 'buy',
       action: manualMemo.action,
       quantity: parseNumber(manualMemo.quantity),
@@ -442,6 +914,14 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       memo: manualMemo.memo.trim(),
       createdAt: new Date().toISOString()
     }, ...prevMemos]);
+    addLedgerEntry({
+      asset: manualMemoAsset,
+      side: manualMemo.action === '매도' ? 'sell' : 'buy',
+      quantity: parseNumber(manualMemo.quantity),
+      price: parseNumber(manualMemo.price),
+      date: manualMemo.date,
+      pnl: parseNumber(manualMemo.realizedPnl),
+    });
 
     setManualMemo({
       stockName: '',
@@ -534,6 +1014,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     date: addBuyForm.buyDate,
     memo: addBuyForm.memo
   });
+  addLedgerEntry({
+    asset: selectedAssetToUpdate,
+    side: 'buy',
+    quantity: addedQty,
+    price: addedAvgNative,
+    date: addBuyForm.buyDate,
+  });
 
   addLog(`'${selectedAssetToUpdate.name}' 추가 매수 반영 완료`, "success");
   setIsUpdatingAsset(false);
@@ -608,6 +1095,14 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     memo: sellForm.memo,
     realizedPnl: pnlNative
   });
+  addLedgerEntry({
+    asset: selectedAssetToSell,
+    side: 'sell',
+    quantity: sellQty,
+    price: sellPriceNative,
+    date: sellForm.sellDate,
+    pnl: pnlNative,
+  });
 
   addLog(`'${selectedAssetToSell.name}' 매도 반영 완료`, "success");
   setIsSellingAsset(false);
@@ -658,6 +1153,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       price: parsedAvgPrice,
       date: newAsset.buyDate,
       memo: newAsset.memo
+    });
+    addLedgerEntry({
+      asset,
+      side: 'buy',
+      quantity: parsedQty,
+      price: parsedAvgPrice,
+      date: newAsset.buyDate,
     });
     setNewAsset(initialAssetState);
     setIsAdding(false);
@@ -734,6 +1236,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                         <span className={`text-[10px] md:text-[11px] font-black ${profitTone}`}>
                           {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
                         </span>
+                        {isOverseasStockChart && currentCategoryProfitUSD !== 0 && (
+                          <span className={`text-[10px] md:text-[11px] font-black ${profitTone}`}>
+                            / {currentCategoryProfitUSD > 0 ? '+' : ''}{formatMoney(currentCategoryProfitUSD, 'USD')}
+                          </span>
+                        )}
                       </div>
                     </>
                   )}
@@ -892,6 +1399,82 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                 <p className={`text-3xl md:text-4xl font-black tracking-tighter ${totalConvertedNetProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                   {totalConvertedNetProfit > 0 ? '+' : ''}{formatMoney(totalConvertedNetProfit, 'KRW')}
                 </p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-[30px] md:rounded-[40px] shadow-sm border border-slate-100 overflow-hidden">
+              <div className="p-6 md:p-8 border-b border-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-50/30">
+                <div>
+                  <h3 className="text-base md:text-lg font-black text-slate-900">종목별 총 손익</h3>
+                  <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">평가손익, 실현손익, 배당을 합산합니다.</p>
+                </div>
+                <div className="relative w-full md:w-72">
+                  <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    value={performanceSearchTerm}
+                    onChange={(e) => setPerformanceSearchTerm(e.target.value)}
+                    placeholder="종목명 또는 티커 검색"
+                    className="w-full pl-10 pr-4 py-3 bg-white border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold text-slate-700"
+                  />
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left table-auto">
+                  <thead className="bg-slate-50/50 text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em]">
+                    <tr>
+                      <th className="px-4 py-4 md:px-8 md:py-5">종목</th>
+                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">누적 매수/매도</th>
+                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">평가 손익</th>
+                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">실현 손익</th>
+                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">배당</th>
+                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">총 손익</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {filteredPerformanceSummary.map((summary) => {
+                      const totalTone = summary.totalKRW >= 0 ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50';
+                      return (
+                        <tr key={summary.name} className="hover:bg-slate-50/50 transition-colors">
+                          <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
+                            <p className="text-sm md:text-base font-black text-slate-900">{summary.name}</p>
+                            <p className="text-[9px] md:text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">
+                              {summary.ticker || summary.category || '기록 종목'}
+                              {summary.quantity > 0 && ` • 보유 ${summary.quantity.toLocaleString()}주`}
+                            </p>
+                          </td>
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-600 whitespace-nowrap">
+                            <div>매수 {summary.totalBuyQuantity.toLocaleString()}주</div>
+                            <div className="text-slate-400 mt-1">매도 {summary.totalSellQuantity.toLocaleString()}주</div>
+                          </td>
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-600 whitespace-nowrap">
+                            {summary.unrealizedKRW > 0 ? '+' : ''}{formatMoney(summary.unrealizedKRW, 'KRW')}
+                          </td>
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-600 whitespace-nowrap">
+                            {summary.realizedKRW > 0 ? '+' : ''}{formatMoney(summary.realizedKRW, 'KRW')}
+                          </td>
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-600 whitespace-nowrap">
+                            {summary.dividendKRW > 0 ? '+' : ''}{formatMoney(summary.dividendKRW, 'KRW')}
+                          </td>
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
+                            <div className="flex flex-col items-end gap-1">
+                              <span className={`inline-flex px-3 py-1.5 rounded-xl text-xs md:text-sm font-black ${totalTone}`}>
+                                {summary.totalKRW > 0 ? '+' : ''}{formatMoney(summary.totalKRW, 'KRW')}
+                              </span>
+                              {summary.currency === 'USD' && (
+                                <span className="text-[10px] md:text-xs font-black text-blue-500">
+                                  {summary.totalNative > 0 ? '+' : ''}{formatMoney(summary.totalNative, 'USD')}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                {filteredPerformanceSummary.length === 0 && (
+                  <p className="p-8 md:p-10 text-center text-slate-400 font-bold text-xs md:text-sm">검색 결과가 없습니다.</p>
+                )}
               </div>
             </div>
 
@@ -1100,6 +1683,288 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               </div>
             </div>
 
+          </div>
+        )}
+
+        {activeTab === 'target' && (
+          <div className="space-y-8 animate-in fade-in duration-500">
+            <div className="bg-white rounded-[30px] md:rounded-[40px] shadow-sm border border-slate-100 overflow-hidden">
+              <div className="p-6 md:p-8 border-b border-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-50/30">
+                <div>
+                  <h3 className="text-base md:text-lg font-black text-slate-900">목표 포트폴리오 설정</h3>
+                  <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">분류별 목표 비중과 분류 안 종목별 목표 비중을 저장합니다.</p>
+                </div>
+                <div className="w-full md:w-80">
+                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                    기준 총 예산
+                  </label>
+                  <input
+                    value={formatInputNumber(targetPortfolio.budget)}
+                    onChange={(e) => setTargetPortfolio(prev => ({ ...prev, budget: sanitizeNumericInput(e.target.value) }))}
+                    placeholder={`현재 총자산 ${formatMoney(totalConvertedKRW, 'KRW')}`}
+                    className="w-full px-4 py-3 bg-white border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 text-sm font-black text-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div className="p-5 md:p-6 border-b border-slate-50 bg-white">
+                <div className="flex flex-col md:flex-row gap-3 md:items-end">
+                  <div className="flex-1">
+                    <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                      분류 추가
+                    </label>
+                    <select
+                      value={targetCategoryDraft}
+                      onChange={(e) => setTargetCategoryDraft(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-slate-700"
+                    >
+                      {['국내주식', '해외주식', '현금', '가상화폐', '원자재'].map(category => (
+                        <option key={category} value={category}>{category}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={addTargetCategory}
+                    className="px-5 py-3 bg-slate-900 text-white rounded-2xl font-black text-xs md:text-sm flex items-center justify-center gap-2"
+                  >
+                    <Plus size={16} /> 분류 추가
+                  </button>
+                  <div className={`px-5 py-3 rounded-2xl border text-xs md:text-sm font-black ${Math.abs(targetCategoryTotalPercent - 100) < 0.001 ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
+                    전체 목표 {targetCategoryTotalPercent.toFixed(1)}%
+                  </div>
+                  <div className="flex bg-slate-100 border border-slate-100 rounded-2xl p-1">
+                    {[
+                      { id: 'table', label: '표' },
+                      { id: 'chart', label: '파이그래프' },
+                    ].map((mode) => (
+                      <button
+                        key={mode.id}
+                        onClick={() => setTargetViewMode(mode.id)}
+                        className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${targetViewMode === mode.id ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-700'}`}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {targetViewMode === 'chart' && (
+                <div className="p-5 md:p-7 border-b border-slate-50 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {[
+                    { title: '현재 포트폴리오', data: targetCurrentChartData, center: formatMoney(totalConvertedKRW, 'KRW') },
+                    { title: '목표 포트폴리오', data: targetGoalChartData, center: formatMoney(targetBudgetKRW, 'KRW') },
+                  ].map((chart) => (
+                    <div key={chart.title} className="bg-slate-50 border border-slate-100 rounded-[28px] p-5 md:p-6">
+                      <div className="flex items-center justify-between gap-3 mb-5">
+                        <h4 className="text-sm md:text-base font-black text-slate-900">{chart.title}</h4>
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{chart.center}</span>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-5 items-center">
+                        <div className="relative w-52 h-52 mx-auto">
+                          <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+                            {chart.data.map((item) => (
+                              <circle
+                                key={item.id}
+                                cx="18"
+                                cy="18"
+                                r="15.9"
+                                fill="transparent"
+                                stroke={item.color}
+                                strokeWidth="3.8"
+                                strokeDasharray={`${item.percent} ${100 - item.percent}`}
+                                strokeDashoffset={-item.startPercent}
+                              />
+                            ))}
+                          </svg>
+                          <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Total</span>
+                            <span className="text-sm font-black text-slate-900 mt-1">{chart.center}</span>
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          {chart.data.map((item) => (
+                            <div key={item.id} className="flex items-center justify-between gap-3 bg-white rounded-2xl px-4 py-3 border border-slate-100">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                                <span className="text-xs font-black text-slate-700 truncate">{item.name}</span>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className="text-xs font-black text-slate-900">{item.percent.toFixed(1)}%</p>
+                                <p className="text-[10px] font-bold text-slate-400">{formatMoney(item.value, 'KRW')}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {targetViewMode === 'table' && (
+              <div className="divide-y divide-slate-50">
+                {targetPortfolioGuide.map((category) => (
+                  <div key={category.id} className="p-5 md:p-7 space-y-5">
+                    <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr_auto] gap-3 lg:items-end">
+                      <div>
+                        <p className="text-sm md:text-base font-black text-slate-900">{category.id}</p>
+                        <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">
+                          현재 {category.currentPercent.toFixed(1)}% / 목표 {Number(category.percent || 0).toFixed(1)}%
+                        </p>
+                      </div>
+                      <div>
+                        <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                          목표 비중
+                        </label>
+                        <input
+                          value={category.percent}
+                          onChange={(e) => updateTargetCategoryPercent(category.id, e.target.value)}
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 text-sm font-black text-slate-800"
+                        />
+                      </div>
+                      <button
+                        onClick={() => removeTargetCategory(category.id)}
+                        className="px-4 py-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-2xl transition-colors justify-self-start lg:justify-self-end"
+                        title="분류 삭제"
+                      >
+                        <Trash2 size={17} />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">현재 가치</p>
+                        <p className="text-lg font-black text-slate-800">{formatMoney(category.currentValue, 'KRW')}</p>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">목표 가치</p>
+                        <p className="text-lg font-black text-blue-600">{formatMoney(category.targetValue, 'KRW')}</p>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">차이</p>
+                        <p className={`text-lg font-black ${category.gapValue >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {category.gapValue > 0 ? '+' : ''}{formatMoney(category.gapValue, 'KRW')}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-xs md:text-sm font-black text-slate-800">분류 안 폴더 목표</p>
+                          <p className={`text-[10px] md:text-xs font-bold mt-1 ${Math.abs(category.groupTotalPercent - 100) < 0.001 || category.groups.length === 0 ? 'text-slate-400' : 'text-amber-600'}`}>
+                            폴더 목표 합계 {category.groupTotalPercent.toFixed(1)}%
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => addTargetGroup(category.id)}
+                          className="px-4 py-2.5 bg-blue-50 text-blue-600 rounded-xl font-black text-xs flex items-center gap-2"
+                        >
+                          <Plus size={14} /> 폴더 추가
+                        </button>
+                      </div>
+
+                      {category.groups.map((group) => (
+                        <div key={group.id} className="bg-slate-50 border border-slate-100 rounded-3xl p-4 md:p-5 space-y-3">
+                          <div className="grid grid-cols-1 lg:grid-cols-[1fr_0.5fr_auto_auto] gap-2 lg:items-center">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Folder size={17} className="text-blue-600 shrink-0" />
+                              <input
+                                value={group.name}
+                                onChange={(e) => updateTargetGroup(category.id, group.id, { name: e.target.value })}
+                                placeholder="폴더명 예: 빅테크"
+                                className="w-full px-3 py-2.5 bg-white border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-black"
+                              />
+                            </div>
+                            <input
+                              value={group.percent}
+                              onChange={(e) => updateTargetGroup(category.id, group.id, { percent: parseNumber(e.target.value) })}
+                              placeholder="폴더 비중 %"
+                              className="px-3 py-2.5 bg-white border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold"
+                            />
+                            <button
+                              onClick={() => addTargetItem(category.id, group.id)}
+                              className="px-3 py-2.5 bg-white text-blue-600 border border-blue-100 rounded-xl font-black text-xs flex items-center justify-center gap-1.5"
+                            >
+                              <Plus size={13} /> 종목
+                            </button>
+                            <button
+                              onClick={() => removeTargetGroup(category.id, group.id)}
+                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                              title="폴더 삭제"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-[10px] md:text-xs font-black">
+                            <span className="bg-white rounded-xl px-3 py-2 text-slate-500">폴더 목표 {Number(group.percent || 0).toFixed(1)}%</span>
+                            <span className="bg-white rounded-xl px-3 py-2 text-blue-600">목표 {formatMoney(group.targetValue, 'KRW')}</span>
+                            <span className="bg-white rounded-xl px-3 py-2 text-slate-500">현재 {formatMoney(group.currentValue, 'KRW')}</span>
+                            <span className={`${Math.abs(group.itemTotalPercent - 100) < 0.001 || group.items.length === 0 ? 'text-slate-500' : 'text-amber-600'} bg-white rounded-xl px-3 py-2`}>
+                              종목 합계 {group.itemTotalPercent.toFixed(1)}%
+                            </span>
+                          </div>
+
+                          <div className="space-y-2 pl-3 md:pl-5 border-l-2 border-blue-100">
+                            {group.items.map((item) => (
+                              <div key={item.id} className="grid grid-cols-1 lg:grid-cols-[1fr_0.8fr_0.55fr_0.8fr_auto] gap-2 bg-white border border-slate-100 rounded-2xl p-3">
+                                <input
+                                  value={item.name}
+                                  onChange={(e) => updateTargetItem(category.id, group.id, item.id, { name: e.target.value })}
+                                  placeholder="종목명"
+                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold"
+                                />
+                                <input
+                                  value={item.ticker}
+                                  onChange={(e) => updateTargetItem(category.id, group.id, item.id, { ticker: e.target.value.toUpperCase() })}
+                                  placeholder="티커"
+                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold"
+                                />
+                                <input
+                                  value={item.percent}
+                                  onChange={(e) => updateTargetItem(category.id, group.id, item.id, { percent: parseNumber(e.target.value) })}
+                                  placeholder="%"
+                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold"
+                                />
+                                <input
+                                  value={formatInputNumber(item.price)}
+                                  onChange={(e) => updateTargetItem(category.id, group.id, item.id, { price: sanitizeNumericInput(e.target.value) })}
+                                  placeholder="현재가 수동입력"
+                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold"
+                                />
+                                <button
+                                  onClick={() => removeTargetItem(category.id, group.id, item.id)}
+                                  className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                                  title="종목 삭제"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                                <div className="lg:col-span-5 grid grid-cols-1 md:grid-cols-4 gap-2 text-[10px] md:text-xs font-black">
+                                  <span className="bg-slate-50 rounded-xl px-3 py-2 text-slate-500">현재 {formatMoney(item.currentValue, 'KRW')}</span>
+                                  <span className="bg-slate-50 rounded-xl px-3 py-2 text-blue-600">목표 {formatMoney(item.targetValue, 'KRW')}</span>
+                                  <span className={`bg-slate-50 rounded-xl px-3 py-2 ${item.gapValue >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                    차이 {item.gapValue > 0 ? '+' : ''}{formatMoney(item.gapValue, 'KRW')}
+                                  </span>
+                                  <span className="bg-slate-50 rounded-xl px-3 py-2 text-slate-700">
+                                    {item.quantityToBuy > 0 ? `${item.quantityToBuy.toFixed(3)}주 매수 필요` : '추가 매수 없음'}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                            {group.items.length === 0 && (
+                              <p className="px-3 py-4 text-xs font-bold text-slate-400">이 폴더에 종목을 추가하세요.</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              )}
+            </div>
           </div>
         )}
 
