@@ -1605,7 +1605,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                         <Icon size={16} />
                       </div>
                     </div>
-                    <p className={`text-lg md:text-2xl font-bold tracking-tight break-words ${item.tone}`}>{item.value}</p>
+                    <p className={`text-lg md:text-2xl font-bold tracking-tight wrap-break-word ${item.tone}`}>{item.value}</p>
                     <p className="mt-1 text-[10px] md:text-xs font-semibold text-slate-400">{item.helper}</p>
                   </div>
                 );
@@ -1622,7 +1622,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                 )}
               </div>
               {enhancedAssets.length === 0 ? (
-                <div className="w-full min-h-[260px] md:min-h-[320px] flex flex-col items-center justify-center text-center px-4">
+                <div className="w-full min-h-65 md:min-h-80 flex flex-col items-center justify-center text-center px-4">
                   <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-5">
                     <Target size={28} />
                   </div>
@@ -1725,7 +1725,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     <tbody className="divide-y divide-slate-50">
                       {enhancedAssets.filter(asset => selectedCategory ? asset.category === selectedCategory : true).map((asset) => (
                         <tr key={asset.id} className="hover:bg-slate-50/50 transition-all group">
-                          <td className="px-4 py-5 md:px-6 md:py-6 whitespace-nowrap min-w-[220px]">
+                          <td className="px-4 py-5 md:px-6 md:py-6 whitespace-nowrap min-w-55">
                             <div className="flex items-center gap-4">
                               <div className="w-12 h-12 md:w-14 md:h-14 shrink-0 rounded-[18px] md:rounded-[20px] flex items-center justify-center text-white font-black text-xl md:text-2xl shadow-md shadow-slate-200 group-hover:scale-[1.03] transition-transform" style={{ backgroundColor: asset.color }}>
                                 {asset.category === '현금' ? <Banknote size={24}/> : asset.name[0]}
@@ -1739,7 +1739,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                             </div>
                           </td>
                           <td className="px-4 py-4 md:px-6 md:py-5">
-                            <div className="grid grid-cols-2 gap-x-5 gap-y-3 bg-slate-50 px-4 py-3.5 rounded-2xl border border-slate-100 group-hover:border-blue-100 transition-colors w-full min-w-[260px] max-w-[320px]">
+                            <div className="grid grid-cols-2 gap-x-5 gap-y-3 bg-slate-50 px-4 py-3.5 rounded-2xl border border-slate-100 group-hover:border-blue-100 transition-colors w-full min-w-65 max-w-[320px]">
                               <div className="flex flex-col">
                                 <span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">{asset.category === '현금' ? '보유 원금' : '총 매입'}</span>
                                 <span className="font-black text-slate-700 text-xs md:text-sm mt-1 whitespace-nowrap">{formatMoney(asset.purchaseNative, asset.currency)}</span>
@@ -1760,13 +1760,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 py-5 md:px-6 md:py-6 text-right whitespace-nowrap min-w-[150px]">
+                          <td className="px-4 py-5 md:px-6 md:py-6 text-right whitespace-nowrap min-w-37.5">
                             {asset.category === '현금' ? <span className="text-[10px] md:text-xs font-black text-slate-300">-</span> : (
                               <div className="flex flex-col items-end gap-2">
-                                <div className={`inline-flex items-center justify-center gap-1.5 min-w-[120px] px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                <div className={`inline-flex items-center justify-center gap-1.5 min-w-30 px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
                                   {asset.returnPercent >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {Math.abs(asset.returnPercent).toFixed(2)}%
                                 </div>
-                                <div className={`inline-flex items-center justify-center min-w-[120px] px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                <div className={`inline-flex items-center justify-center min-w-30 px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
                                   {asset.profitNative > 0 ? '+' : ''}{formatMoney(asset.profitNative, asset.currency)}
                                 </div>
                               </div>
@@ -1784,7 +1784,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                   className="text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors p-2 rounded-xl"
                                   title="추가 매수"
                                 >
-                                  <Plus size={16} className="md:w-[18px] md:h-[18px]" />
+                                  <Plus size={16} className="md:w-4.5 md:h-4.5" />
                                 </button>
 
                                 <button
@@ -1795,7 +1795,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                   className="text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors p-2 rounded-xl"
                                   title="매도"
                                 >
-                                  <Minus size={16} className="md:w-[18px] md:h-[18px]" />
+                                  <Minus size={16} className="md:w-4.5 md:h-4.5" />
                                 </button>
                               </>
                             )}
@@ -1805,7 +1805,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                               className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors p-2 rounded-xl"
                               title="자산 삭제"
                             >
-                              <Trash2 size={16} className="md:w-[18px] md:h-[18px]" />
+                              <Trash2 size={16} className="md:w-4.5 md:h-4.5" />
                             </button>
                           </div>
                         </td>
@@ -2005,7 +2005,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     <div 
                       key={summary.name} 
                       onClick={() => setSelectedDividendAsset(summary.name)} 
-                      className="p-5 md:p-6 bg-slate-50 rounded-[2rem] md:rounded-[2.5rem] border border-slate-100 cursor-pointer hover:bg-white hover:shadow-xl hover:shadow-slate-100/50 hover:scale-[1.02] transition-all group"
+                      className="p-5 md:p-6 bg-slate-50 rounded-4xl md:rounded-[2.5rem] border border-slate-100 cursor-pointer hover:bg-white hover:shadow-xl hover:shadow-slate-100/50 hover:scale-[1.02] transition-all group"
                     >
                       <div className="flex justify-between items-start mb-4 md:mb-6">
                         <div className="whitespace-nowrap overflow-hidden pr-3 md:pr-4">
@@ -2029,7 +2029,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   )}
                 </div>
               ) : (
-                <div className="bg-slate-50 rounded-[2rem] md:rounded-[2.5rem] p-1 md:p-2 border border-slate-100">
+                <div className="bg-slate-50 rounded-4xl md:rounded-[2.5rem] p-1 md:p-2 border border-slate-100">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left table-auto">
                       <thead className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.3em] border-b border-slate-200/50">
@@ -2566,7 +2566,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       {/* 자산 추가 모달 */}
 {isAdding && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
+  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-100 flex items-center justify-center p-4 animate-in fade-in duration-200">
     <div className="bg-white w-full max-w-md rounded-[30px] md:rounded-[40px] p-6 md:p-8 shadow-2xl animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
       <div className="flex justify-between items-center mb-6 md:mb-8 sticky top-0 bg-white z-10 pt-2 pb-2">
         <h3 className="text-lg md:text-xl font-black text-slate-900">새 자산 등록</h3>
@@ -2683,7 +2683,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
         <div className="border-t border-slate-100 pt-4 mt-2">
           <div>
-            <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 text-blue-500">
+            <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
               매수일
             </label>
             <input
@@ -2744,7 +2744,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
 {/* 추가 매수 모달 */}
 {isUpdatingAsset && selectedAssetToUpdate && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
+  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-110 flex items-center justify-center p-4 animate-in fade-in duration-200">
     <div className="bg-white w-full max-w-md rounded-[30px] md:rounded-[40px] p-6 md:p-8 shadow-2xl animate-in zoom-in-95 duration-300">
       <div className="flex justify-between items-center mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-black text-slate-900">
@@ -2800,7 +2800,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         </div>
 
         <div className="border-t border-slate-100 pt-4 mt-2">
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 text-blue-500">
+          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
             추가 매수일
           </label>
           <input
@@ -2869,7 +2869,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
 {/* 매도 모달 */}
 {isSellingAsset && selectedAssetToSell && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120] flex items-center justify-center p-4 animate-in fade-in duration-200">
+  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-120 flex items-center justify-center p-4 animate-in fade-in duration-200">
     <div className="bg-white w-full max-w-md rounded-[30px] md:rounded-[40px] p-6 md:p-8 shadow-2xl animate-in zoom-in-95 duration-300">
       <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-black text-slate-900 whitespace-nowrap">
@@ -2924,7 +2924,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         </div>
 
         <div className="border-t border-slate-100 pt-4 mt-2">
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 text-blue-500">
+          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
             매도일
           </label>
           <input
