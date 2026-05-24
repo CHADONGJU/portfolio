@@ -2696,7 +2696,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
           {newAsset.currency === 'USD' && (
             <div>
-              <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 text-emerald-500">
+              <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
                 매수일 기준 자동 환율
               </label>
               <input
@@ -2816,7 +2816,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           />
           {selectedAssetToUpdate.currency === 'USD' && (
             <div className="mt-3">
-              <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 text-emerald-500">
+              <label className="block text-[9px] md:text-[10px] font-black uppercase tracking-widest mb-1.5 ml-1 text-emerald-500">
                 매수일 기준 자동 환율
               </label>
               <input
