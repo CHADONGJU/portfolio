@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
@@ -22,6 +23,7 @@ import { fetchBitcoinPrices, fetchDividends, fetchStockPrice, fetchUsdKrwRate, f
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { loadJson, saveJson } from './utils/storage';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
+import { db } from './firebase';
 
 const isDomesticStockCategory = (category) => category?.includes('국내') && category?.includes('주식');
 const isCommodityCategory = (category) => category?.includes('원자재');
@@ -218,12 +220,14 @@ const getTargetItemCurrency = (categoryId) => (
 
 const getTargetItemSnapshotKey = (targetPortfolio) => targetPortfolio.categories
   .flatMap(category => getTargetGroups(targetPortfolio, category.id).flatMap(group => (
-    (group.items || []).map(item => `${category.id}:${group.id}:${item.id}:${item.ticker || ''}`)
+    (group.items || []).map(item => `${category.id}:${group.id}:${item.id}:${item.ticker || ''}:${item.price || ''}:${item.nativePrice || ''}`)
   )))
   .join('|');
 
 const App = () => {
   const { user, signOutUser } = useAuth();
+  const userId = user?.uid || '';
+  const userEmail = user?.email || '';
   // 1. 상태 관리
   const [exchangeRate, setExchangeRate] = useState(0); 
   const [isLiveMode] = useState(true);
@@ -231,6 +235,7 @@ const App = () => {
   const [activeTab, setActiveTab] = useState('portfolio');
   const [isFetching, setIsFetching] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [isCloudPortfolioLoaded, setIsCloudPortfolioLoaded] = useState(!user || !db);
 
   // 피드백 로그 (3초 뒤 자동 삭제)
   const [syncStatus, setSyncStatus] = useState([]);
@@ -372,12 +377,89 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   const [autoDividends, setAutoDividends] = useState([]);
 
+  const portfolioSnapshot = useMemo(() => ({
+    assets,
+    trades,
+    memos,
+    tradeLedger,
+    targetPortfolio,
+  }), [assets, trades, memos, tradeLedger, targetPortfolio]);
+  const portfolioSnapshotRef = useRef(portfolioSnapshot);
+
   useEffect(() => { saveJson(ASSETS_STORAGE_KEY, assets); }, [assets]);
   useEffect(() => { saveJson(TRADES_STORAGE_KEY, trades); }, [trades]);
   useEffect(() => { saveJson(MEMOS_STORAGE_KEY, memos); }, [memos]);
   useEffect(() => { saveJson(TRADE_LEDGER_STORAGE_KEY, tradeLedger); }, [tradeLedger]);
   useEffect(() => { saveJson(TARGET_PORTFOLIO_STORAGE_KEY, targetPortfolio); }, [targetPortfolio]);
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
+  useEffect(() => { portfolioSnapshotRef.current = portfolioSnapshot; }, [portfolioSnapshot]);
+
+  useEffect(() => {
+    if (!userId || !db) {
+      setIsCloudPortfolioLoaded(true);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const loadCloudPortfolio = async () => {
+      setIsCloudPortfolioLoaded(false);
+      try {
+        const portfolioRef = doc(db, 'portfolioStates', userId);
+        const snapshot = await getDoc(portfolioRef);
+
+        if (cancelled) return;
+
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          setAssets(Array.isArray(data.assets) ? data.assets : []);
+          setTrades(Array.isArray(data.trades) ? data.trades : []);
+          setMemos(Array.isArray(data.memos) ? data.memos : []);
+          setTradeLedger(Array.isArray(data.tradeLedger) ? data.tradeLedger : []);
+          setTargetPortfolio(data.targetPortfolio || DEFAULT_TARGET_PORTFOLIO);
+          addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
+        } else {
+          await setDoc(portfolioRef, {
+            ...portfolioSnapshotRef.current,
+            userEmail,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+          if (!cancelled) addLog('현재 데이터를 로그인 계정에 저장했습니다.', 'success');
+        }
+      } catch (error) {
+        console.error('Cloud portfolio load failed:', error);
+        if (!cancelled) addLog('클라우드 데이터 불러오기에 실패했습니다. 로컬 저장소로 계속합니다.', 'error');
+      } finally {
+        if (!cancelled) setIsCloudPortfolioLoaded(true);
+      }
+    };
+
+    loadCloudPortfolio();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, userEmail]);
+
+  useEffect(() => {
+    if (!userId || !db || !isCloudPortfolioLoaded) return undefined;
+
+    const saveTimer = setTimeout(async () => {
+      try {
+        await setDoc(doc(db, 'portfolioStates', userId), {
+          ...portfolioSnapshot,
+          userEmail,
+          updatedAt: serverTimestamp(),
+        }, { merge: true });
+      } catch (error) {
+        console.error('Cloud portfolio save failed:', error);
+        addLog('클라우드 저장에 실패했습니다. Firebase 권한 설정을 확인해주세요.', 'error');
+      }
+    }, 700);
+
+    return () => clearTimeout(saveTimer);
+  }, [userId, userEmail, isCloudPortfolioLoaded, portfolioSnapshot]);
+
   useEffect(() => {
     if (tradeLedger.length > 0) return;
     const initialLedger = buildInitialTradeLedger({ assets, trades, memos });
@@ -608,7 +690,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               asset.name === item.name || (item.ticker && asset.ticker?.toUpperCase() === item.ticker.toUpperCase())
             ));
             const currentItemValue = matchedAsset?.currentKRW || 0;
-            const itemTargetValue = groupTargetValue * ((Number(item.percent) || 0) / 100);
+            const itemTargetValue = itemTotalPercent > 0
+              ? groupTargetValue * ((Number(item.percent) || 0) / itemTotalPercent)
+              : 0;
             const gapValue = itemTargetValue - currentItemValue;
             const currentPriceKRW = matchedAsset
               ? (matchedAsset.currency === 'USD' ? (matchedAsset.originalCurrentPrice || matchedAsset.currentPrice) * rate : matchedAsset.currentPrice)
@@ -626,6 +710,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               currentPriceKRW,
               currentPriceNative,
               quantityToBuy: gapValue > 0 && currentPriceKRW > 0 ? gapValue / currentPriceKRW : 0,
+              quantityToSell: gapValue < 0 && currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
               matchedQuantity: matchedAsset?.quantity || 0,
             };
           });
@@ -762,19 +847,23 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       const currentTargetPortfolio = targetPortfolioRef.current;
       const rate = exchangeRate || 1350;
       const syncTargets = [];
+      const bitcoinPricesPromise = fetchBitcoinPrices();
 
       currentTargetPortfolio.categories.forEach((category) => {
         getTargetGroups(currentTargetPortfolio, category.id).forEach((group) => {
           (group.items || []).forEach((item) => {
             const ticker = item.ticker?.trim().toUpperCase();
             if (!ticker) return;
+            const currency = item.currency || getTargetItemCurrency(category.id);
             syncTargets.push({
               categoryId: category.id,
               groupId: group.id,
               itemId: item.id,
               ticker,
               name: item.name,
-              currency: item.currency || getTargetItemCurrency(category.id),
+              currency,
+              currentPriceKRW: parseNumber(item.price),
+              currentPriceNative: parseNumber(item.nativePrice),
             });
           });
         });
@@ -787,6 +876,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       setTargetPriceSyncStatus('목표 종목 현재가 연동 중...');
       const updates = [];
+      let failCount = 0;
 
       for (const target of syncTargets) {
         if (cancelled) return;
@@ -808,13 +898,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
         let fetchedPrice = null;
         if (target.categoryId === '가상화폐' && ['BTC', 'BITCOIN'].includes(target.ticker)) {
-          const bitcoinPrices = await fetchBitcoinPrices();
+          const bitcoinPrices = await bitcoinPricesPromise;
           fetchedPrice = target.currency === 'USD' ? bitcoinPrices.usd : bitcoinPrices.krw;
         } else {
           fetchedPrice = await fetchStockPrice({
-          ticker: target.ticker,
-          category: target.categoryId,
-          currency: target.currency,
+            ticker: target.ticker,
+            category: target.categoryId,
+            currency: target.currency,
           });
         }
 
@@ -825,6 +915,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             priceKRW: target.currency === 'USD' ? fetchedPrice * rate : fetchedPrice,
             source: 'market',
           });
+        } else if (target.currentPriceKRW > 0) {
+          updates.push({
+            ...target,
+            nativePrice: target.currentPriceNative || (target.currency === 'USD' ? target.currentPriceKRW / rate : target.currentPriceKRW),
+            priceKRW: target.currentPriceKRW,
+            source: 'cached',
+          });
+        } else {
+          failCount += 1;
         }
       }
 
@@ -865,10 +964,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       setTargetPriceSyncStatus(
         updates.length > 0
-          ? `현재가 ${updates.length.toLocaleString()}개 최신화 완료`
+          ? `현재가 ${updates.length.toLocaleString()}개 최신화 완료${failCount > 0 ? ` / 실패 ${failCount.toLocaleString()}개` : ''}`
           : '현재가를 가져오지 못했습니다. 티커를 확인해주세요.'
       );
-    }, 600);
+    }, 900);
 
     return () => {
       cancelled = true;
@@ -1556,7 +1655,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             setIsAdding(true);
           }}
           onRefresh={() => setRefreshTrigger(t => t + 1)}
-          userEmail={user?.email}
+          userEmail={userEmail}
           onSignOut={signOutUser}
         />
 
@@ -2524,7 +2623,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                     {item.gapValue >= 0 ? '추가 필요' : '목표 초과'} {formatMoney(Math.abs(item.gapValue), 'KRW')}
                                   </span>
                                   <span className="bg-slate-50 rounded-xl px-3 py-2 text-slate-700">
-                                    {item.quantityToBuy > 0 ? `${item.quantityToBuy.toFixed(3)}주 / ${formatMoney(item.gapValue, 'KRW')} 매수 필요` : '추가 매수 없음'}
+                                    {item.quantityToBuy > 0
+                                      ? `${item.quantityToBuy.toFixed(3)}주 / ${formatMoney(item.gapValue, 'KRW')} 매수 필요`
+                                      : item.quantityToSell > 0
+                                        ? `${item.quantityToSell.toFixed(3)}주 / ${formatMoney(Math.abs(item.gapValue), 'KRW')} 매도 필요`
+                                        : '추가 매매 없음'}
                                   </span>
                                 </div>
                               </div>
