@@ -103,6 +103,33 @@ export const fetchTextWithSafeProxy = async (url) => {
   return null;
 };
 
+export const fetchUsdKrwRateByDate = async (date) => {
+  if (!date) return null;
+
+  const today = new Date().toISOString().split('T')[0];
+  if (date >= today) return fetchUsdKrwRate();
+
+  const historicalUrls = [
+    `https://api.frankfurter.app/${date}?from=USD&to=KRW`,
+    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/usd.json`,
+  ];
+
+  for (const url of historicalUrls) {
+    try {
+      const response = await fetch(url, { cache: 'no-store' });
+      if (!response.ok) continue;
+
+      const data = await response.json();
+      const rate = data?.rates?.KRW ?? data?.usd?.krw;
+      if (Number.isFinite(Number(rate)) && Number(rate) > 0) return Number(rate);
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+};
+
 const normalizeTicker = (ticker) => ticker
   .toUpperCase()
   .trim()
