@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { getAssetColor } from '../constants';
 
 const withRunningPercent = (items, total, getValue) => {
   let cumulativePercent = 0;
@@ -24,7 +25,7 @@ export const usePortfolioMetrics = ({
 }) => {
   // 3. 통합 가치 및 차트 계산
   const enhancedAssets = useMemo(() => {
-    return assets.map(a => {
+    return assets.map((a, index) => {
       // originalAveragePrice가 무조건 있어야 수학이 맞음
       const safeOrigAvgPrice = a.originalAveragePrice || a.averagePrice;
       const safeOrigCurrPrice = a.originalCurrentPrice || a.currentPrice;
@@ -32,14 +33,24 @@ export const usePortfolioMetrics = ({
       const purchaseNative = safeOrigAvgPrice * a.quantity;
       const currentNative = safeOrigCurrPrice * a.quantity;
       
-      const purchaseKRW = a.currency === 'USD' ? purchaseNative * (a.buyExchangeRate || exchangeRate || 1350) : purchaseNative;
+      const purchaseKRW = a.currency === 'USD' ? purchaseNative * (exchangeRate || 1350) : purchaseNative;
       const currentKRW = a.currency === 'USD' ? currentNative * (exchangeRate || 1350) : currentNative; 
       const profitNative = currentNative - purchaseNative;
       const profitKRW = currentKRW - purchaseKRW;
       
       const returnPercent = (purchaseNative > 0 && a.category !== '현금') ? ((currentNative - purchaseNative) / purchaseNative) * 100 : 0;
       
-      return { ...a, purchaseNative, currentNative, purchaseKRW, currentKRW, profitNative, profitKRW, returnPercent };
+      return {
+        ...a,
+        color: a.color || getAssetColor(a.ticker || a.name, index),
+        purchaseNative,
+        currentNative,
+        purchaseKRW,
+        currentKRW,
+        profitNative,
+        profitKRW,
+        returnPercent,
+      };
     });
   }, [assets, exchangeRate]);
 

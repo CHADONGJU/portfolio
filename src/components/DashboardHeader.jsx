@@ -1,4 +1,4 @@
-import { Briefcase, Plus, RefreshCw } from 'lucide-react';
+import { Briefcase, LogOut, Plus, RefreshCw, UserCircle } from 'lucide-react';
 
 const DashboardHeader = ({
   exchangeRate,
@@ -6,6 +6,8 @@ const DashboardHeader = ({
   lastUpdated,
   onAddAsset,
   onRefresh,
+  onSignOut,
+  userEmail,
 }) => (
   <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 md:p-7 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden">
     <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-600"></div>
@@ -28,6 +30,12 @@ const DashboardHeader = ({
       </p>
     </div>
     <div className="flex flex-wrap gap-2 w-full md:w-auto">
+      {userEmail && (
+        <div className="w-full md:w-auto flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-100 rounded-2xl text-slate-500">
+          <UserCircle size={16} className="text-blue-600 shrink-0" />
+          <span className="min-w-0 truncate text-[11px] font-bold max-w-[180px]">{userEmail}</span>
+        </div>
+      )}
       <button
         onClick={onRefresh}
         disabled={isFetching}
@@ -42,6 +50,15 @@ const DashboardHeader = ({
       >
         <Plus size={16} /> 자산 추가
       </button>
+      {onSignOut && (
+        <button
+          onClick={onSignOut}
+          className="p-3 md:p-4 bg-white rounded-2xl hover:bg-rose-50 transition-all border border-slate-100 text-slate-400 hover:text-rose-600"
+          title="로그아웃"
+        >
+          <LogOut size={18} />
+        </button>
+      )}
     </div>
   </header>
 );

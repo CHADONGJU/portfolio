@@ -8,9 +8,11 @@ import DashboardHeader from './components/DashboardHeader';
 import MemoTab from './components/MemoTab';
 import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
+import { useAuth } from './context/useAuth';
 import {
   ASSET_COLORS,
   ASSETS_STORAGE_KEY,
+  getAssetColor,
   MEMOS_STORAGE_KEY,
   TARGET_PORTFOLIO_STORAGE_KEY,
   TRADE_LEDGER_STORAGE_KEY,
@@ -210,6 +212,7 @@ const getTargetGroups = (targetPortfolio, categoryId) => {
 };
 
 const App = () => {
+  const { user, signOutUser } = useAuth();
   // 1. 상태 관리
   const [exchangeRate, setExchangeRate] = useState(0); 
   const [isLiveMode] = useState(true);
@@ -263,7 +266,6 @@ const App = () => {
   averagePrice: '',
   quantity: '',
   buyDate: defaultBuyDate,
-  buyExchangeRate: '',
   memo: ''
 };
   const [newAsset, setNewAsset] = useState(initialAssetState);
@@ -290,13 +292,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   useEffect(() => {
     if (newAsset.category === '해외주식' || newAsset.category === '원자재') {
-      setNewAsset(prev => ({ ...prev, currency: 'USD', buyExchangeRate: exchangeRate === 0 ? '' : exchangeRate }));
+      setNewAsset(prev => ({ ...prev, currency: 'USD' }));
     } else if (newAsset.category === '현금') {
       setNewAsset(prev => ({ ...prev, averagePrice: 1, ticker: '' }));
     } else {
-      setNewAsset(prev => ({ ...prev, currency: 'KRW', buyExchangeRate: 1 }));
+      setNewAsset(prev => ({ ...prev, currency: 'KRW' }));
     }
-  }, [newAsset.category, exchangeRate]);
+  }, [newAsset.category]);
 
   const [assets, setAssets] = useState(() => {
     return loadJson(ASSETS_STORAGE_KEY, []);
@@ -477,6 +479,30 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const isOverseasStockChart = selectedCategory?.includes('해외') && selectedCategory?.includes('주식');
   const profitTone = currentCategoryProfitKRW >= 0 ? 'text-emerald-600' : 'text-rose-600';
   const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
+  const currentChartGradient = useMemo(() => {
+    if (currentChartData.length === 0) return 'conic-gradient(#e2e8f0 0% 100%)';
+
+    return `conic-gradient(${currentChartData.map((item) => {
+      const start = Math.max(0, item.startPercent);
+      const end = Math.min(100, item.startPercent + item.percent);
+      return `${item.color} ${start.toFixed(3)}% ${end.toFixed(3)}%`;
+    }).join(', ')})`;
+  }, [currentChartData]);
+  const handleChartRingClick = (event) => {
+    if (selectedCategory || currentChartData.length === 0) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const deltaX = event.clientX - centerX;
+    const deltaY = event.clientY - centerY;
+    const percent = (((Math.atan2(deltaY, deltaX) * 180) / Math.PI + 90 + 360) % 360) / 3.6;
+    const clickedItem = currentChartData.find((item) => (
+      percent >= item.startPercent && percent <= item.startPercent + item.percent
+    ));
+
+    if (clickedItem) setSelectedCategory(clickedItem.name);
+  };
   const dashboardSummary = useMemo(() => {
     const purchaseKRW = enhancedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
     const evaluationProfitKRW = enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
@@ -1017,7 +1043,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       const nextAveragePrice =
         asset.currency === 'USD'
-          ? Math.round(nextOriginalAveragePrice * (asset.buyExchangeRate || exchangeRate || 1350))
+          ? nextOriginalAveragePrice
           : nextOriginalAveragePrice;
 
       const nextBuyDate =
@@ -1152,10 +1178,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const parsedAvgPrice = newAsset.category === '현금'
     ? 1
     : parseFloat(String(newAsset.averagePrice).replace(/,/g, ''));
-  const parsedBuyRate = parseFloat(String(newAsset.buyExchangeRate).replace(/,/g, '')) || (exchangeRate || 1350);
-
     let krwAveragePrice = parsedAvgPrice;
-    if (newAsset.currency === 'USD') krwAveragePrice = Math.round(parsedAvgPrice * parsedBuyRate);
+    if (newAsset.currency === 'USD') krwAveragePrice = parsedAvgPrice;
 
     const asset = {
       id: Date.now(), 
@@ -1169,9 +1193,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       originalCurrency: newAsset.currency, 
       originalAveragePrice: parsedAvgPrice, 
       originalCurrentPrice: parsedAvgPrice, 
-      buyDate: newAsset.buyDate, 
-      buyExchangeRate: parsedBuyRate, 
-      color: ASSET_COLORS[assets.length % ASSET_COLORS.length]
+      buyDate: newAsset.buyDate,
+      color: getAssetColor(newAsset.ticker || newAsset.name, assets.length)
     };
 
     setAssets(prevAssets => [...prevAssets, asset]);
@@ -1215,6 +1238,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           lastUpdated={lastUpdated}
           onAddAsset={() => setIsAdding(true)}
           onRefresh={() => setRefreshTrigger(t => t + 1)}
+          userEmail={user?.email}
+          onSignOut={signOutUser}
         />
 
         {/* 탭 */}
@@ -1296,15 +1321,14 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                 </div>
               ) : (
                 <div className="relative w-64 h-64 md:w-72 md:h-72">
-                  <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
-                    {currentChartData.map((dataItem) => {
-                      const strokeDash = `${dataItem.percent} ${100 - dataItem.percent}`;
-                      const strokeOffset = -dataItem.startPercent;
-                      return (
-                        <circle key={dataItem.id || dataItem.name} cx="18" cy="18" r="15.9" fill="transparent" stroke={dataItem.color} strokeWidth="3.2" strokeDasharray={strokeDash} strokeDashoffset={strokeOffset} className={`transition-all duration-700 ease-out ${!selectedCategory ? 'cursor-pointer hover:stroke-[4] hover:opacity-80' : 'opacity-90'}`} onClick={() => !selectedCategory && setSelectedCategory(dataItem.name)} />
-                      );
-                    })}
-                  </svg>
+                  <div
+                    className={`absolute inset-0 rounded-full transition-all duration-700 ${!selectedCategory ? 'cursor-pointer hover:opacity-90' : 'opacity-95'}`}
+                    style={{ background: currentChartGradient }}
+                    onClick={handleChartRingClick}
+                    role={!selectedCategory ? 'button' : undefined}
+                    tabIndex={!selectedCategory ? 0 : undefined}
+                  />
+                  <div className="absolute inset-[12%] rounded-full bg-white shadow-inner shadow-slate-100" />
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none p-4">
                     <span className="text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
                     <div className="flex flex-col items-center gap-0.5">
@@ -1317,6 +1341,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                         <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 수익금액</span>
                         <span className={`text-[10px] md:text-[11px] font-bold ${profitTone}`}>
                           {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
+                        </span>
+                      </div>
+                    ) : isOverseasStockChart ? (
+                      <div className={`mt-2 md:mt-3 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${currentCategoryProfitUSD >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
+                        <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 수익금액</span>
+                        <span className={`text-[10px] md:text-[11px] font-bold ${currentCategoryProfitUSD >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {currentCategoryProfitUSD > 0 ? '+' : ''}{formatMoney(currentCategoryProfitUSD, 'USD')}
                         </span>
                       </div>
                     ) : (
@@ -1373,48 +1404,48 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     <tbody className="divide-y divide-slate-50">
                       {enhancedAssets.filter(asset => selectedCategory ? asset.category === selectedCategory : true).map((asset) => (
                         <tr key={asset.id} className="hover:bg-slate-50/50 transition-all group">
-                          <td className="px-4 py-4 md:px-6 md:py-5 whitespace-nowrap">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 md:w-10 md:h-10 shrink-0 rounded-[14px] md:rounded-2xl flex items-center justify-center text-white font-black text-sm md:text-lg shadow-md group-hover:scale-110 transition-transform" style={{ backgroundColor: asset.color }}>
-                                {asset.category === '현금' ? <Banknote size={16}/> : asset.name[0]}
+                          <td className="px-4 py-5 md:px-6 md:py-6 whitespace-nowrap min-w-[220px]">
+                            <div className="flex items-center gap-4">
+                              <div className="w-12 h-12 md:w-14 md:h-14 shrink-0 rounded-[18px] md:rounded-[20px] flex items-center justify-center text-white font-black text-xl md:text-2xl shadow-md shadow-slate-200 group-hover:scale-[1.03] transition-transform" style={{ backgroundColor: asset.color }}>
+                                {asset.category === '현금' ? <Banknote size={24}/> : asset.name[0]}
                               </div>
-                              <div className="min-w-max">
-                                <p className="font-black text-slate-900 text-xs md:text-sm leading-none">{asset.name}</p>
-                                <p className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1.5 uppercase tracking-widest">
+                              <div className="min-w-0">
+                                <p className="font-black text-slate-900 text-base md:text-lg leading-none whitespace-nowrap">{asset.name}</p>
+                                <p className="text-xs md:text-sm text-slate-400 font-bold mt-2 uppercase tracking-widest whitespace-nowrap">
                                   {asset.category === '현금' ? 'CASH' : asset.ticker} {asset.category !== '현금' && `• ${asset.quantity.toLocaleString()}${asset.category==='원자재'?'단위':'주'}`}
                                 </p>
                               </div>
                             </div>
                           </td>
                           <td className="px-4 py-4 md:px-6 md:py-5">
-                            <div className="grid grid-cols-2 gap-x-3 gap-y-2 bg-slate-50 p-3 rounded-2xl border border-slate-100 group-hover:border-blue-100 transition-colors w-full min-w-[180px] max-w-[240px]">
+                            <div className="grid grid-cols-2 gap-x-5 gap-y-3 bg-slate-50 px-4 py-3.5 rounded-2xl border border-slate-100 group-hover:border-blue-100 transition-colors w-full min-w-[260px] max-w-[320px]">
                               <div className="flex flex-col">
                                 <span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">{asset.category === '현금' ? '보유 원금' : '총 매입'}</span>
-                                <span className="font-black text-slate-700 text-xs md:text-[13px] mt-0.5">{formatMoney(asset.purchaseNative, asset.currency)}</span>
+                                <span className="font-black text-slate-700 text-xs md:text-sm mt-1 whitespace-nowrap">{formatMoney(asset.purchaseNative, asset.currency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">평단가</span><span className="font-black text-slate-700 text-xs md:text-[13px] mt-0.5">{formatMoney(asset.originalAveragePrice || asset.averagePrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">평단가</span><span className="font-black text-slate-700 text-xs md:text-sm mt-1 whitespace-nowrap">{formatMoney(asset.originalAveragePrice || asset.averagePrice, asset.originalCurrency || asset.currency)}</span></>
                                 )}
                               </div>
                               <div className="flex flex-col">
                                 <span className="text-[8px] md:text-[9px] text-blue-500 font-black uppercase tracking-widest">총 가치</span>
-                                <span className="font-black text-blue-600 text-xs md:text-[13px] mt-0.5 leading-none">{formatMoney(asset.currentNative, asset.currency)}</span>
+                                <span className="font-black text-blue-600 text-xs md:text-sm mt-1 leading-none whitespace-nowrap">{formatMoney(asset.currentNative, asset.currency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[8px] md:text-[9px] text-blue-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-blue-600 text-xs md:text-[13px] mt-0.5 leading-none">{formatMoney(asset.originalCurrentPrice || asset.currentPrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[8px] md:text-[9px] text-blue-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-blue-600 text-xs md:text-sm mt-1 leading-none whitespace-nowrap">{formatMoney(asset.originalCurrentPrice || asset.currentPrice, asset.originalCurrency || asset.currency)}</span></>
                                 )}
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 py-4 md:px-6 md:py-5 text-right whitespace-nowrap">
+                          <td className="px-4 py-5 md:px-6 md:py-6 text-right whitespace-nowrap min-w-[150px]">
                             {asset.category === '현금' ? <span className="text-[10px] md:text-xs font-black text-slate-300">-</span> : (
-                              <div className="flex flex-col items-end gap-1.5">
-                                <div className={`inline-flex items-center gap-1 px-3 py-1.5 md:px-4 md:py-2 rounded-[14px] text-[10px] md:text-[11px] font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
-                                  {asset.returnPercent >= 0 ? <TrendingUp size={12}/> : <TrendingDown size={12}/>} {Math.abs(asset.returnPercent).toFixed(2)}%
+                              <div className="flex flex-col items-end gap-2">
+                                <div className={`inline-flex items-center justify-center gap-1.5 min-w-[120px] px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                  {asset.returnPercent >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {Math.abs(asset.returnPercent).toFixed(2)}%
                                 </div>
-                                <div className={`inline-flex px-3 py-1.5 md:px-4 md:py-2 rounded-[14px] text-[10px] md:text-[11px] font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                <div className={`inline-flex items-center justify-center min-w-[120px] px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
                                   {asset.profitNative > 0 ? '+' : ''}{formatMoney(asset.profitNative, asset.currency)}
                                 </div>
                               </div>
@@ -2231,7 +2262,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3 md:gap-4 border-t border-slate-100 pt-4 mt-2">
+        <div className="border-t border-slate-100 pt-4 mt-2">
           <div>
             <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 text-blue-500">
               매수일
@@ -2243,26 +2274,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               onChange={(e) => setNewAsset({ ...newAsset, buyDate: e.target.value })}
             />
           </div>
-
-          {newAsset.currency === 'USD' && (
-            <div>
-              <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1 text-emerald-500">
-                매수 당시 환율
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-emerald-50/50 border border-emerald-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-emerald-600 font-black text-xs md:text-sm text-emerald-800"
-                value={formatInputNumber(newAsset.buyExchangeRate)}
-                onChange={(e) =>
-                  setNewAsset({
-                    ...newAsset,
-                    buyExchangeRate: sanitizeNumericInput(e.target.value)
-                  })
-                }
-              />
-            </div>
-          )}
         </div>
 
 
