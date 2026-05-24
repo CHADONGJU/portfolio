@@ -19,7 +19,7 @@ import {
   TRADE_LEDGER_STORAGE_KEY,
   TRADES_STORAGE_KEY,
 } from './constants';
-import { fetchBitcoinPrices, fetchDividends, fetchStockPrice, fetchUsdKrwRate, fetchUsdKrwRateByDate } from './services/marketData';
+import { fetchBitcoinPrices, fetchDividends, fetchJpyKrwRate, fetchStockPrice, fetchUsdKrwRate, fetchUsdKrwRateByDate } from './services/marketData';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { loadJson, saveJson } from './utils/storage';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
@@ -214,9 +214,13 @@ const getTargetGroups = (targetPortfolio, categoryId) => {
   return [];
 };
 
-const getTargetItemCurrency = (categoryId) => (
-  categoryId === '해외주식' || categoryId === '원자재' ? 'USD' : 'KRW'
-);
+const isJapaneseTicker = (ticker = '') => /^\d{4}(\.T)?$/i.test(String(ticker).trim());
+
+const getTargetItemCurrency = (categoryId, ticker = '', savedCurrency = '') => {
+  if (isJapaneseTicker(ticker)) return 'JPY';
+  if (savedCurrency && savedCurrency !== 'USD') return savedCurrency;
+  return categoryId === '해외주식' || categoryId === '원자재' ? 'USD' : 'KRW';
+};
 
 const getTargetItemSnapshotKey = (targetPortfolio) => targetPortfolio.categories
   .flatMap(category => getTargetGroups(targetPortfolio, category.id).flatMap(group => (
@@ -236,6 +240,7 @@ const App = () => {
   const [isFetching, setIsFetching] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isCloudPortfolioLoaded, setIsCloudPortfolioLoaded] = useState(!user || !db);
+  const [cloudPortfolioUserId, setCloudPortfolioUserId] = useState('');
 
   // 피드백 로그 (3초 뒤 자동 삭제)
   const [syncStatus, setSyncStatus] = useState([]);
@@ -397,6 +402,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   useEffect(() => {
     if (!userId || !db) {
       setIsCloudPortfolioLoaded(true);
+      setCloudPortfolioUserId('');
       return undefined;
     }
 
@@ -431,7 +437,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         console.error('Cloud portfolio load failed:', error);
         if (!cancelled) addLog('클라우드 데이터 불러오기에 실패했습니다. 로컬 저장소로 계속합니다.', 'error');
       } finally {
-        if (!cancelled) setIsCloudPortfolioLoaded(true);
+        if (!cancelled) {
+          setIsCloudPortfolioLoaded(true);
+          setCloudPortfolioUserId(userId);
+        }
       }
     };
 
@@ -442,7 +451,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   }, [userId, userEmail]);
 
   useEffect(() => {
-    if (!userId || !db || !isCloudPortfolioLoaded) return undefined;
+    if (!userId || !db || !isCloudPortfolioLoaded || cloudPortfolioUserId !== userId) return undefined;
 
     const saveTimer = setTimeout(async () => {
       try {
@@ -458,7 +467,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     }, 700);
 
     return () => clearTimeout(saveTimer);
-  }, [userId, userEmail, isCloudPortfolioLoaded, portfolioSnapshot]);
+  }, [userId, userEmail, isCloudPortfolioLoaded, cloudPortfolioUserId, portfolioSnapshot]);
 
   useEffect(() => {
     if (tradeLedger.length > 0) return;
@@ -685,7 +694,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           const items = group.items || [];
           const itemTotalPercent = items.reduce((sum, item) => sum + (Number(item.percent) || 0), 0);
           const enrichedItems = items.map((item) => {
-            const itemCurrency = item.currency || getTargetItemCurrency(categoryTarget.id);
+            const itemCurrency = getTargetItemCurrency(categoryTarget.id, item.ticker, item.currency);
             const matchedAsset = categoryAssets.find((asset) => (
               asset.name === item.name || (item.ticker && asset.ticker?.toUpperCase() === item.ticker.toUpperCase())
             ));
@@ -846,15 +855,21 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     const timer = setTimeout(async () => {
       const currentTargetPortfolio = targetPortfolioRef.current;
       const rate = exchangeRate || 1350;
+      const jpyKrwRate = await fetchJpyKrwRate() || 9.5;
       const syncTargets = [];
       const bitcoinPricesPromise = fetchBitcoinPrices();
+      const toKrwPrice = (nativePrice, currency) => {
+        if (currency === 'USD') return nativePrice * rate;
+        if (currency === 'JPY') return nativePrice * jpyKrwRate;
+        return nativePrice;
+      };
 
       currentTargetPortfolio.categories.forEach((category) => {
         getTargetGroups(currentTargetPortfolio, category.id).forEach((group) => {
           (group.items || []).forEach((item) => {
             const ticker = item.ticker?.trim().toUpperCase();
             if (!ticker) return;
-            const currency = item.currency || getTargetItemCurrency(category.id);
+            const currency = getTargetItemCurrency(category.id, ticker, item.currency);
             syncTargets.push({
               categoryId: category.id,
               groupId: group.id,
@@ -912,13 +927,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           updates.push({
             ...target,
             nativePrice: fetchedPrice,
-            priceKRW: target.currency === 'USD' ? fetchedPrice * rate : fetchedPrice,
+            priceKRW: toKrwPrice(fetchedPrice, target.currency),
             source: 'market',
           });
         } else if (target.currentPriceKRW > 0) {
           updates.push({
             ...target,
-            nativePrice: target.currentPriceNative || (target.currency === 'USD' ? target.currentPriceKRW / rate : target.currentPriceKRW),
+            nativePrice: target.currentPriceNative || (target.currency === 'USD' ? target.currentPriceKRW / rate : target.currency === 'JPY' ? target.currentPriceKRW / jpyKrwRate : target.currentPriceKRW),
             priceKRW: target.currentPriceKRW,
             source: 'cached',
           });
@@ -2601,8 +2616,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                     <>
                                       <span className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">자동 현재가</span>
                                       <span>{formatMoney(item.currentPriceKRW, 'KRW')}</span>
-                                      {item.currency === 'USD' && (
-                                        <span className="block text-[10px] text-blue-600 mt-0.5">{formatMoney(item.currentPriceNative, 'USD')}</span>
+                                      {(item.currency === 'USD' || item.currency === 'JPY') && (
+                                        <span className="block text-[10px] text-blue-600 mt-0.5">{formatMoney(item.currentPriceNative, item.currency)}</span>
                                       )}
                                     </>
                                   ) : (

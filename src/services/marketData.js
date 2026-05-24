@@ -16,6 +16,24 @@ export const fetchUsdKrwRate = async () => {
   return null;
 };
 
+export const fetchJpyKrwRate = async () => {
+  const primary = await fetch('https://open.er-api.com/v6/latest/JPY');
+  if (primary.ok) {
+    const data = await primary.json();
+    if (data?.rates?.KRW) return data.rates.KRW;
+  }
+
+  const fallback = await fetch(
+    'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/jpy.json',
+  );
+  if (fallback.ok) {
+    const data = await fallback.json();
+    if (data?.jpy?.krw) return data.jpy.krw;
+  }
+
+  return null;
+};
+
 export const fetchBitcoinPrices = async () => {
   try {
     const response = await fetch(
@@ -195,6 +213,10 @@ const isDomesticStock = (asset, ticker) => {
   return asset.category?.includes('국내') || /^\d{5,6}(\.(KS|KQ))?$/.test(ticker);
 };
 
+const isJapaneseStock = (asset, ticker) => {
+  return asset.currency === 'JPY' || /^\d{4}(\.T)?$/.test(ticker);
+};
+
 const readNaverPrice = (data) => {
   const item = data?.result?.areas?.[0]?.datas?.[0];
   if (!item) return null;
@@ -246,7 +268,9 @@ export const fetchStockPrice = async (asset) => {
 
   const yahooTickers = isDomesticStock(asset, ticker)
     ? [ticker.includes('.') ? ticker : `${ticker}.KS`]
-    : getUsTickerAliases(ticker).map((symbol) => symbol.replace(/\.US$/, ''));
+    : isJapaneseStock(asset, ticker)
+      ? [ticker.endsWith('.T') ? ticker : `${ticker}.T`]
+      : getUsTickerAliases(ticker).map((symbol) => symbol.replace(/\.US$/, ''));
 
   const yahooUrls = yahooTickers.flatMap((yfTicker) => [
     {

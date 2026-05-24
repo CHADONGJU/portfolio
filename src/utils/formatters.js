@@ -8,6 +8,10 @@ export const formatMoney = (val, currency) => {
     })}`;
   }
 
+  if (currency === 'JPY') {
+    return `¥${Math.round(Number(val)).toLocaleString()}`;
+  }
+
   return `₩${Math.round(Number(val)).toLocaleString()}`;
 };
 
