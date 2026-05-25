@@ -788,6 +788,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               currentPriceNative,
               quantityToBuy: gapValue > 0 && currentPriceKRW > 0 ? gapValue / currentPriceKRW : 0,
               quantityToSell: gapValue < 0 && currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
+              adjustmentSide: gapValue > 0 ? 'buy' : gapValue < 0 ? 'sell' : 'hold',
+              adjustmentQuantity: currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
               matchedQuantity: matchedAsset?.quantity || 0,
             };
           });
@@ -2723,12 +2725,18 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                   <span className={`bg-slate-50 rounded-xl px-3 py-2 ${item.gapValue >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                     {item.gapValue >= 0 ? '추가 필요' : '목표 초과'} {formatMoney(Math.abs(item.gapValue), 'KRW')}
                                   </span>
-                                  <span className="bg-slate-50 rounded-xl px-3 py-2 text-slate-700">
-                                    {item.quantityToBuy > 0
-                                      ? `${item.quantityToBuy.toFixed(3)}주 / ${formatMoney(item.gapValue, 'KRW')} 매수 필요`
-                                      : item.quantityToSell > 0
-                                        ? `${item.quantityToSell.toFixed(3)}주 / ${formatMoney(Math.abs(item.gapValue), 'KRW')} 매도 필요`
-                                        : '추가 매매 없음'}
+                                  <span className={`bg-slate-50 rounded-xl px-3 py-2 ${
+                                    item.adjustmentSide === 'buy'
+                                      ? 'text-emerald-600'
+                                      : item.adjustmentSide === 'sell'
+                                        ? 'text-rose-600'
+                                        : 'text-slate-500'
+                                  }`}>
+                                    {item.adjustmentSide === 'buy'
+                                      ? `매수 필요 ${item.adjustmentQuantity.toFixed(3)}주 / ${formatMoney(Math.abs(item.gapValue), 'KRW')}`
+                                      : item.adjustmentSide === 'sell'
+                                        ? `매도 필요 ${item.adjustmentQuantity.toFixed(3)}주 / ${formatMoney(Math.abs(item.gapValue), 'KRW')}`
+                                        : '조정 필요 없음'}
                                   </span>
                                 </div>
                               </div>
