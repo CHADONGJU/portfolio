@@ -19,7 +19,7 @@ import {
   TRADE_LEDGER_STORAGE_KEY,
   TRADES_STORAGE_KEY,
 } from './constants';
-import { fetchBitcoinPrices, fetchDividends, fetchJpyKrwRate, fetchStockPrice, fetchUsdKrwRate, fetchUsdKrwRateByDate } from './services/marketData';
+import { fetchBitcoinPrices, fetchDividends, fetchKrwRate, fetchStockQuote, fetchUsdKrwRate, fetchUsdKrwRateByDate } from './services/marketData';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { loadJson, saveJson } from './utils/storage';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
@@ -77,11 +77,11 @@ const sortTradeRecords = (records, sortMode) => [...records].sort((a, b) => {
   return new Date(getRecordDate(b)) - new Date(getRecordDate(a));
 });
 
-  const buildTradeSummary = (records, exchangeRate = 1) => records.reduce((summary, record) => {
+  const buildTradeSummary = (records, exchangeRate = 1, yenRate = 1, rates = {}) => records.reduce((summary, record) => {
   const quantity = Number(record.quantity) || 0;
   const action = normalizeTradeAction(record);
   const pnl = getRecordPnl(record);
-  const pnlKRW = record.currency === 'USD' ? pnl * exchangeRate : pnl;
+  const pnlKRW = pnl * getCachedKrwRate(record.currency, rates, exchangeRate, yenRate);
 
   if (action === '매수') {
     summary.totalBuyQuantity += quantity;
@@ -214,12 +214,35 @@ const getTargetGroups = (targetPortfolio, categoryId) => {
   return [];
 };
 
-const isJapaneseTicker = (ticker = '') => /^\d{4}(\.T)?$/i.test(String(ticker).trim());
+const normalizeInputTicker = (ticker = '') => String(ticker)
+  .toUpperCase()
+  .trim()
+  .replace(/^TYO:/, '')
+  .replace(/^TSE:/, '')
+  .replace(/^JP:/, '')
+  .replace(/\.JP$/, '.T')
+  .replace(/\.TYO$/, '.T')
+  .replace(/\s+/g, '');
+
+const getCurrencySymbol = (currency) => ({ USD: '$', JPY: '¥', KRW: '₩' }[currency] || currency);
 
 const getTargetItemCurrency = (categoryId, ticker = '', savedCurrency = '') => {
-  if (isJapaneseTicker(ticker)) return 'JPY';
   if (savedCurrency && savedCurrency !== 'USD') return savedCurrency;
+  if (normalizeInputTicker(ticker).includes('.')) return savedCurrency || '';
   return categoryId === '해외주식' || categoryId === '원자재' ? 'USD' : 'KRW';
+};
+
+const getAssetInputCurrency = (category, ticker = '', savedCurrency = '') => {
+  if (category === '해외주식' && normalizeInputTicker(ticker).includes('.') && savedCurrency) return savedCurrency;
+  if (category === '해외주식' || category === '원자재') return 'USD';
+  return 'KRW';
+};
+
+const getCachedKrwRate = (currency, rates = {}, usdRate = 1350, yenRate = 9.5) => {
+  if (currency === 'USD') return usdRate || rates.USD || 1350;
+  if (currency === 'JPY') return yenRate || rates.JPY || 9.5;
+  if (currency && currency !== 'KRW') return rates[currency] || 1;
+  return 1;
 };
 
 const getTargetItemSnapshotKey = (targetPortfolio) => targetPortfolio.categories
@@ -234,6 +257,8 @@ const App = () => {
   const userEmail = user?.email || '';
   // 1. 상태 관리
   const [exchangeRate, setExchangeRate] = useState(0); 
+  const [jpyKrwRate, setJpyKrwRate] = useState(0);
+  const [currencyRates, setCurrencyRates] = useState({ KRW: 1 });
   const [isLiveMode] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [activeTab, setActiveTab] = useState('portfolio');
@@ -319,14 +344,17 @@ const initialSellFormState = {
 const [sellForm, setSellForm] = useState(initialSellFormState);
 
   useEffect(() => {
-    if (newAsset.category === '해외주식' || newAsset.category === '원자재') {
+    const nextCurrency = getAssetInputCurrency(newAsset.category, newAsset.ticker);
+    if (nextCurrency === 'USD') {
       setNewAsset(prev => ({ ...prev, currency: 'USD', buyExchangeRate: prev.buyExchangeRate || (exchangeRate === 0 ? '' : exchangeRate) }));
+    } else if (nextCurrency === 'JPY') {
+      setNewAsset(prev => ({ ...prev, currency: 'JPY', buyExchangeRate: '' }));
     } else if (newAsset.category === '현금') {
       setNewAsset(prev => ({ ...prev, averagePrice: 1, ticker: '' }));
     } else {
       setNewAsset(prev => ({ ...prev, currency: 'KRW', buyExchangeRate: 1 }));
     }
-  }, [newAsset.category, exchangeRate]);
+  }, [newAsset.category, newAsset.ticker, exchangeRate]);
 
   useEffect(() => {
     if (!isAdding || newAsset.currency !== 'USD' || !newAsset.buyDate) return;
@@ -478,9 +506,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   // 2. 완벽한 데이터 연동 로직
   const assetsRef = useRef(assets);
   const exchangeRateRef = useRef(exchangeRate);
+  const jpyKrwRateRef = useRef(jpyKrwRate);
+  const currencyRatesRef = useRef(currencyRates);
   const initialFetchDoneRef = useRef(false);
   useEffect(() => { assetsRef.current = assets; }, [assets]);
   useEffect(() => { exchangeRateRef.current = exchangeRate; }, [exchangeRate]);
+  useEffect(() => { jpyKrwRateRef.current = jpyKrwRate; }, [jpyKrwRate]);
+  useEffect(() => { currencyRatesRef.current = currencyRates; }, [currencyRates]);
   
 
   useEffect(() => {
@@ -492,6 +524,17 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       try {
         let currentRate = exchangeRateRef.current;
+        let currentJpyRate = jpyKrwRateRef.current;
+        const nextCurrencyRates = { ...currencyRatesRef.current, KRW: 1 };
+        const getCurrencyRate = async (currency = 'KRW') => {
+          const code = String(currency || 'KRW').toUpperCase();
+          if (code === 'KRW') return 1;
+          if (nextCurrencyRates[code]) return nextCurrencyRates[code];
+
+          const rate = await fetchKrwRate(code);
+          if (rate) nextCurrencyRates[code] = rate;
+          return nextCurrencyRates[code] || 1;
+        };
         
         // [1] 환율 연동
         const fetchedRate = await fetchUsdKrwRate();
@@ -502,6 +545,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           addLog("환율 서버 응답 지연", "error");
         }
         if (currentRate > 0) setExchangeRate(currentRate);
+        if (currentRate > 0) nextCurrencyRates.USD = currentRate;
+
+        const fetchedJpyRate = await fetchKrwRate('JPY');
+        if (fetchedJpyRate) currentJpyRate = fetchedJpyRate;
+        if (currentJpyRate > 0) setJpyKrwRate(currentJpyRate);
+        if (currentJpyRate > 0) nextCurrencyRates.JPY = currentJpyRate;
 
         // 코인 연동 (선택적)
         const bitcoinPrices = await fetchBitcoinPrices();
@@ -514,6 +563,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         const updatedAssets = await Promise.all(currentAssets.map(async (asset) => {
           let newCurrentPrice = asset.currentPrice;
           let newOriginalCurrentPrice = asset.originalCurrentPrice || asset.originalAveragePrice;
+          let nextAssetCurrency = asset.currency;
           
           if (asset.category === '현금') {
             newCurrentPrice = 1; newOriginalCurrentPrice = 1;
@@ -525,16 +575,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           } else if (asset.ticker) {
             
             // 현재가 연동
-            const fetchedPrice = await fetchStockPrice(asset);
+            const stockQuote = await fetchStockQuote(asset);
+            const fetchedPrice = stockQuote?.price ?? null;
             
             if (fetchedPrice !== null) {
-              if (asset.currency === 'USD') {
-                newOriginalCurrentPrice = fetchedPrice; // 달러 현재가
-                newCurrentPrice = Math.round(newOriginalCurrentPrice * currentRate); // 원화 현재가
-              } else {
-                newCurrentPrice = fetchedPrice; // 원화 현재가
-                newOriginalCurrentPrice = newCurrentPrice;
-              }
+              const quoteCurrency = stockQuote?.currency || asset.currency || 'KRW';
+              const quoteRate = await getCurrencyRate(quoteCurrency);
+              newOriginalCurrentPrice = fetchedPrice;
+              newCurrentPrice = Math.round(newOriginalCurrentPrice * quoteRate);
+              nextAssetCurrency = quoteCurrency;
               successCount++;
             } else {
               failCount++;
@@ -563,9 +612,19 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               }
             }
           }
-          return { ...asset, currentPrice: newCurrentPrice, originalCurrentPrice: newOriginalCurrentPrice };
+          return {
+            ...asset,
+            currency: nextAssetCurrency,
+            originalCurrency: nextAssetCurrency,
+            currentPrice: newCurrentPrice,
+            originalCurrentPrice: newOriginalCurrentPrice
+          };
         }));
 
+        setCurrencyRates(prev => {
+          const changed = Object.entries(nextCurrencyRates).some(([currency, rate]) => prev[currency] !== rate);
+          return changed ? nextCurrencyRates : prev;
+        });
         setAssets(updatedAssets);
         newAutoDividends.sort((a, b) => new Date(b.date) - new Date(a.date));
         setAutoDividends(newAutoDividends);
@@ -612,6 +671,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     tradeLedger,
     autoDividends,
     exchangeRate,
+    jpyKrwRate,
+    currencyRates,
     selectedCategory,
     selectedDividendAsset,
     dividendFilter,
@@ -649,7 +710,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     const purchaseKRW = enhancedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
     const evaluationProfitKRW = enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
     const dividendKRW = autoDividends.reduce((sum, dividend) => (
-      sum + (Number(dividend.amount) || 0) * (dividend.currency === 'USD' ? (exchangeRate || 1350) : 1)
+      sum + (Number(dividend.amount) || 0) * getCachedKrwRate(dividend.currency, currencyRates, exchangeRate || 1350, jpyKrwRate || 9.5)
     ), 0);
     const totalReturnPercent = purchaseKRW > 0 ? (evaluationProfitKRW / purchaseKRW) * 100 : 0;
 
@@ -659,7 +720,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       totalReturnPercent,
       dividendKRW,
     };
-  }, [enhancedAssets, autoDividends, exchangeRate]);
+  }, [enhancedAssets, autoDividends, exchangeRate, jpyKrwRate, currencyRates]);
   const filteredPerformanceSummary = useMemo(() => {
     const keyword = performanceSearchTerm.trim().toLowerCase();
     if (!keyword) return stockPerformanceSummary;
@@ -674,6 +735,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const targetCategoryTotalPercent = targetPortfolio.categories.reduce((sum, category) => sum + (Number(category.percent) || 0), 0);
   const targetPortfolioGuide = useMemo(() => {
     const rate = exchangeRate || 1350;
+    const yenRate = jpyKrwRate || 9.5;
+    const toKrwPrice = (nativePrice, currency) => {
+      return nativePrice * getCachedKrwRate(currency, currencyRates, rate, yenRate);
+    };
+    const toNativePrice = (krwPrice, currency) => {
+      return krwPrice / getCachedKrwRate(currency, currencyRates, rate, yenRate);
+    };
 
     return targetPortfolio.categories.map((categoryTarget) => {
       const categoryAssets = enhancedAssets.filter((asset) => asset.category === categoryTarget.id);
@@ -704,11 +772,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               : 0;
             const gapValue = itemTargetValue - currentItemValue;
             const currentPriceKRW = matchedAsset
-              ? (matchedAsset.currency === 'USD' ? (matchedAsset.originalCurrentPrice || matchedAsset.currentPrice) * rate : matchedAsset.currentPrice)
+              ? toKrwPrice((matchedAsset.originalCurrentPrice || matchedAsset.currentPrice), matchedAsset.currency)
               : parseNumber(item.price);
             const currentPriceNative = matchedAsset
               ? (matchedAsset.originalCurrentPrice || matchedAsset.currentPrice)
-              : (itemCurrency === 'USD' ? parseNumber(item.nativePrice) || (currentPriceKRW / rate) : currentPriceKRW);
+              : (parseNumber(item.nativePrice) || toNativePrice(currentPriceKRW, itemCurrency));
 
             return {
               ...item,
@@ -734,7 +802,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         }),
       };
     });
-  }, [targetPortfolio, enhancedAssets, targetBudgetKRW, exchangeRate]);
+  }, [targetPortfolio, enhancedAssets, targetBudgetKRW, exchangeRate, jpyKrwRate, currencyRates]);
   const targetCurrentChartData = useMemo(() => {
     let cumulativePercent = 0;
     const grouped = Object.values(enhancedAssets.reduce((acc, asset) => {
@@ -855,14 +923,20 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     const timer = setTimeout(async () => {
       const currentTargetPortfolio = targetPortfolioRef.current;
       const rate = exchangeRate || 1350;
-      const jpyKrwRate = await fetchJpyKrwRate() || 9.5;
+      const currentJpyKrwRate = jpyKrwRate || currencyRates.JPY || (await fetchKrwRate('JPY')) || 9.5;
+      const nextCurrencyRates = { ...currencyRatesRef.current, KRW: 1, USD: rate, JPY: currentJpyKrwRate };
+      const getCurrencyRate = async (currency = 'KRW') => {
+        const code = String(currency || 'KRW').toUpperCase();
+        if (code === 'KRW') return 1;
+        if (nextCurrencyRates[code]) return nextCurrencyRates[code];
+
+        const fetchedRate = await fetchKrwRate(code);
+        if (fetchedRate) nextCurrencyRates[code] = fetchedRate;
+        return nextCurrencyRates[code] || 1;
+      };
       const syncTargets = [];
       const bitcoinPricesPromise = fetchBitcoinPrices();
-      const toKrwPrice = (nativePrice, currency) => {
-        if (currency === 'USD') return nativePrice * rate;
-        if (currency === 'JPY') return nativePrice * jpyKrwRate;
-        return nativePrice;
-      };
+      const toKrwPrice = async (nativePrice, currency) => nativePrice * await getCurrencyRate(currency);
 
       currentTargetPortfolio.categories.forEach((category) => {
         getTargetGroups(currentTargetPortfolio, category.id).forEach((group) => {
@@ -906,34 +980,40 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
         if (matchedAsset) {
           const nativePrice = Number(matchedAsset.originalCurrentPrice || matchedAsset.currentPrice) || 0;
-          const priceKRW = matchedAsset.currency === 'USD' ? nativePrice * rate : nativePrice;
-          updates.push({ ...target, priceKRW, nativePrice, source: 'holding' });
+          const priceKRW = await toKrwPrice(nativePrice, matchedAsset.currency);
+          updates.push({ ...target, currency: matchedAsset.currency, priceKRW, nativePrice, source: 'holding' });
           continue;
         }
 
         let fetchedPrice = null;
+        let fetchedCurrency = target.currency;
         if (target.categoryId === '가상화폐' && ['BTC', 'BITCOIN'].includes(target.ticker)) {
           const bitcoinPrices = await bitcoinPricesPromise;
           fetchedPrice = target.currency === 'USD' ? bitcoinPrices.usd : bitcoinPrices.krw;
+          fetchedCurrency = target.currency || 'KRW';
         } else {
-          fetchedPrice = await fetchStockPrice({
+          const stockQuote = await fetchStockQuote({
             ticker: target.ticker,
             category: target.categoryId,
             currency: target.currency,
           });
+          fetchedPrice = stockQuote?.price ?? null;
+          fetchedCurrency = stockQuote?.currency || target.currency || 'KRW';
         }
 
         if (fetchedPrice !== null) {
           updates.push({
             ...target,
+            currency: fetchedCurrency,
             nativePrice: fetchedPrice,
-            priceKRW: toKrwPrice(fetchedPrice, target.currency),
+            priceKRW: await toKrwPrice(fetchedPrice, fetchedCurrency),
             source: 'market',
           });
         } else if (target.currentPriceKRW > 0) {
+          const cachedRate = await getCurrencyRate(target.currency);
           updates.push({
             ...target,
-            nativePrice: target.currentPriceNative || (target.currency === 'USD' ? target.currentPriceKRW / rate : target.currency === 'JPY' ? target.currentPriceKRW / jpyKrwRate : target.currentPriceKRW),
+            nativePrice: target.currentPriceNative || (target.currentPriceKRW / cachedRate),
             priceKRW: target.currentPriceKRW,
             source: 'cached',
           });
@@ -945,6 +1025,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       if (cancelled) return;
 
       if (updates.length > 0) {
+        setCurrencyRates(prev => {
+          const changed = Object.entries(nextCurrencyRates).some(([currency, rate]) => prev[currency] !== rate);
+          return changed ? nextCurrencyRates : prev;
+        });
         setTargetPortfolio(prev => ({
           ...prev,
           groups: {
@@ -988,7 +1072,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [targetTickerSnapshotKey, enhancedAssets, exchangeRate, refreshTrigger]);
+  }, [targetTickerSnapshotKey, enhancedAssets, exchangeRate, jpyKrwRate, currencyRates, refreshTrigger]);
 
   const tradeRecords = useMemo(() => {
     if (tradeLedger.length > 0) {
@@ -1110,9 +1194,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     return sortTradeRecords(filtered, memoSortMode);
   }, [memoLedgerRecords, memoStockFilter, memoSortMode]);
   const tradeSummary = useMemo(() => {
-    return buildTradeSummary(visibleTrades, exchangeRate || 1350);
-  }, [visibleTrades, exchangeRate]);
-  const memoSummary = useMemo(() => buildTradeSummary(visibleMemos, exchangeRate || 1350), [visibleMemos, exchangeRate]);
+    return buildTradeSummary(visibleTrades, exchangeRate || 1350, jpyKrwRate || 9.5, currencyRates);
+  }, [visibleTrades, exchangeRate, jpyKrwRate, currencyRates]);
+  const memoSummary = useMemo(() => buildTradeSummary(visibleMemos, exchangeRate || 1350, jpyKrwRate || 9.5, currencyRates), [visibleMemos, exchangeRate, jpyKrwRate, currencyRates]);
 
   const removeAsset = (id, e) => {
     if (e) e.stopPropagation();
@@ -1602,23 +1686,25 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     if (!newAsset.name || !newAsset.quantity) return;
     if (newAsset.category !== '현금' && !newAsset.averagePrice) return;
     
+    const ticker = normalizeInputTicker(newAsset.ticker);
+    const assetCurrency = getAssetInputCurrency(newAsset.category, ticker, newAsset.currency);
     const parsedQty = parseFloat(String(newAsset.quantity).replace(/,/g, ''));
   const parsedAvgPrice = newAsset.category === '현금'
     ? 1
     : parseFloat(String(newAsset.averagePrice).replace(/,/g, ''));
     let krwAveragePrice = parsedAvgPrice;
-    if (newAsset.currency === 'USD') krwAveragePrice = parsedAvgPrice;
+    if (assetCurrency === 'USD' || assetCurrency === 'JPY') krwAveragePrice = parsedAvgPrice;
 
     const asset = {
       id: Date.now(), 
       name: newAsset.name, 
-      ticker: newAsset.ticker.toUpperCase(),
+      ticker,
       category: newAsset.category, 
-      currency: newAsset.currency,
+      currency: assetCurrency,
       averagePrice: krwAveragePrice, 
       quantity: parsedQty, 
       currentPrice: krwAveragePrice, 
-      originalCurrency: newAsset.currency, 
+      originalCurrency: assetCurrency, 
       originalAveragePrice: parsedAvgPrice, 
       originalCurrentPrice: parsedAvgPrice, 
       buyDate: newAsset.buyDate,
@@ -2728,6 +2814,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             >
               <option value="KRW">원화 (KRW)</option>
               <option value="USD">달러 (USD)</option>
+              <option value="JPY">엔화 (JPY)</option>
             </select>
           </div>
         </div>
@@ -2764,7 +2851,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         {newAsset.category !== '현금' && (
           <div>
             <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-              평균 단가 ({newAsset.currency === 'USD' ? '$' : '₩'})
+              평균 단가 ({getCurrencySymbol(newAsset.currency)})
             </label>
             <input
               type="text"
@@ -2883,7 +2970,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       <div className="space-y-4">
         <div>
           <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-            추가 매수 단가 ({selectedAssetToUpdate.currency === 'USD' ? '$' : '₩'})
+            추가 매수 단가 ({getCurrencySymbol(selectedAssetToUpdate.currency)})
           </label>
           <input
             type="text"
@@ -3007,7 +3094,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       <div className="space-y-4">
         <div>
           <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-            매도 단가 ({selectedAssetToSell.currency === 'USD' ? '$' : '₩'})
+            매도 단가 ({getCurrencySymbol(selectedAssetToSell.currency)})
           </label>
           <input
             type="text"

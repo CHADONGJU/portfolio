@@ -1,38 +1,27 @@
-export const fetchUsdKrwRate = async () => {
-  const primary = await fetch('https://open.er-api.com/v6/latest/USD');
+export const fetchKrwRate = async (currency = 'USD') => {
+  const baseCurrency = String(currency || 'USD').toUpperCase();
+  if (baseCurrency === 'KRW') return 1;
+
+  const primary = await fetch(`https://open.er-api.com/v6/latest/${baseCurrency}`);
   if (primary.ok) {
     const data = await primary.json();
     if (data?.rates?.KRW) return data.rates.KRW;
   }
 
   const fallback = await fetch(
-    'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json',
+    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${baseCurrency.toLowerCase()}.json`,
   );
   if (fallback.ok) {
     const data = await fallback.json();
-    if (data?.usd?.krw) return data.usd.krw;
+    if (data?.[baseCurrency.toLowerCase()]?.krw) return data[baseCurrency.toLowerCase()].krw;
   }
 
   return null;
 };
 
-export const fetchJpyKrwRate = async () => {
-  const primary = await fetch('https://open.er-api.com/v6/latest/JPY');
-  if (primary.ok) {
-    const data = await primary.json();
-    if (data?.rates?.KRW) return data.rates.KRW;
-  }
+export const fetchUsdKrwRate = () => fetchKrwRate('USD');
 
-  const fallback = await fetch(
-    'https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/jpy.json',
-  );
-  if (fallback.ok) {
-    const data = await fallback.json();
-    if (data?.jpy?.krw) return data.jpy.krw;
-  }
-
-  return null;
-};
+export const fetchJpyKrwRate = () => fetchKrwRate('JPY');
 
 export const fetchBitcoinPrices = async () => {
   try {
@@ -154,6 +143,11 @@ const normalizeTicker = (ticker) => ticker
   .replace(/^NASDAQ:/, '')
   .replace(/^NYSE:/, '')
   .replace(/^AMEX:/, '')
+  .replace(/^TYO:/, '')
+  .replace(/^TSE:/, '')
+  .replace(/^JP:/, '')
+  .replace(/\.JP$/, '.T')
+  .replace(/\.TYO$/, '.T')
   .replace(/\s+/g, '');
 
 const getUsTickerAliases = (ticker) => {
@@ -197,24 +191,31 @@ const readYahooPrice = (data) => {
   const meta = data?.chart?.result?.[0]?.meta;
   const quote = data?.chart?.result?.[0]?.indicators?.quote?.[0];
   const close = quote?.close?.findLast((value) => typeof value === 'number');
-
-  return pickMarketAwarePrice(meta)
+  const price = pickMarketAwarePrice(meta)
     ?? close
     ?? meta?.chartPreviousClose
     ?? null;
+
+  return price === null ? null : {
+    price,
+    currency: meta?.currency,
+    symbol: meta?.symbol,
+  };
 };
 
 const readYahooQuotePrice = (data) => {
   const quote = data?.quoteResponse?.result?.[0];
-  return pickMarketAwarePrice(quote);
+  const price = pickMarketAwarePrice(quote);
+
+  return price === null ? null : {
+    price,
+    currency: quote?.currency,
+    symbol: quote?.symbol,
+  };
 };
 
 const isDomesticStock = (asset, ticker) => {
   return asset.category?.includes('국내') || /^\d{5,6}(\.(KS|KQ))?$/.test(ticker);
-};
-
-const isJapaneseStock = (asset, ticker) => {
-  return asset.currency === 'JPY' || /^\d{4}(\.T)?$/.test(ticker);
 };
 
 const readNaverPrice = (data) => {
@@ -254,7 +255,15 @@ const readStooqPrice = (csv) => {
   return Number.isFinite(close) && close > 0 ? close : null;
 };
 
-export const fetchStockPrice = async (asset) => {
+const getYahooTickers = (asset, ticker) => {
+  if (isDomesticStock(asset, ticker)) return [ticker.includes('.') ? ticker : `${ticker}.KS`];
+
+  if (ticker.includes('.')) return [ticker];
+
+  return getUsTickerAliases(ticker).map((symbol) => symbol.replace(/\.US$/, ''));
+};
+
+export const fetchStockQuote = async (asset) => {
   const ticker = normalizeTicker(asset.ticker);
 
   if (isDomesticStock(asset, ticker)) {
@@ -263,14 +272,14 @@ export const fetchStockPrice = async (asset) => {
     const data = await fetchWithSafeProxy(naverUrl);
 
     const naverPrice = readNaverPrice(data);
-    if (naverPrice !== null) return naverPrice;
+    if (naverPrice !== null) return {
+      price: naverPrice,
+      currency: 'KRW',
+      symbol: ticker,
+    };
   }
 
-  const yahooTickers = isDomesticStock(asset, ticker)
-    ? [ticker.includes('.') ? ticker : `${ticker}.KS`]
-    : isJapaneseStock(asset, ticker)
-      ? [ticker.endsWith('.T') ? ticker : `${ticker}.T`]
-      : getUsTickerAliases(ticker).map((symbol) => symbol.replace(/\.US$/, ''));
+  const yahooTickers = getYahooTickers(asset, ticker);
 
   const yahooUrls = yahooTickers.flatMap((yfTicker) => [
     {
@@ -297,23 +306,33 @@ export const fetchStockPrice = async (asset) => {
 
   for (const { url, reader } of yahooUrls) {
     const yfData = await fetchWithSafeProxy(url);
-    const yfPrice = reader(yfData);
-    if (yfPrice !== null) return yfPrice;
+    const yfQuote = reader(yfData);
+    if (yfQuote !== null) return yfQuote;
   }
 
   if (asset.currency === 'USD') {
     for (const alias of getUsTickerAliases(ticker)) {
       const stooqUrl = `https://stooq.com/q/l/?s=${toStooqSymbol(alias)}&f=sd2t2ohlcv&h&e=csv`;
       const stooqPrice = readStooqPrice(await fetchTextWithSafeProxy(stooqUrl));
-      if (stooqPrice !== null) return stooqPrice;
+      if (stooqPrice !== null) return {
+        price: stooqPrice,
+        currency: 'USD',
+        symbol: alias,
+      };
     }
   }
 
   return null;
 };
 
+export const fetchStockPrice = async (asset) => {
+  const quote = await fetchStockQuote(asset);
+  return quote?.price ?? null;
+};
+
 export const fetchDividends = async (ticker) => {
-  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1mo&range=5y&events=div`;
+  const yfTicker = normalizeTicker(ticker);
+  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1mo&range=5y&events=div`;
   const data = await fetchWithSafeProxy(url);
 
   return data?.chart?.result?.[0]?.events?.dividends ?? null;

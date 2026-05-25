@@ -19,12 +19,21 @@ export const usePortfolioMetrics = ({
   tradeLedger = [],
   autoDividends,
   exchangeRate,
+  jpyKrwRate,
+  currencyRates = {},
   selectedCategory,
   selectedDividendAsset,
   dividendFilter,
 }) => {
   // 3. 통합 가치 및 차트 계산
   const enhancedAssets = useMemo(() => {
+    const toKrwRate = (currency) => {
+      if (currency === 'USD') return exchangeRate || 1350;
+      if (currency === 'JPY') return jpyKrwRate || 9.5;
+      if (currency && currency !== 'KRW') return currencyRates[currency] || 1;
+      return 1;
+    };
+
     return assets.map((a, index) => {
       // originalAveragePrice가 무조건 있어야 수학이 맞음
       const safeOrigAvgPrice = a.originalAveragePrice || a.averagePrice;
@@ -32,9 +41,10 @@ export const usePortfolioMetrics = ({
 
       const purchaseNative = safeOrigAvgPrice * a.quantity;
       const currentNative = safeOrigCurrPrice * a.quantity;
+      const krwRate = toKrwRate(a.currency);
       
-      const purchaseKRW = a.currency === 'USD' ? purchaseNative * (exchangeRate || 1350) : purchaseNative;
-      const currentKRW = a.currency === 'USD' ? currentNative * (exchangeRate || 1350) : currentNative; 
+      const purchaseKRW = purchaseNative * krwRate;
+      const currentKRW = currentNative * krwRate; 
       const profitNative = currentNative - purchaseNative;
       const profitKRW = currentKRW - purchaseKRW;
       
@@ -52,7 +62,7 @@ export const usePortfolioMetrics = ({
         returnPercent,
       };
     });
-  }, [assets, exchangeRate]);
+  }, [assets, exchangeRate, jpyKrwRate, currencyRates]);
 
   const totalConvertedKRW = useMemo(() => enhancedAssets.reduce((acc, a) => acc + a.currentKRW, 0), [enhancedAssets]);
   
@@ -105,14 +115,29 @@ export const usePortfolioMetrics = ({
 
   const sellLedger = tradeLedger.filter(entry => entry.side === 'sell');
   const realizedRecords = sellLedger.length > 0 ? sellLedger : trades;
+  const realizedKrwRate = (currency) => {
+    if (currency === 'USD') return exchangeRate || 1350;
+    if (currency === 'JPY') return jpyKrwRate || 9.5;
+    if (currency && currency !== 'KRW') return currencyRates[currency] || 1;
+    return 1;
+  };
   const krwTrades = realizedRecords.filter(t => t.currency === 'KRW');
   const usdTrades = realizedRecords.filter(t => t.currency === 'USD');
   const krwNetProfit = krwTrades.reduce((acc, t) => acc + t.pnl, 0);
   const usdNetProfit = usdTrades.reduce((acc, t) => acc + t.pnl, 0);
-  const totalConvertedNetProfit = krwNetProfit + (usdNetProfit * (exchangeRate || 1350));
+  const totalConvertedNetProfit = realizedRecords.reduce((acc, t) => (
+    acc + ((Number(t.pnl) || 0) * realizedKrwRate(t.currency))
+  ), 0);
 
   const stockPerformanceSummary = useMemo(() => {
     const rate = exchangeRate || 1350;
+    const jpyRate = jpyKrwRate || 9.5;
+    const getRecordRate = (currency) => {
+      if (currency === 'USD') return rate;
+      if (currency === 'JPY') return jpyRate;
+      if (currency && currency !== 'KRW') return currencyRates[currency] || 1;
+      return 1;
+    };
     const ledgerRows = tradeLedger.length > 0 ? tradeLedger : trades.map(trade => ({
       ...trade,
       side: 'sell',
@@ -137,8 +162,8 @@ export const usePortfolioMetrics = ({
       const currency = firstAsset?.currency || firstTrade?.currency || firstDividend?.currency || 'KRW';
 
       const unrealizedKRW = assetRows.reduce((sum, asset) => sum + asset.profitKRW, 0);
-      const realizedKRW = sellRows.reduce((sum, trade) => sum + (trade.currency === 'USD' ? trade.pnl * rate : trade.pnl), 0);
-      const dividendKRW = dividendRows.reduce((sum, dividend) => sum + (dividend.currency === 'USD' ? dividend.amount * rate : dividend.amount), 0);
+      const realizedKRW = sellRows.reduce((sum, trade) => sum + (trade.pnl * getRecordRate(trade.currency)), 0);
+      const dividendKRW = dividendRows.reduce((sum, dividend) => sum + (dividend.amount * getRecordRate(dividend.currency)), 0);
       const totalKRW = unrealizedKRW + realizedKRW + dividendKRW;
 
       const unrealizedNative = assetRows.reduce((sum, asset) => sum + asset.profitNative, 0);
@@ -157,16 +182,16 @@ export const usePortfolioMetrics = ({
         quantity: assetRows.reduce((sum, asset) => sum + (Number(asset.quantity) || 0), 0),
         totalBuyQuantity: buyRows.reduce((sum, record) => sum + (Number(record.quantity) || 0), 0),
         totalSellQuantity: sellRows.reduce((sum, record) => sum + (Number(record.quantity) || 0), 0),
-        totalBuyAmountKRW: buyRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * (record.currency === 'USD' ? rate : 1)), 0),
-        totalSellAmountKRW: sellRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * (record.currency === 'USD' ? rate : 1)), 0),
+        totalBuyAmountKRW: buyRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * getRecordRate(record.currency)), 0),
+        totalSellAmountKRW: sellRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * getRecordRate(record.currency)), 0),
         unrealizedKRW,
         realizedKRW,
         dividendKRW,
         totalKRW,
-        totalNative: currency === 'USD' ? unrealizedNative + realizedNative + dividendNative : totalKRW,
+        totalNative: currency === 'KRW' ? totalKRW : unrealizedNative + realizedNative + dividendNative,
       };
     }).sort((a, b) => Math.abs(b.totalKRW) - Math.abs(a.totalKRW));
-  }, [enhancedAssets, tradeLedger, trades, autoDividends, exchangeRate]);
+  }, [enhancedAssets, tradeLedger, trades, autoDividends, exchangeRate, jpyKrwRate, currencyRates]);
 
   // 5. 배당금 그룹화
   const dividendSummary = useMemo(() => {
