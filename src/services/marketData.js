@@ -150,6 +150,14 @@ const normalizeTicker = (ticker) => ticker
   .replace(/\.TYO$/, '.T')
   .replace(/\s+/g, '');
 
+const isDomesticCategory = (category = '') => (
+  category.includes('국내') && category.includes('주식')
+);
+
+const isOverseasCategory = (category = '') => (
+  category.includes('해외') && category.includes('주식')
+);
+
 const getUsTickerAliases = (ticker) => {
   const cleanTicker = normalizeTicker(ticker);
   const aliases = [cleanTicker];
@@ -215,7 +223,7 @@ const readYahooQuotePrice = (data) => {
 };
 
 const isDomesticStock = (asset, ticker) => {
-  return asset.category?.includes('국내') || /^\d{5,6}(\.(KS|KQ))?$/.test(ticker);
+  return isDomesticCategory(asset.category || '') || /^\d{5,6}(\.(KS|KQ))?$/.test(ticker);
 };
 
 const readNaverPrice = (data) => {
@@ -243,6 +251,23 @@ const toStooqSymbol = (ticker) => {
   return `${cleanTicker}.us`;
 };
 
+const getStooqSymbols = (asset, ticker) => {
+  const cleanTicker = normalizeTicker(ticker);
+
+  if (/^\d{4}$/.test(cleanTicker) && (asset.currency === 'JPY' || isOverseasCategory(asset.category || ''))) {
+    return [`${cleanTicker}.jp`];
+  }
+
+  if (cleanTicker.endsWith('.T')) return [cleanTicker.replace(/\.T$/, '.jp').toLowerCase()];
+  if (cleanTicker.includes('.')) {
+    const [, suffix = ''] = cleanTicker.match(/\.([A-Z]+)$/) || [];
+    if (suffix.length > 1) return [cleanTicker.toLowerCase()];
+    return [`${cleanTicker.replace(/\./g, '-').toLowerCase()}.us`];
+  }
+
+  return getUsTickerAliases(cleanTicker).map(toStooqSymbol);
+};
+
 const readStooqPrice = (csv) => {
   if (!csv) return null;
 
@@ -260,7 +285,17 @@ const getYahooTickers = (asset, ticker) => {
 
   if (ticker.includes('.')) return [ticker];
 
-  return getUsTickerAliases(ticker).map((symbol) => symbol.replace(/\.US$/, ''));
+  const candidates = [ticker];
+
+  if (/^\d{4}$/.test(ticker) && isOverseasCategory(asset.category || '')) {
+    candidates.push(`${ticker}.T`);
+  }
+
+  getUsTickerAliases(ticker).forEach((symbol) => {
+    candidates.push(symbol.replace(/\.US$/, ''));
+  });
+
+  return [...new Set(candidates)];
 };
 
 export const fetchStockQuote = async (asset) => {
@@ -310,14 +345,14 @@ export const fetchStockQuote = async (asset) => {
     if (yfQuote !== null) return yfQuote;
   }
 
-  if (asset.currency === 'USD') {
-    for (const alias of getUsTickerAliases(ticker)) {
-      const stooqUrl = `https://stooq.com/q/l/?s=${toStooqSymbol(alias)}&f=sd2t2ohlcv&h&e=csv`;
+  if (asset.currency === 'USD' || isOverseasCategory(asset.category || '')) {
+    for (const symbol of getStooqSymbols(asset, ticker)) {
+      const stooqUrl = `https://stooq.com/q/l/?s=${symbol}&f=sd2t2ohlcv&h&e=csv`;
       const stooqPrice = readStooqPrice(await fetchTextWithSafeProxy(stooqUrl));
       if (stooqPrice !== null) return {
         price: stooqPrice,
-        currency: 'USD',
-        symbol: alias,
+        currency: symbol.endsWith('.jp') ? 'JPY' : asset.currency || 'USD',
+        symbol,
       };
     }
   }

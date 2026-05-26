@@ -226,13 +226,17 @@ const normalizeInputTicker = (ticker = '') => String(ticker)
 
 const getCurrencySymbol = (currency) => ({ USD: '$', JPY: '¥', KRW: '₩' }[currency] || currency);
 
+const isJapaneseTicker = (ticker = '') => /^\d{4}(\.T)?$/.test(normalizeInputTicker(ticker));
+
 const getTargetItemCurrency = (categoryId, ticker = '', savedCurrency = '') => {
+  if (categoryId === '해외주식' && isJapaneseTicker(ticker)) return 'JPY';
   if (savedCurrency && savedCurrency !== 'USD') return savedCurrency;
   if (normalizeInputTicker(ticker).includes('.')) return savedCurrency || '';
   return categoryId === '해외주식' || categoryId === '원자재' ? 'USD' : 'KRW';
 };
 
 const getAssetInputCurrency = (category, ticker = '', savedCurrency = '') => {
+  if (category === '해외주식' && isJapaneseTicker(ticker)) return 'JPY';
   if (category === '해외주식' && normalizeInputTicker(ticker).includes('.') && savedCurrency) return savedCurrency;
   if (category === '해외주식' || category === '원자재') return 'USD';
   return 'KRW';
@@ -2641,7 +2645,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                     <>
                                       <span className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">자동 현재가</span>
                                       <span>{formatMoney(item.currentPriceKRW, 'KRW')}</span>
-                                      {(item.currency === 'USD' || item.currency === 'JPY') && (
+                                      {item.currency && item.currency !== 'KRW' && (
                                         <span className="block text-[10px] text-blue-600 mt-0.5">{formatMoney(item.currentPriceNative, item.currency)}</span>
                                       )}
                                     </>
