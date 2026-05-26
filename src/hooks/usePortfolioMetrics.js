@@ -27,6 +27,13 @@ export const usePortfolioMetrics = ({
 }) => {
   // 3. 통합 가치 및 차트 계산
   const enhancedAssets = useMemo(() => {
+    const toKrwRate = (currency) => {
+      if (currency === 'USD') return exchangeRate || 1350;
+      if (currency === 'JPY') return jpyKrwRate || 9.5;
+      if (currency && currency !== 'KRW') return currencyRates[currency] || 1;
+      return 1;
+    };
+
     return assets.map((a, index) => {
       // originalAveragePrice가 무조건 있어야 수학이 맞음
       const safeOrigAvgPrice = a.originalAveragePrice || a.averagePrice;
@@ -34,11 +41,12 @@ export const usePortfolioMetrics = ({
 
       const purchaseNative = safeOrigAvgPrice * a.quantity;
       const currentNative = safeOrigCurrPrice * a.quantity;
+      const krwRate = toKrwRate(a.currency);
       
-      const purchaseKRW = purchaseNative;
-      const currentKRW = currentNative; 
+      const purchaseKRW = purchaseNative * krwRate;
+      const currentKRW = currentNative * krwRate; 
       const profitNative = currentNative - purchaseNative;
-      const profitKRW = currentKRW - purchaseKRW;
+      const profitKRW = profitNative * krwRate;
       
       const returnPercent = (purchaseNative > 0 && a.category !== '현금') ? ((currentNative - purchaseNative) / purchaseNative) * 100 : 0;
       
@@ -54,7 +62,7 @@ export const usePortfolioMetrics = ({
         returnPercent,
       };
     });
-  }, [assets]);
+  }, [assets, exchangeRate, jpyKrwRate, currencyRates]);
 
   const totalConvertedKRW = useMemo(() => enhancedAssets.reduce((acc, a) => acc + a.currentKRW, 0), [enhancedAssets]);
   
@@ -94,16 +102,15 @@ export const usePortfolioMetrics = ({
     : enhancedAssets.filter(a => a.currency === 'USD').reduce((acc, a) => acc + a.profitNative, 0);
 
   // 4. 환차익 & 매매 기록 계산
-  const { totalUsdPurchase, totalKrwPurchaseForUsd, currentKrwValueForUsd } = useMemo(() => {
+  const { totalUsdPurchase, currentUsdValueForUsd } = useMemo(() => {
     const usdAssets = enhancedAssets.filter(a => a.currency === 'USD');
     return { 
       totalUsdPurchase: usdAssets.reduce((acc, a) => acc + a.purchaseNative, 0), 
-      totalKrwPurchaseForUsd: usdAssets.reduce((acc, a) => acc + a.purchaseKRW, 0), 
-      currentKrwValueForUsd: usdAssets.reduce((acc, a) => acc + a.currentKRW, 0) 
+      currentUsdValueForUsd: usdAssets.reduce((acc, a) => acc + a.currentNative, 0) 
     };
   }, [enhancedAssets]);
-  const avgBuyExchangeRate = totalUsdPurchase > 0 ? (totalKrwPurchaseForUsd / totalUsdPurchase) : 0;
-  const fxProfitPercent = totalKrwPurchaseForUsd > 0 ? ((currentKrwValueForUsd - totalKrwPurchaseForUsd) / totalKrwPurchaseForUsd) * 100 : 0;
+  const avgBuyExchangeRate = 0;
+  const fxProfitPercent = totalUsdPurchase > 0 ? ((currentUsdValueForUsd - totalUsdPurchase) / totalUsdPurchase) * 100 : 0;
 
   const sellLedger = tradeLedger.filter(entry => entry.side === 'sell');
   const realizedRecords = sellLedger.length > 0 ? sellLedger : trades;
@@ -264,7 +271,7 @@ export const usePortfolioMetrics = ({
     totalUsdPurchase,
     avgBuyExchangeRate,
     fxProfitPercent,
-    currentKrwValueForUsd,
+    currentUsdValueForUsd,
     krwNetProfit,
     usdNetProfit,
     totalConvertedNetProfit,

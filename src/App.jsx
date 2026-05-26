@@ -631,7 +631,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     currentCategoryProfitUSD,
     totalUsdPurchase,
     fxProfitPercent,
-    currentKrwValueForUsd,
+    currentUsdValueForUsd,
     krwNetProfit,
     usdNetProfit,
     totalConvertedNetProfit,
@@ -2081,12 +2081,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                 <div className="col-span-2 flex flex-col justify-center gap-3 md:pl-2">
                   <div className="flex justify-between items-center bg-slate-800/50 px-4 md:px-6 py-3 md:py-4 rounded-2xl md:rounded-3xl">
                     <span className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest">현재 평가 금액 (USD)</span>
-                    <span className="text-lg md:text-xl font-black text-white">{formatMoney(currentKrwValueForUsd, 'USD')}</span>
+                    <span className="text-lg md:text-xl font-black text-white">{formatMoney(currentUsdValueForUsd, 'USD')}</span>
                   </div>
                   <div className="flex justify-between items-center bg-blue-900/20 border border-blue-800/30 px-4 md:px-6 py-3 md:py-4 rounded-2xl md:rounded-3xl relative">
                     <div className="flex flex-col">
                       <span className="text-[9px] md:text-[10px] text-blue-400 font-black uppercase tracking-widest">총 수익금액 (USD)</span>
-                      <span className="text-xl md:text-2xl font-black text-blue-400 tracking-tighter">{formatMoney(currentKrwValueForUsd - totalUsdPurchase, 'USD')}</span>
+                      <span className="text-xl md:text-2xl font-black text-blue-400 tracking-tighter">{formatMoney(currentUsdValueForUsd - totalUsdPurchase, 'USD')}</span>
                     </div>
                     <div className="flex flex-col items-end">
                       <span className="text-[8px] md:text-[10px] text-blue-400 font-black uppercase tracking-widest mb-1">수익률</span>
