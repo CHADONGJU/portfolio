@@ -251,6 +251,8 @@ const getTargetItemSnapshotKey = (targetPortfolio) => targetPortfolio.categories
   )))
   .join('|');
 
+const cleanForFirestore = (value) => JSON.parse(JSON.stringify(value));
+
 const App = () => {
   const { user, signOutUser } = useAuth();
   const userId = user?.uid || '';
@@ -454,7 +456,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
         } else {
           await setDoc(portfolioRef, {
-            ...portfolioSnapshotRef.current,
+            ...cleanForFirestore(portfolioSnapshotRef.current),
             userEmail,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
@@ -484,13 +486,16 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     const saveTimer = setTimeout(async () => {
       try {
         await setDoc(doc(db, 'portfolioStates', userId), {
-          ...portfolioSnapshot,
+          ...cleanForFirestore(portfolioSnapshot),
           userEmail,
           updatedAt: serverTimestamp(),
         }, { merge: true });
       } catch (error) {
         console.error('Cloud portfolio save failed:', error);
-        addLog('클라우드 저장에 실패했습니다. Firebase 권한 설정을 확인해주세요.', 'error');
+        const message = error?.code === 'permission-denied'
+          ? '클라우드 저장 권한이 없습니다. Firestore 규칙을 확인해주세요.'
+          : '클라우드 저장에 실패했습니다. 잠시 후 다시 시도합니다.';
+        addLog(message, 'error');
       }
     }, 700);
 
