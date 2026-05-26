@@ -21,7 +21,6 @@ import {
 } from './constants';
 import { fetchBitcoinPrices, fetchDividends, fetchKrwRate, fetchStockQuote, fetchUsdKrwRate } from './services/marketData';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
-import { loadJson, saveJson } from './utils/storage';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { db } from './firebase';
 
@@ -255,6 +254,16 @@ const getTargetItemSnapshotKey = (targetPortfolio) => targetPortfolio.categories
   )))
   .join('|');
 
+const clearLegacyLocalPortfolioStorage = () => {
+  [
+    ASSETS_STORAGE_KEY,
+    TRADES_STORAGE_KEY,
+    MEMOS_STORAGE_KEY,
+    TRADE_LEDGER_STORAGE_KEY,
+    TARGET_PORTFOLIO_STORAGE_KEY,
+  ].forEach((key) => localStorage.removeItem(key));
+};
+
 const cleanForFirestore = (value) => JSON.parse(JSON.stringify(value));
 
 const App = () => {
@@ -359,25 +368,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     }
   }, [newAsset.category, newAsset.ticker]);
 
-  const [assets, setAssets] = useState(() => {
-    return loadJson(ASSETS_STORAGE_KEY, []);
-  });
-
-  const [trades, setTrades] = useState(() => {
-    return loadJson(TRADES_STORAGE_KEY, []);
-  });
-
-  const [memos, setMemos] = useState(() => {
-    return loadJson(MEMOS_STORAGE_KEY, []);
-  });
-
-  const [tradeLedger, setTradeLedger] = useState(() => {
-    return loadJson(TRADE_LEDGER_STORAGE_KEY, []);
-  });
-
-  const [targetPortfolio, setTargetPortfolio] = useState(() => {
-    return loadJson(TARGET_PORTFOLIO_STORAGE_KEY, DEFAULT_TARGET_PORTFOLIO);
-  });
+  const [assets, setAssets] = useState([]);
+  const [trades, setTrades] = useState([]);
+  const [memos, setMemos] = useState([]);
+  const [tradeLedger, setTradeLedger] = useState([]);
+  const [targetPortfolio, setTargetPortfolio] = useState(DEFAULT_TARGET_PORTFOLIO);
   const targetPortfolioRef = useRef(targetPortfolio);
   const targetTickerSnapshotKey = useMemo(() => (
     getTargetItemSnapshotKey(targetPortfolio)
@@ -394,16 +389,18 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   }), [assets, trades, memos, tradeLedger, targetPortfolio]);
   const portfolioSnapshotRef = useRef(portfolioSnapshot);
 
-  useEffect(() => { saveJson(ASSETS_STORAGE_KEY, assets); }, [assets]);
-  useEffect(() => { saveJson(TRADES_STORAGE_KEY, trades); }, [trades]);
-  useEffect(() => { saveJson(MEMOS_STORAGE_KEY, memos); }, [memos]);
-  useEffect(() => { saveJson(TRADE_LEDGER_STORAGE_KEY, tradeLedger); }, [tradeLedger]);
-  useEffect(() => { saveJson(TARGET_PORTFOLIO_STORAGE_KEY, targetPortfolio); }, [targetPortfolio]);
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
   useEffect(() => { portfolioSnapshotRef.current = portfolioSnapshot; }, [portfolioSnapshot]);
 
   useEffect(() => {
     if (!userId || !db) {
+      clearLegacyLocalPortfolioStorage();
+      setAssets([]);
+      setTrades([]);
+      setMemos([]);
+      setTradeLedger([]);
+      setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
+      setAutoDividends([]);
       setIsCloudPortfolioLoaded(true);
       setCloudPortfolioUserId('');
       return undefined;
