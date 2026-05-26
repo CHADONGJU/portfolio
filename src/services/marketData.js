@@ -40,6 +40,17 @@ export const fetchBitcoinPrices = async () => {
   }
 };
 
+const fetchWithTimeout = async (url, options = {}, timeoutMs = 7000) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
 export const fetchWithSafeProxy = async (url) => {
   const encodedUrl = encodeURIComponent(url);
   const proxies = [
@@ -51,7 +62,7 @@ export const fetchWithSafeProxy = async (url) => {
 
   for (const proxy of proxies) {
     try {
-      const res = await fetch(proxy, { cache: 'no-store' });
+      const res = await fetchWithTimeout(proxy, { cache: 'no-store' });
       if (!res.ok) continue;
 
       const text = await res.text();
@@ -82,8 +93,10 @@ export const fetchWithSafeProxy = async (url) => {
 
 export const fetchTextWithSafeProxy = async (url) => {
   const encodedUrl = encodeURIComponent(url);
+  const jinaUrl = `https://r.jina.ai/http://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`;
   const proxies = [
     url,
+    jinaUrl,
     `https://api.allorigins.win/raw?url=${encodedUrl}`,
     `https://api.allorigins.win/get?url=${encodedUrl}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`,
@@ -91,7 +104,7 @@ export const fetchTextWithSafeProxy = async (url) => {
 
   for (const proxy of proxies) {
     try {
-      const res = await fetch(proxy, { cache: 'no-store' });
+      const res = await fetchWithTimeout(proxy, { cache: 'no-store' });
       if (!res.ok) continue;
 
       const text = await res.text();
@@ -271,7 +284,9 @@ const getStooqSymbols = (asset, ticker) => {
 const readStooqPrice = (csv) => {
   if (!csv) return null;
 
-  const [, row] = csv.trim().split(/\r?\n/);
+  const lines = csv.trim().split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const headerIndex = lines.findIndex((line) => line.toLowerCase().startsWith('symbol,date,time,'));
+  const row = headerIndex >= 0 ? lines[headerIndex + 1] : lines[1];
   if (!row) return null;
 
   const columns = row.split(',');
@@ -285,11 +300,13 @@ const getYahooTickers = (asset, ticker) => {
 
   if (ticker.includes('.')) return [ticker];
 
-  const candidates = [ticker];
+  const candidates = [];
 
   if (/^\d{4}$/.test(ticker) && isOverseasCategory(asset.category || '')) {
     candidates.push(`${ticker}.T`);
   }
+
+  candidates.push(ticker);
 
   getUsTickerAliases(ticker).forEach((symbol) => {
     candidates.push(symbol.replace(/\.US$/, ''));
@@ -314,17 +331,21 @@ export const fetchStockQuote = async (asset) => {
     };
   }
 
+  if (asset.currency === 'USD' || asset.currency === 'JPY' || isOverseasCategory(asset.category || '')) {
+    for (const symbol of getStooqSymbols(asset, ticker)) {
+      const stooqUrl = `https://stooq.com/q/l/?s=${symbol}&f=sd2t2ohlcv&h&e=csv`;
+      const stooqPrice = readStooqPrice(await fetchTextWithSafeProxy(stooqUrl));
+      if (stooqPrice !== null) return {
+        price: stooqPrice,
+        currency: symbol.endsWith('.jp') ? 'JPY' : asset.currency || 'USD',
+        symbol,
+      };
+    }
+  }
+
   const yahooTickers = getYahooTickers(asset, ticker);
 
   const yahooUrls = yahooTickers.flatMap((yfTicker) => [
-    {
-      url: `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${yfTicker}`,
-      reader: readYahooQuotePrice,
-    },
-    {
-      url: `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yfTicker}`,
-      reader: readYahooQuotePrice,
-    },
     {
       url: `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
       reader: readYahooPrice,
@@ -337,24 +358,16 @@ export const fetchStockQuote = async (asset) => {
       url: `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1d&range=5d`,
       reader: readYahooPrice,
     },
+    {
+      url: `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${yfTicker}`,
+      reader: readYahooQuotePrice,
+    },
   ]);
 
   for (const { url, reader } of yahooUrls) {
     const yfData = await fetchWithSafeProxy(url);
     const yfQuote = reader(yfData);
     if (yfQuote !== null) return yfQuote;
-  }
-
-  if (asset.currency === 'USD' || isOverseasCategory(asset.category || '')) {
-    for (const symbol of getStooqSymbols(asset, ticker)) {
-      const stooqUrl = `https://stooq.com/q/l/?s=${symbol}&f=sd2t2ohlcv&h&e=csv`;
-      const stooqPrice = readStooqPrice(await fetchTextWithSafeProxy(stooqUrl));
-      if (stooqPrice !== null) return {
-        price: stooqPrice,
-        currency: symbol.endsWith('.jp') ? 'JPY' : asset.currency || 'USD',
-        symbol,
-      };
-    }
   }
 
   return null;
