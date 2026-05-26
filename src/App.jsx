@@ -19,7 +19,7 @@ import {
   TRADE_LEDGER_STORAGE_KEY,
   TRADES_STORAGE_KEY,
 } from './constants';
-import { fetchBitcoinPrices, fetchDividends, fetchKrwRate, fetchStockQuote, fetchUsdKrwRate, fetchUsdKrwRateByDate } from './services/marketData';
+import { fetchBitcoinPrices, fetchDividends, fetchKrwRate, fetchStockQuote, fetchUsdKrwRate } from './services/marketData';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { loadJson, saveJson } from './utils/storage';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
@@ -289,8 +289,6 @@ const App = () => {
   const [tradeStockFilter, setTradeStockFilter] = useState('all');
   const [tradeVisibleCount, setTradeVisibleCount] = useState(TRADE_PAGE_SIZE);
   const [performanceSearchTerm, setPerformanceSearchTerm] = useState('');
-  const [buyRateStatus, setBuyRateStatus] = useState('');
-  const [addBuyRateStatus, setAddBuyRateStatus] = useState('');
   const [memoSortMode, setMemoSortMode] = useState('newest');
   const [memoStockFilter, setMemoStockFilter] = useState('all');
   const [targetViewMode, setTargetViewMode] = useState('table');
@@ -323,11 +321,10 @@ const App = () => {
   memo: ''
 };
   const [newAsset, setNewAsset] = useState(initialAssetState);
-  const initialAddBuyState = {
+const initialAddBuyState = {
   quantity: '',
   averagePrice: '',
   buyDate: defaultBuyDate,
-  buyExchangeRate: '',
   memo: ''
 };
 
@@ -348,43 +345,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   useEffect(() => {
     const nextCurrency = getAssetInputCurrency(newAsset.category, newAsset.ticker);
     if (nextCurrency === 'USD') {
-      setNewAsset(prev => ({ ...prev, currency: 'USD', buyExchangeRate: prev.buyExchangeRate || (exchangeRate === 0 ? '' : exchangeRate) }));
+      setNewAsset(prev => ({ ...prev, currency: 'USD' }));
     } else if (nextCurrency === 'JPY') {
-      setNewAsset(prev => ({ ...prev, currency: 'JPY', buyExchangeRate: '' }));
+      setNewAsset(prev => ({ ...prev, currency: 'JPY' }));
     } else if (newAsset.category === '현금') {
       setNewAsset(prev => ({ ...prev, averagePrice: 1, ticker: '' }));
     } else {
-      setNewAsset(prev => ({ ...prev, currency: 'KRW', buyExchangeRate: 1 }));
+      setNewAsset(prev => ({ ...prev, currency: 'KRW' }));
     }
-  }, [newAsset.category, newAsset.ticker, exchangeRate]);
-
-  useEffect(() => {
-    if (!isAdding || newAsset.currency !== 'USD' || !newAsset.buyDate) return;
-    let cancelled = false;
-
-    const syncBuyExchangeRate = async () => {
-      setBuyRateStatus('매수일 환율을 불러오는 중...');
-      const rate = await fetchUsdKrwRateByDate(newAsset.buyDate);
-      if (cancelled) return;
-
-      if (rate) {
-        setNewAsset(prev => (
-          prev.currency === 'USD' && prev.buyDate === newAsset.buyDate
-            ? { ...prev, buyExchangeRate: String(rate) }
-            : prev
-        ));
-        setBuyRateStatus(`자동 적용: 1달러 = ${rate.toLocaleString(undefined, { maximumFractionDigits: 2 })}원`);
-      } else {
-        setBuyRateStatus('환율을 불러오지 못해 현재 환율을 사용합니다.');
-        setNewAsset(prev => ({ ...prev, buyExchangeRate: prev.buyExchangeRate || String(exchangeRate || 1350) }));
-      }
-    };
-
-    syncBuyExchangeRate();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAdding, newAsset.currency, newAsset.buyDate, exchangeRate]);
+  }, [newAsset.category, newAsset.ticker]);
 
   const [assets, setAssets] = useState(() => {
     return loadJson(ASSETS_STORAGE_KEY, []);
@@ -661,7 +630,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     currentCategoryProfitKRW,
     currentCategoryProfitUSD,
     totalUsdPurchase,
-    avgBuyExchangeRate,
     fxProfitPercent,
     currentKrwValueForUsd,
     krwNetProfit,
@@ -1140,34 +1108,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     setTradeVisibleCount(TRADE_PAGE_SIZE);
   }, [tradeStockFilter, tradeSortMode]);
 
-  useEffect(() => {
-    if (!isUpdatingAsset || selectedAssetToUpdate?.currency !== 'USD' || !addBuyForm.buyDate) return;
-    let cancelled = false;
-
-    const syncAddBuyExchangeRate = async () => {
-      setAddBuyRateStatus('매수일 환율을 불러오는 중...');
-      const rate = await fetchUsdKrwRateByDate(addBuyForm.buyDate);
-      if (cancelled) return;
-
-      if (rate) {
-        setAddBuyForm(prev => (
-          prev.buyDate === addBuyForm.buyDate
-            ? { ...prev, buyExchangeRate: String(rate) }
-            : prev
-        ));
-        setAddBuyRateStatus(`자동 적용: 1달러 = ${rate.toLocaleString(undefined, { maximumFractionDigits: 2 })}원`);
-      } else {
-        setAddBuyRateStatus('환율을 불러오지 못해 현재 환율을 사용합니다.');
-        setAddBuyForm(prev => ({ ...prev, buyExchangeRate: prev.buyExchangeRate || String(exchangeRate || 1350) }));
-      }
-    };
-
-    syncAddBuyExchangeRate();
-    return () => {
-      cancelled = true;
-    };
-  }, [isUpdatingAsset, selectedAssetToUpdate?.currency, addBuyForm.buyDate, exchangeRate]);
-
   const memoLedgerRecords = useMemo(() => {
     const matchedMemoIds = new Set();
     const ledgerRecords = tradeLedger.map((entry) => {
@@ -1507,10 +1447,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     quantity: '',
     averagePrice: '',
     buyDate: new Date().toISOString().split('T')[0],
-    buyExchangeRate: asset.currency === 'USD' ? String(exchangeRate || asset.buyExchangeRate || 1350) : '',
     memo: ''
   });
-  setAddBuyRateStatus('');
   setIsUpdatingAsset(true);
 };
 
@@ -1530,7 +1468,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   const addedQty = parseFloat(String(addBuyForm.quantity).replace(/,/g, ''));
   const addedAvgNative = parseFloat(String(addBuyForm.averagePrice).replace(/,/g, ''));
-  const addedBuyRate = parseFloat(String(addBuyForm.buyExchangeRate).replace(/,/g, '')) || (exchangeRate || 1350);
 
   if (isNaN(addedQty) || addedQty <= 0) {
     addLog("추가 매수 수량을 올바르게 입력해주세요.", "error");
@@ -1548,20 +1485,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       const oldQty = Number(asset.quantity) || 0;
       const oldAvgNative = Number(asset.originalAveragePrice || asset.averagePrice) || 0;
-      const oldBuyRate = Number(asset.buyExchangeRate || exchangeRate || 1350) || 1350;
 
       const totalQty = oldQty + addedQty;
       const totalCostNative = oldQty * oldAvgNative + addedQty * addedAvgNative;
       const nextOriginalAveragePrice = totalQty > 0 ? totalCostNative / totalQty : 0;
-      const nextBuyExchangeRate =
-        asset.currency === 'USD' && totalQty > 0
-          ? ((oldQty * oldAvgNative * oldBuyRate) + (addedQty * addedAvgNative * addedBuyRate)) / totalCostNative
-          : asset.buyExchangeRate;
-
-      const nextAveragePrice =
-        asset.currency === 'USD'
-          ? Math.round(nextOriginalAveragePrice * nextBuyExchangeRate)
-          : nextOriginalAveragePrice;
 
       const nextBuyDate =
         new Date(addBuyForm.buyDate) < new Date(asset.buyDate)
@@ -1571,9 +1498,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       return {
         ...asset,
         quantity: totalQty,
-        averagePrice: nextAveragePrice,
+        averagePrice: nextOriginalAveragePrice,
         originalAveragePrice: nextOriginalAveragePrice,
-        buyExchangeRate: nextBuyExchangeRate,
         buyDate: nextBuyDate
       };
     })
@@ -1599,7 +1525,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   setIsUpdatingAsset(false);
   setSelectedAssetToUpdate(null);
   setAddBuyForm(initialAddBuyState);
-  setAddBuyRateStatus('');
 
   setTimeout(() => {
     setRefreshTrigger(t => t + 1);
@@ -1735,7 +1660,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       date: newAsset.buyDate,
     });
     setNewAsset(initialAssetState);
-    setBuyRateStatus('');
     setIsAdding(false);
     addLog(`'${asset.name}' 자산 추가됨. 최신 주가로 연동합니다...`, "info");
     
@@ -1759,7 +1683,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           isFetching={isFetching}
           lastUpdated={lastUpdated}
           onAddAsset={() => {
-            setBuyRateStatus('');
             setIsAdding(true);
           }}
           onRefresh={() => setRefreshTrigger(t => t + 1)}
@@ -1839,7 +1762,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   </p>
                   <button
                     onClick={() => {
-                      setBuyRateStatus('');
                       setIsAdding(true);
                     }}
                     className="mt-6 inline-flex items-center gap-2 px-5 py-3 bg-blue-600 text-white rounded-2xl text-sm font-bold shadow-lg shadow-blue-100"
@@ -1881,8 +1803,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     ) : (
                       <>
                         <div className="mt-2 md:mt-3 bg-slate-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full border border-slate-100 flex items-center gap-1.5">
-                          <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 환산가치</span>
-                          <span className="text-[10px] md:text-[11px] font-bold text-slate-700">≈ {formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
+                          <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 평가가치</span>
+                          <span className="text-[10px] md:text-[11px] font-bold text-slate-700">{formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
                         </div>
                         <div className={`mt-1.5 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${profitBgTone}`}>
                           <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 수익금액</span>
@@ -1919,9 +1841,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                 <div className="p-6 md:p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
                   <h3 className="text-base md:text-lg font-bold text-slate-900">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left table-auto">
-                    <thead>
+                <div className="overflow-hidden">
+                  <table className="w-full text-left md:table-auto">
+                    <thead className="hidden md:table-header-group">
                       <tr className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] border-b border-slate-100">
                         <th className="px-4 py-4 md:px-6 md:py-5">종목/자산</th>
                         <th className="px-4 py-4 md:px-6 md:py-5">상세 가치</th>
@@ -1929,10 +1851,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                         <th className="px-4 py-4 md:px-6 md:py-5 text-center">관리</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-50">
+                    <tbody className="block md:table-row-group divide-y divide-slate-50">
                       {enhancedAssets.filter(asset => selectedCategory ? asset.category === selectedCategory : true).map((asset) => (
-                        <tr key={asset.id} className="hover:bg-slate-50/50 transition-all group">
-                          <td className="px-4 py-5 md:px-6 md:py-6 whitespace-nowrap min-w-55">
+                        <tr key={asset.id} className="block md:table-row px-4 py-5 md:p-0 hover:bg-slate-50/50 transition-all group">
+                          <td className="block md:table-cell px-0 py-0 md:px-6 md:py-6 whitespace-nowrap md:min-w-55">
                             <div className="flex items-center gap-4">
                               <div className="w-12 h-12 md:w-14 md:h-14 shrink-0 rounded-[18px] md:rounded-[20px] flex items-center justify-center text-white font-black text-xl md:text-2xl shadow-md shadow-slate-200 group-hover:scale-[1.03] transition-transform" style={{ backgroundColor: asset.color }}>
                                 {asset.category === '현금' ? <Banknote size={24}/> : asset.name[0]}
@@ -1945,42 +1867,42 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 py-4 md:px-6 md:py-5">
-                            <div className="grid grid-cols-2 gap-x-5 gap-y-3 bg-slate-50 px-4 py-3.5 rounded-2xl border border-slate-100 group-hover:border-blue-100 transition-colors w-full min-w-65 max-w-[320px]">
+                          <td className="block md:table-cell px-0 py-4 md:px-6 md:py-5">
+                            <div className="grid grid-cols-2 gap-x-4 md:gap-x-5 gap-y-3 bg-slate-50 px-4 py-3.5 rounded-2xl border border-slate-100 group-hover:border-blue-100 transition-colors w-full min-w-0 max-w-none md:min-w-65 md:max-w-[320px]">
                               <div className="flex flex-col">
                                 <span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">{asset.category === '현금' ? '보유 원금' : '총 매입'}</span>
-                                <span className="font-black text-slate-700 text-xs md:text-sm mt-1 whitespace-nowrap">{formatMoney(asset.purchaseNative, asset.currency)}</span>
+                                <span className="font-black text-slate-700 text-xs md:text-sm mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.purchaseNative, asset.currency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">평단가</span><span className="font-black text-slate-700 text-xs md:text-sm mt-1 whitespace-nowrap">{formatMoney(asset.originalAveragePrice || asset.averagePrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">평단가</span><span className="font-black text-slate-700 text-xs md:text-sm mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalAveragePrice || asset.averagePrice, asset.originalCurrency || asset.currency)}</span></>
                                 )}
                               </div>
                               <div className="flex flex-col">
                                 <span className="text-[8px] md:text-[9px] text-blue-500 font-black uppercase tracking-widest">총 가치</span>
-                                <span className="font-black text-blue-600 text-xs md:text-sm mt-1 leading-none whitespace-nowrap">{formatMoney(asset.currentNative, asset.currency)}</span>
+                                <span className="font-black text-blue-600 text-xs md:text-sm mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.currentNative, asset.currency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[8px] md:text-[9px] text-blue-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-blue-600 text-xs md:text-sm mt-1 leading-none whitespace-nowrap">{formatMoney(asset.originalCurrentPrice || asset.currentPrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[8px] md:text-[9px] text-blue-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-blue-600 text-xs md:text-sm mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalCurrentPrice || asset.currentPrice, asset.originalCurrency || asset.currency)}</span></>
                                 )}
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 py-5 md:px-6 md:py-6 text-right whitespace-nowrap min-w-37.5">
+                          <td className="block md:table-cell px-0 pb-4 md:px-6 md:py-6 text-left md:text-right whitespace-nowrap md:min-w-37.5">
                             {asset.category === '현금' ? <span className="text-[10px] md:text-xs font-black text-slate-300">-</span> : (
-                              <div className="flex flex-col items-end gap-2">
-                                <div className={`inline-flex items-center justify-center gap-1.5 min-w-30 px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                              <div className="flex flex-row md:flex-col items-stretch md:items-end gap-2">
+                                <div className={`inline-flex items-center justify-center gap-1.5 flex-1 md:flex-none md:min-w-30 px-3 md:px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
                                   {asset.returnPercent >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {Math.abs(asset.returnPercent).toFixed(2)}%
                                 </div>
-                                <div className={`inline-flex items-center justify-center min-w-30 px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                <div className={`inline-flex items-center justify-center flex-1 md:flex-none md:min-w-30 px-3 md:px-4 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
                                   {asset.profitNative > 0 ? '+' : ''}{formatMoney(asset.profitNative, asset.currency)}
                                 </div>
                               </div>
                             )}
                           </td>
-                          <td className="px-4 py-4 md:px-6 md:py-5 text-center whitespace-nowrap">
-                          <div className="flex items-center justify-center gap-2">
+                          <td className="block md:table-cell px-0 py-0 md:px-6 md:py-5 text-right md:text-center whitespace-nowrap">
+                          <div className="flex items-center justify-end md:justify-center gap-2">
                             {asset.category !== '현금' && (
                               <>
                                 <button
@@ -2149,7 +2071,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             </div>
 
             <div className="bg-slate-900 rounded-[30px] md:rounded-[40px] p-6 md:p-8 shadow-xl shadow-slate-200">
-              <h3 className="text-white font-black flex items-center gap-2 mb-4 md:mb-6 text-base md:text-lg"><Globe className="text-blue-400" size={18} /> 달러 자산 환차익 분석</h3>
+              <h3 className="text-white font-black flex items-center gap-2 mb-4 md:mb-6 text-base md:text-lg"><Globe className="text-blue-400" size={18} /> 달러 자산 요약</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
                 <div className="col-span-1 flex flex-col justify-center md:border-r border-b md:border-b-0 border-slate-700/50 pb-4 md:pb-0 md:pr-6 relative">
                   <div className="absolute top-0 right-2 opacity-10"><DollarSign size={60}/></div>
@@ -2158,16 +2080,16 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                 </div>
                 <div className="col-span-2 flex flex-col justify-center gap-3 md:pl-2">
                   <div className="flex justify-between items-center bg-slate-800/50 px-4 md:px-6 py-3 md:py-4 rounded-2xl md:rounded-3xl">
-                    <span className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest">평단가 (매수 평균 환율)</span>
-                    <span className="text-lg md:text-xl font-black text-white">₩{Math.round(avgBuyExchangeRate).toLocaleString()}</span>
+                    <span className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest">현재 평가 금액 (USD)</span>
+                    <span className="text-lg md:text-xl font-black text-white">{formatMoney(currentKrwValueForUsd, 'USD')}</span>
                   </div>
                   <div className="flex justify-between items-center bg-blue-900/20 border border-blue-800/30 px-4 md:px-6 py-3 md:py-4 rounded-2xl md:rounded-3xl relative">
                     <div className="flex flex-col">
-                      <span className="text-[9px] md:text-[10px] text-blue-400 font-black uppercase tracking-widest">총 현재 원화 환산 가격</span>
-                      <span className="text-xl md:text-2xl font-black text-blue-400 tracking-tighter">{formatMoney(currentKrwValueForUsd, 'KRW')}</span>
+                      <span className="text-[9px] md:text-[10px] text-blue-400 font-black uppercase tracking-widest">총 수익금액 (USD)</span>
+                      <span className="text-xl md:text-2xl font-black text-blue-400 tracking-tighter">{formatMoney(currentKrwValueForUsd - totalUsdPurchase, 'USD')}</span>
                     </div>
                     <div className="flex flex-col items-end">
-                      <span className="text-[8px] md:text-[10px] text-blue-400 font-black uppercase tracking-widest mb-1">환차익 수익률</span>
+                      <span className="text-[8px] md:text-[10px] text-blue-400 font-black uppercase tracking-widest mb-1">수익률</span>
                       <span className={`inline-flex font-black px-2 py-0.5 md:px-3 md:py-1 rounded-lg md:rounded-xl text-xs md:text-sm ${fxProfitPercent >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
                         {fxProfitPercent > 0 ? '+' : ''}{fxProfitPercent.toFixed(2)}%
                       </span>
@@ -2789,7 +2711,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         <h3 className="text-lg md:text-xl font-black text-slate-900">새 자산 등록</h3>
         <button
           onClick={() => {
-            setBuyRateStatus('');
             setIsAdding(false);
           }}
           className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors"
@@ -2912,28 +2833,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             />
           </div>
 
-          {newAsset.currency === 'USD' && (
-            <div>
-              <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-                매수일 기준 자동 환율
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-emerald-50/50 border border-emerald-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-emerald-600 font-black text-xs md:text-sm text-emerald-800"
-                value={formatInputNumber(newAsset.buyExchangeRate)}
-                onChange={(e) =>
-                  setNewAsset({
-                    ...newAsset,
-                    buyExchangeRate: sanitizeNumericInput(e.target.value)
-                  })
-                }
-              />
-              {buyRateStatus && (
-                <p className="mt-1.5 text-[9px] md:text-[10px] font-bold text-emerald-600">{buyRateStatus}</p>
-              )}
-            </div>
-          )}
         </div>
 
 
@@ -2972,7 +2871,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           onClick={() => {
             setIsUpdatingAsset(false);
             setSelectedAssetToUpdate(null);
-            setAddBuyRateStatus('');
           }}
           className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors"
         >
@@ -3032,28 +2930,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               }))
             }
           />
-          {selectedAssetToUpdate.currency === 'USD' && (
-            <div className="mt-3">
-              <label className="block text-[9px] md:text-[10px] font-black uppercase tracking-widest mb-1.5 ml-1 text-emerald-500">
-                매수일 기준 자동 환율
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-emerald-50/50 border border-emerald-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-emerald-600 font-black text-xs md:text-sm text-emerald-800"
-                value={formatInputNumber(addBuyForm.buyExchangeRate)}
-                onChange={(e) =>
-                  setAddBuyForm((prev) => ({
-                    ...prev,
-                    buyExchangeRate: sanitizeNumericInput(e.target.value)
-                  }))
-                }
-              />
-              {addBuyRateStatus && (
-                <p className="mt-1.5 text-[9px] md:text-[10px] font-bold text-emerald-600">{addBuyRateStatus}</p>
-              )}
-            </div>
-          )}
         </div>
       </div>
 

@@ -27,13 +27,6 @@ export const usePortfolioMetrics = ({
 }) => {
   // 3. 통합 가치 및 차트 계산
   const enhancedAssets = useMemo(() => {
-    const toKrwRate = (currency) => {
-      if (currency === 'USD') return exchangeRate || 1350;
-      if (currency === 'JPY') return jpyKrwRate || 9.5;
-      if (currency && currency !== 'KRW') return currencyRates[currency] || 1;
-      return 1;
-    };
-
     return assets.map((a, index) => {
       // originalAveragePrice가 무조건 있어야 수학이 맞음
       const safeOrigAvgPrice = a.originalAveragePrice || a.averagePrice;
@@ -41,10 +34,9 @@ export const usePortfolioMetrics = ({
 
       const purchaseNative = safeOrigAvgPrice * a.quantity;
       const currentNative = safeOrigCurrPrice * a.quantity;
-      const krwRate = toKrwRate(a.currency);
       
-      const purchaseKRW = purchaseNative * krwRate;
-      const currentKRW = currentNative * krwRate; 
+      const purchaseKRW = purchaseNative;
+      const currentKRW = currentNative; 
       const profitNative = currentNative - purchaseNative;
       const profitKRW = currentKRW - purchaseKRW;
       
@@ -62,7 +54,7 @@ export const usePortfolioMetrics = ({
         returnPercent,
       };
     });
-  }, [assets, exchangeRate, jpyKrwRate, currencyRates]);
+  }, [assets]);
 
   const totalConvertedKRW = useMemo(() => enhancedAssets.reduce((acc, a) => acc + a.currentKRW, 0), [enhancedAssets]);
   
