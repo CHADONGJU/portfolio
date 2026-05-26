@@ -510,8 +510,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           return nextCurrencyRates[code] || 1;
         };
         
-        // [1] 환율 연동
-        const fetchedRate = await fetchUsdKrwRate();
+        // [1] 환율/코인 연동
+        const [fetchedRate, fetchedJpyRate, bitcoinPrices] = await Promise.all([
+          fetchUsdKrwRate(),
+          fetchKrwRate('JPY'),
+          fetchBitcoinPrices(),
+        ]);
+
         if (fetchedRate) {
           currentRate = fetchedRate;
           addLog(`환율 연동 완료: 1$ = ${currentRate.toLocaleString(undefined, {maximumFractionDigits:2})}원`, "success");
@@ -521,16 +526,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         if (currentRate > 0) setExchangeRate(currentRate);
         if (currentRate > 0) nextCurrencyRates.USD = currentRate;
 
-        const fetchedJpyRate = await fetchKrwRate('JPY');
         if (fetchedJpyRate) currentJpyRate = fetchedJpyRate;
         if (currentJpyRate > 0) setJpyKrwRate(currentJpyRate);
         if (currentJpyRate > 0) nextCurrencyRates.JPY = currentJpyRate;
 
-        // 코인 연동 (선택적)
-        const bitcoinPrices = await fetchBitcoinPrices();
-
         const currentAssets = assetsRef.current;
-        let newAutoDividends = [];
+        const dividendTasks = [];
         let successCount = 0;
         let failCount = 0;
 
@@ -568,22 +569,22 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             if (asset.buyDate && !isCommodityCategory(asset.category)) {
               let yfTicker = asset.ticker.toUpperCase().trim();
               if (isDomesticStockCategory(asset.category) && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
-              
-              const divs = await fetchDividends(yfTicker);
-              if (divs) {
-                const buyTimestamp = new Date(asset.buyDate).getTime() / 1000;
-                Object.values(divs).forEach(d => {
-                  if (d.date >= buyTimestamp) {
-                    newAutoDividends.push({
+
+              dividendTasks.push(
+                fetchDividends(yfTicker).then((divs) => {
+                  if (!divs) return [];
+                  const buyTimestamp = new Date(asset.buyDate).getTime() / 1000;
+                  return Object.values(divs)
+                    .filter(d => d.date >= buyTimestamp)
+                    .map(d => ({
                       id: `${asset.id}-${d.date}`,
                       date: new Date(d.date * 1000).toISOString().split('T')[0],
                       name: asset.name,
                       amount: d.amount * asset.quantity,
                       currency: asset.originalCurrency || asset.currency
-                    });
-                  }
-                });
-              }
+                    }));
+                }).catch(() => [])
+              );
             }
           }
           return {
@@ -600,12 +601,21 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           return changed ? nextCurrencyRates : prev;
         });
         setAssets(updatedAssets);
-        newAutoDividends.sort((a, b) => new Date(b.date) - new Date(a.date));
-        setAutoDividends(newAutoDividends);
         setLastUpdated(new Date().toLocaleTimeString());
 
         if (successCount > 0 && failCount === 0) addLog("모든 주식 및 환율 최신화 완료!", "success");
         else if (failCount > 0) addLog(`일부 종목 갱신 실패 (${failCount}건).`, "error");
+
+        if (dividendTasks.length > 0) {
+          Promise.all(dividendTasks).then((dividendGroups) => {
+            const nextAutoDividends = dividendGroups
+              .flat()
+              .sort((a, b) => new Date(b.date) - new Date(a.date));
+            setAutoDividends(nextAutoDividends);
+          });
+        } else {
+          setAutoDividends([]);
+        }
 
       } catch (e) { 
         console.error("Update error:", e); 
