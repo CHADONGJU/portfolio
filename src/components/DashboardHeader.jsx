@@ -1,23 +1,95 @@
-import { Briefcase, LogOut, Plus, RefreshCw, UserCircle } from 'lucide-react';
+import { useState } from 'react';
+import { Briefcase, Check, LogOut, Pencil, Plus, RefreshCw, UserCircle, X } from 'lucide-react';
+import { DEFAULT_PORTFOLIO_NAME } from '../constants';
 
 const DashboardHeader = ({
   exchangeRate,
   isFetching,
   lastUpdated,
   onAddAsset,
+  onPortfolioNameChange,
   onRefresh,
   onSignOut,
+  portfolioName,
   userEmail,
-}) => (
+}) => {
+  const resolvedPortfolioName = portfolioName?.trim() || DEFAULT_PORTFOLIO_NAME;
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(resolvedPortfolioName);
+
+  const saveName = () => {
+    const nextName = nameDraft.trim() || DEFAULT_PORTFOLIO_NAME;
+    onPortfolioNameChange(nextName);
+    setNameDraft(nextName);
+    setIsEditingName(false);
+  };
+
+  const cancelNameEdit = () => {
+    setNameDraft(resolvedPortfolioName);
+    setIsEditingName(false);
+  };
+
+  return (
   <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 md:p-7 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden">
     <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-600"></div>
-    <div>
-      <h1 className="text-xl md:text-2xl font-bold flex items-center gap-3 text-slate-800">
-        <div className="p-2 md:p-2.5 bg-blue-600 rounded-2xl text-white shadow-md shadow-blue-100">
+    <div className="min-w-0 w-full md:w-auto">
+      <div className="flex items-start gap-3 text-slate-800">
+        <div className="p-2 md:p-2.5 bg-blue-600 rounded-2xl text-white shadow-md shadow-blue-100 shrink-0">
           <Briefcase size={20} className="md:w-6 md:h-6" />
         </div>
-        투자 통합 대시보드
-      </h1>
+        {isEditingName ? (
+          <form
+            className="min-w-0 flex flex-1 items-center gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveName();
+            }}
+          >
+            <input
+              value={nameDraft}
+              onChange={(event) => setNameDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  cancelNameEdit();
+                }
+              }}
+              className="min-w-0 w-full max-w-[24rem] rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xl md:text-2xl font-bold text-slate-800 outline-none ring-2 ring-blue-100 focus:border-blue-300 focus:ring-blue-200"
+              autoFocus
+            />
+            <button
+              type="submit"
+              className="shrink-0 p-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+              title="이름 저장"
+            >
+              <Check size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={cancelNameEdit}
+              className="shrink-0 p-2.5 rounded-xl bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-700 transition-colors border border-slate-100"
+              title="편집 취소"
+            >
+              <X size={16} />
+            </button>
+          </form>
+        ) : (
+          <div className="min-w-0 flex items-center gap-2">
+            <h1 className="min-w-0 text-xl md:text-2xl font-bold truncate">{resolvedPortfolioName}</h1>
+            <button
+              type="button"
+              onClick={() => {
+                setNameDraft(resolvedPortfolioName);
+                setIsEditingName(true);
+              }}
+              className="shrink-0 p-2 rounded-xl text-slate-400 hover:bg-slate-50 hover:text-blue-600 transition-colors"
+              title="이름 편집"
+            >
+              <Pencil size={15} />
+            </button>
+          </div>
+        )}
+      </div>
       <p className="text-slate-400 text-[10px] md:text-[11px] mt-2 font-bold uppercase tracking-[0.14em] leading-relaxed flex flex-wrap items-center gap-x-2 gap-y-1">
         <span>{lastUpdated ? `Sync: ${lastUpdated}` : 'Loading...'}</span>
         <span className="hidden md:inline-block w-1 h-1 bg-slate-300 rounded-full"></span>
@@ -61,6 +133,7 @@ const DashboardHeader = ({
       )}
     </div>
   </header>
-);
+  );
+};
 
 export default DashboardHeader;

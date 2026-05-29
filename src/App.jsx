@@ -13,6 +13,7 @@ import { useAuth } from './context/useAuth';
 import {
   ASSET_COLORS,
   ASSETS_STORAGE_KEY,
+  DEFAULT_PORTFOLIO_NAME,
   getAssetColor,
   MEMOS_STORAGE_KEY,
   TARGET_PORTFOLIO_STORAGE_KEY,
@@ -372,6 +373,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const [trades, setTrades] = useState([]);
   const [memos, setMemos] = useState([]);
   const [tradeLedger, setTradeLedger] = useState([]);
+  const [portfolioName, setPortfolioName] = useState(DEFAULT_PORTFOLIO_NAME);
   const [targetPortfolio, setTargetPortfolio] = useState(DEFAULT_TARGET_PORTFOLIO);
   const targetPortfolioRef = useRef(targetPortfolio);
   const targetTickerSnapshotKey = useMemo(() => (
@@ -381,12 +383,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const [autoDividends, setAutoDividends] = useState([]);
 
   const portfolioSnapshot = useMemo(() => ({
+    portfolioName,
     assets,
     trades,
     memos,
     tradeLedger,
     targetPortfolio,
-  }), [assets, trades, memos, tradeLedger, targetPortfolio]);
+  }), [portfolioName, assets, trades, memos, tradeLedger, targetPortfolio]);
   const portfolioSnapshotRef = useRef(portfolioSnapshot);
 
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
@@ -399,6 +402,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       setTrades([]);
       setMemos([]);
       setTradeLedger([]);
+      setPortfolioName(DEFAULT_PORTFOLIO_NAME);
       setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
       setAutoDividends([]);
       setIsCloudPortfolioLoaded(true);
@@ -422,6 +426,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           setTrades(Array.isArray(data.trades) ? data.trades : []);
           setMemos(Array.isArray(data.memos) ? data.memos : []);
           setTradeLedger(Array.isArray(data.tradeLedger) ? data.tradeLedger : []);
+          setPortfolioName(typeof data.portfolioName === 'string' && data.portfolioName.trim() ? data.portfolioName : DEFAULT_PORTFOLIO_NAME);
           setTargetPortfolio(data.targetPortfolio || DEFAULT_TARGET_PORTFOLIO);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
         } else {
@@ -1693,9 +1698,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           exchangeRate={exchangeRate}
           isFetching={isFetching}
           lastUpdated={lastUpdated}
+          portfolioName={portfolioName}
           onAddAsset={() => {
             setIsAdding(true);
           }}
+          onPortfolioNameChange={setPortfolioName}
           onRefresh={() => setRefreshTrigger(t => t + 1)}
           userEmail={userEmail}
           onSignOut={signOutUser}
