@@ -17,6 +17,13 @@ recovered-local-storage.json
 restore-portfolio-console-snippet.js
 recovery-localstorage-*/
 recovery-tools/
+chrome-localstorage-backup-before-restore-*/
+chrome-localstorage-backup-before-20-asset-restore-*/
+edge-localstorage-backup-before-restore-*/
+edge-localstorage-backup-before-20-asset-restore-*/
+restore-chrome-localstorage.cjs
+restore-edge-localstorage.cjs
+restore-missing-assets.cjs
 .env
 .env.*
 !.env.example
