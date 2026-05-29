@@ -415,10 +415,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
         if (snapshot.exists()) {
           const data = snapshot.data();
-          setAssets(Array.isArray(data.assets) ? data.assets : []);
-          setTrades(Array.isArray(data.trades) ? data.trades : []);
-          setMemos(Array.isArray(data.memos) ? data.memos : []);
-          setTradeLedger(Array.isArray(data.tradeLedger) ? data.tradeLedger : []);
+          const localSnapshot = portfolioSnapshotRef.current;
+          setAssets(Array.isArray(data.assets) && data.assets.length > 0 ? data.assets : localSnapshot.assets || []);
+          setTrades(Array.isArray(data.trades) && data.trades.length > 0 ? data.trades : localSnapshot.trades || []);
+          setMemos(Array.isArray(data.memos) && data.memos.length > 0 ? data.memos : localSnapshot.memos || []);
+          setTradeLedger(Array.isArray(data.tradeLedger) && data.tradeLedger.length > 0 ? data.tradeLedger : localSnapshot.tradeLedger || []);
           setPortfolioName(typeof data.portfolioName === 'string' && data.portfolioName.trim() ? data.portfolioName : DEFAULT_PORTFOLIO_NAME);
           setTargetPortfolio(data.targetPortfolio || DEFAULT_TARGET_PORTFOLIO);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');

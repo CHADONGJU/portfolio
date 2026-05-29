@@ -13,6 +13,10 @@ dist-ssr
 .firebase
 *.local
 linear.config.json
+recovered-local-storage.json
+restore-portfolio-console-snippet.js
+recovery-localstorage-*/
+recovery-tools/
 .env
 .env.*
 !.env.example
