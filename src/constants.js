@@ -1,4 +1,5 @@
 export const DEFAULT_PORTFOLIO_NAME = '투자 통합 대시보드';
+export const PORTFOLIO_NAME_STORAGE_KEY = 'portfolio_name_v1';
 export const ASSETS_STORAGE_KEY = 'portfolio_assets_v17';
 export const TRADES_STORAGE_KEY = 'portfolio_trades_v17';
 export const MEMOS_STORAGE_KEY = 'portfolio_trade_memos_v1';
