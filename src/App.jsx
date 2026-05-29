@@ -321,6 +321,12 @@ const normalizeInputTicker = (ticker = '') => String(ticker)
 
 const getCurrencySymbol = (currency) => ({ USD: '$', JPY: '¥', KRW: '₩' }[currency] || currency);
 
+const getDividendWithholdingRate = (currency, category = '') => {
+  if (currency === 'USD') return 0.15;
+  if (currency === 'KRW' || isDomesticStockCategory(category)) return 0.154;
+  return 0.154;
+};
+
 const isJapaneseTicker = (ticker = '') => /^\d{4}(\.T)?$/.test(normalizeInputTicker(ticker));
 
 const getTargetItemCurrency = (categoryId, ticker = '', savedCurrency = '') => {
@@ -710,13 +716,22 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   const buyTimestamp = new Date(asset.buyDate).getTime() / 1000;
                   return Object.values(divs)
                     .filter(d => d.date >= buyTimestamp)
-                    .map(d => ({
-                      id: `${asset.id}-${d.date}`,
-                      date: new Date(d.date * 1000).toISOString().split('T')[0],
-                      name: asset.name,
-                      amount: d.amount * asset.quantity,
-                      currency: asset.originalCurrency || asset.currency
-                    }));
+                    .map((d) => {
+                      const currency = asset.originalCurrency || asset.currency;
+                      const grossAmount = d.amount * asset.quantity;
+                      const taxRate = getDividendWithholdingRate(currency, asset.category);
+
+                      return {
+                        id: `${asset.id}-${d.date}`,
+                        date: new Date(d.date * 1000).toISOString().split('T')[0],
+                        name: asset.name,
+                        grossAmount,
+                        taxAmount: grossAmount * taxRate,
+                        taxRate,
+                        amount: grossAmount * (1 - taxRate),
+                        currency,
+                      };
+                    });
                 }).catch(() => [])
               );
             }
@@ -1921,7 +1936,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   value: `${dashboardSummary.dividendKRW > 0 ? '+' : ''}${formatMoney(dashboardSummary.dividendKRW, 'KRW')}`,
                   icon: Receipt,
                   tone: dashboardSummary.dividendKRW >= 0 ? 'text-blue-600' : 'text-rose-600',
-                  helper: '자동 추출 누적',
+                  helper: '세후 자동 추출 누적',
                 },
               ].map((item) => {
                 const Icon = item.icon;
@@ -2208,7 +2223,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               <div className="p-6 md:p-8 border-b border-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-50/30">
                 <div>
                   <h3 className="text-base md:text-lg font-black text-slate-900">종목별 총 손익</h3>
-                  <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">평가손익, 실현손익, 배당을 합산합니다.</p>
+                  <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">평가손익, 실현손익, 세후 배당을 합산합니다.</p>
                 </div>
                 <div className="relative w-full md:w-72">
                   <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -2228,7 +2243,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">누적 매수/매도</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">평가 손익</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">실현 손익</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">배당</th>
+                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">세후 배당</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">총 손익</th>
                     </tr>
                   </thead>
@@ -2340,7 +2355,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   </div>
                 ) : (
                   <span className="text-[9px] md:text-[10px] bg-blue-50 text-blue-600 px-2 py-1 md:px-3 md:py-1.5 rounded-full font-black tracking-widest uppercase">
-                    매수일 기준 자동 추출
+                    매수일 기준 세후 자동 추출
                   </span>
                 )}
               </div>
@@ -2359,13 +2374,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                           <p className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">상세 보기</p>
                         </div>
                         <div className="text-right whitespace-nowrap shrink-0">
-                          <p className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest mb-0.5 md:mb-1">총 누적 배당금</p>
+                          <p className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest mb-0.5 md:mb-1">세후 누적 배당금</p>
                           <p className="text-lg md:text-xl font-black text-blue-600">{formatMoney(summary.totalAmount, summary.currency)}</p>
                         </div>
                       </div>
                       
                       <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl md:rounded-2xl text-[10px] md:text-[11px] font-black tracking-widest ${summary.status.includes('완료') ? 'bg-emerald-50 text-emerald-600' : summary.status.includes('이번 달') ? 'bg-blue-50 text-blue-600' : 'bg-slate-200/50 text-slate-500'}`}>
-                        {summary.status} {summary.status.includes('예정') && `(≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
+                        {summary.status} {summary.status.includes('예정') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
                       </div>
                     </div>
                   )) : (
@@ -2382,7 +2397,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                         <tr>
                           <th className="px-4 py-4 md:px-8 md:py-5">지급 일자</th>
                           <th className="px-4 py-4 md:px-8 md:py-5">종목명</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">지급 금액</th>
+                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">세전</th>
+                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">세금</th>
+                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">세후</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-center">상태</th>
                         </tr>
                       </thead>
@@ -2391,6 +2408,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                           <tr key={div.id} className="hover:bg-white transition-colors group">
                             <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-slate-500 whitespace-nowrap">{div.date}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-black text-slate-800 whitespace-nowrap">{div.name}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{formatMoney(div.grossAmount ?? div.amount, div.currency)}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-rose-500 whitespace-nowrap">-{formatMoney(div.taxAmount ?? 0, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-black text-blue-600 whitespace-nowrap">{formatMoney(div.amount, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-center whitespace-nowrap">
                               <span className="text-[9px] md:text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-black tracking-widest uppercase">지급 완료</span>
@@ -2398,7 +2417,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                           </tr>
                         )) : (
                           <tr>
-                            <td colSpan="4" className="px-4 py-12 md:px-8 md:py-16 text-center">
+                            <td colSpan="6" className="px-4 py-12 md:px-8 md:py-16 text-center">
                               <p className="text-slate-400 font-bold mb-2 text-xs md:text-sm">해당하는 배당 지급 내역이 없습니다.</p>
                             </td>
                           </tr>
