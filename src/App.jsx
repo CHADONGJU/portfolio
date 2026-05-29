@@ -194,6 +194,98 @@ const buildInitialTradeLedger = ({ assets, trades, memos }) => {
   return entries.sort((a, b) => new Date(b.date) - new Date(a.date));
 };
 
+const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}`;
+
+const mergeUniqueAssets = (primary = [], secondary = []) => {
+  const seen = new Set();
+  return [...primary, ...secondary].filter((asset) => {
+    const key = getAssetIdentity(asset);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const mergeUniqueRecords = (primary = [], secondary = []) => {
+  const seen = new Set();
+  return [...primary, ...secondary].filter((record) => {
+    const key = [
+      record.id || '',
+      record.sourceId || '',
+      record.name || '',
+      record.ticker || '',
+      record.side || record.action || '',
+      record.date || record.buyDate || record.sellDate || '',
+      record.quantity || '',
+      record.price || record.buyPrice || record.sellPrice || '',
+    ].join('::');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const rebuildMissingAssetsFromLedger = (assets = [], ledger = []) => {
+  const existingKeys = new Set(assets.map(getAssetIdentity));
+  const buckets = new Map();
+
+  ledger.forEach((entry) => {
+    if (!entry.name || entry.category === '현금') return;
+    const key = getAssetIdentity(entry);
+    if (existingKeys.has(key)) return;
+
+    const side = getTradeSide(entry);
+    const quantity = Number(entry.quantity) || 0;
+    const price = Number(entry.price || entry.buyPrice || entry.sellPrice) || 0;
+    if (quantity <= 0) return;
+
+    const bucket = buckets.get(key) || {
+      name: entry.name,
+      ticker: entry.ticker || '',
+      category: entry.category || '',
+      currency: entry.currency || 'KRW',
+      quantity: 0,
+      buyCost: 0,
+      firstBuyDate: entry.date || entry.buyDate || '',
+    };
+
+    if (side === 'sell') {
+      bucket.quantity -= quantity;
+    } else {
+      bucket.quantity += quantity;
+      bucket.buyCost += quantity * price;
+      const entryDate = entry.date || entry.buyDate || '';
+      if (entryDate && (!bucket.firstBuyDate || new Date(entryDate) < new Date(bucket.firstBuyDate))) {
+        bucket.firstBuyDate = entryDate;
+      }
+    }
+    buckets.set(key, bucket);
+  });
+
+  const rebuiltAssets = [...assets];
+  buckets.forEach((bucket) => {
+    if (bucket.quantity <= 0) return;
+    const averagePrice = bucket.quantity > 0 ? bucket.buyCost / bucket.quantity : 0;
+    rebuiltAssets.push({
+      id: Date.now() + rebuiltAssets.length + Math.random(),
+      name: bucket.name,
+      ticker: bucket.ticker,
+      category: bucket.category,
+      currency: bucket.currency,
+      averagePrice,
+      quantity: bucket.quantity,
+      currentPrice: averagePrice,
+      originalCurrency: bucket.currency,
+      originalAveragePrice: averagePrice,
+      originalCurrentPrice: averagePrice,
+      buyDate: bucket.firstBuyDate,
+      color: getAssetColor(bucket.ticker || bucket.name, rebuiltAssets.length),
+    });
+  });
+
+  return rebuiltAssets;
+};
+
 const getTargetGroups = (targetPortfolio, categoryId) => {
   const savedGroups = targetPortfolio.groups?.[categoryId] || [];
   const legacyItems = targetPortfolio.items?.[categoryId] || [];
@@ -416,10 +508,26 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         if (snapshot.exists()) {
           const data = snapshot.data();
           const localSnapshot = portfolioSnapshotRef.current;
-          setAssets(Array.isArray(data.assets) && data.assets.length > 0 ? data.assets : localSnapshot.assets || []);
-          setTrades(Array.isArray(data.trades) && data.trades.length > 0 ? data.trades : localSnapshot.trades || []);
-          setMemos(Array.isArray(data.memos) && data.memos.length > 0 ? data.memos : localSnapshot.memos || []);
-          setTradeLedger(Array.isArray(data.tradeLedger) && data.tradeLedger.length > 0 ? data.tradeLedger : localSnapshot.tradeLedger || []);
+          const nextTrades = mergeUniqueRecords(
+            Array.isArray(data.trades) ? data.trades : [],
+            localSnapshot.trades || []
+          );
+          const nextMemos = mergeUniqueRecords(
+            Array.isArray(data.memos) ? data.memos : [],
+            localSnapshot.memos || []
+          );
+          const nextTradeLedger = mergeUniqueRecords(
+            Array.isArray(data.tradeLedger) ? data.tradeLedger : [],
+            localSnapshot.tradeLedger || []
+          );
+          const mergedAssets = mergeUniqueAssets(
+            Array.isArray(data.assets) ? data.assets : [],
+            localSnapshot.assets || []
+          );
+          setAssets(rebuildMissingAssetsFromLedger(mergedAssets, nextTradeLedger.length > 0 ? nextTradeLedger : nextMemos));
+          setTrades(nextTrades);
+          setMemos(nextMemos);
+          setTradeLedger(nextTradeLedger);
           setPortfolioName(typeof data.portfolioName === 'string' && data.portfolioName.trim() ? data.portfolioName : DEFAULT_PORTFOLIO_NAME);
           setTargetPortfolio(data.targetPortfolio || DEFAULT_TARGET_PORTFOLIO);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
@@ -476,6 +584,17 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     const initialLedger = buildInitialTradeLedger({ assets, trades, memos });
     if (initialLedger.length > 0) setTradeLedger(initialLedger);
   }, [assets, trades, memos, tradeLedger.length]);
+
+  useEffect(() => {
+    const ledgerSource = tradeLedger.length > 0 ? tradeLedger : memos;
+    if (ledgerSource.length === 0) return;
+
+    const recoveredAssets = rebuildMissingAssetsFromLedger(assets, ledgerSource);
+    if (recoveredAssets.length > assets.length) {
+      setAssets(recoveredAssets);
+      addLog('매매 기록에서 누락된 보유 자산을 복구했습니다.', 'success');
+    }
+  }, [assets, tradeLedger, memos]);
 
   // 2. 완벽한 데이터 연동 로직
   const assetsRef = useRef(assets);
