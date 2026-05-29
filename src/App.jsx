@@ -468,6 +468,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   ), [targetPortfolio]);
 
   const [autoDividends, setAutoDividends] = useState([]);
+  const dividendAssetSnapshotKey = useMemo(() => (
+    assets
+      .filter((asset) => asset.category !== '현금' && asset.ticker && asset.buyDate)
+      .map((asset) => `${asset.id}:${asset.ticker}:${asset.quantity}:${asset.buyDate}:${asset.category}`)
+      .join('|')
+  ), [assets]);
+  const lastDividendAssetSnapshotKeyRef = useRef('');
 
   const portfolioSnapshot = useMemo(() => ({
     portfolioName,
@@ -595,6 +602,14 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       addLog('매매 기록에서 누락된 보유 자산을 복구했습니다.', 'success');
     }
   }, [assets, tradeLedger, memos]);
+
+  useEffect(() => {
+    if (!isCloudPortfolioLoaded || !dividendAssetSnapshotKey) return;
+    if (lastDividendAssetSnapshotKeyRef.current === dividendAssetSnapshotKey) return;
+
+    lastDividendAssetSnapshotKeyRef.current = dividendAssetSnapshotKey;
+    setRefreshTrigger(t => t + 1);
+  }, [isCloudPortfolioLoaded, dividendAssetSnapshotKey]);
 
   // 2. 완벽한 데이터 연동 로직
   const assetsRef = useRef(assets);
