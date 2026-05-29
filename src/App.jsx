@@ -3,7 +3,7 @@ import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
-  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, Globe, ArrowRightLeft, Search, Folder, Target
+  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, Globe, ArrowRightLeft, Search, Folder, Target, CalendarDays
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
 import MemoTab from './components/MemoTab';
@@ -124,6 +124,7 @@ const DEFAULT_TARGET_PORTFOLIO = {
 const buildLedgerEntry = ({ sourceId, asset, side, quantity, price, date, pnl = 0 }) => ({
   id: sourceId || `${Date.now()}-${Math.random()}`,
   sourceId,
+  assetId: asset.id ?? asset.assetId ?? null,
   name: asset.name,
   ticker: asset.ticker || '',
   category: asset.category || '',
@@ -346,6 +347,8 @@ const [addBuyForm, setAddBuyForm] = useState(initialAddBuyState);
 
 const [isSellingAsset, setIsSellingAsset] = useState(false);
 const [selectedAssetToSell, setSelectedAssetToSell] = useState(null);
+const [selectedAssetToEditDate, setSelectedAssetToEditDate] = useState(null);
+const [buyDateForm, setBuyDateForm] = useState({ buyDate: defaultBuyDate });
 
 const initialSellFormState = {
   sellPrice: '',
@@ -1479,6 +1482,58 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   setIsSellingAsset(true);
 };
 
+  const openBuyDateModal = (asset) => {
+  setSelectedAssetToEditDate(asset);
+  setBuyDateForm({ buyDate: asset.buyDate || defaultBuyDate });
+};
+
+  const handleUpdateBuyDate = () => {
+  if (!selectedAssetToEditDate || !buyDateForm.buyDate) return;
+
+  const previousBuyDate = selectedAssetToEditDate.buyDate || '';
+  const nextBuyDate = buyDateForm.buyDate;
+
+  setAssets(prevAssets => prevAssets.map(asset => (
+    asset.id === selectedAssetToEditDate.id
+      ? { ...asset, buyDate: nextBuyDate }
+      : asset
+  )));
+
+  setMemos(prevMemos => prevMemos.map((memo) => {
+    const isMatchingInitialBuy =
+      memo.side === 'buy'
+      && memo.assetId === selectedAssetToEditDate.id
+      && (!previousBuyDate || memo.date === previousBuyDate);
+
+    return isMatchingInitialBuy ? { ...memo, date: nextBuyDate, updatedAt: new Date().toISOString() } : memo;
+  }));
+
+  setTradeLedger(prevLedger => prevLedger.map((entry) => {
+    const isMatchingInitialBuy =
+      entry.side === 'buy'
+      && (
+        entry.assetId === selectedAssetToEditDate.id
+        || entry.sourceId === `asset-${selectedAssetToEditDate.id}`
+        || (
+          !entry.assetId
+          && entry.name === selectedAssetToEditDate.name
+          && entry.ticker === selectedAssetToEditDate.ticker
+          && (!previousBuyDate || entry.date === previousBuyDate)
+        )
+      );
+
+    return isMatchingInitialBuy ? { ...entry, date: nextBuyDate } : entry;
+  }));
+
+  addLog(`'${selectedAssetToEditDate.name}' 매수일을 변경했습니다.`, 'success');
+  setSelectedAssetToEditDate(null);
+  setBuyDateForm({ buyDate: defaultBuyDate });
+
+  setTimeout(() => {
+    setRefreshTrigger(t => t + 1);
+  }, 300);
+};
+
   const handleAddBuyToAsset = () => {
   if (!selectedAssetToUpdate) return;
 
@@ -1882,6 +1937,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                 <p className="text-xs md:text-sm text-slate-400 font-bold mt-2 uppercase tracking-widest whitespace-nowrap">
                                   {asset.category === '현금' ? 'CASH' : asset.ticker} {asset.category !== '현금' && `• ${asset.quantity.toLocaleString()}${asset.category==='원자재'?'단위':'주'}`}
                                 </p>
+                                {asset.category !== '현금' && (
+                                  <p className="text-[10px] md:text-xs text-slate-400 font-bold mt-1 whitespace-nowrap">
+                                    매수일 {asset.buyDate || '-'}
+                                  </p>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -1920,7 +1980,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                             )}
                           </td>
                           <td className="block md:table-cell px-0 py-0 md:px-6 md:py-5 text-right md:text-center whitespace-nowrap">
-                          <div className="flex items-center justify-end md:justify-center gap-2">
+                          <div className="flex flex-wrap items-center justify-end md:justify-center gap-2">
                             {asset.category !== '현금' && (
                               <>
                                 <button
@@ -1928,10 +1988,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                     e.stopPropagation();
                                     openAddBuyModal(asset);
                                   }}
-                                  className="text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors p-2 rounded-xl"
+                                  className="inline-flex items-center gap-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
                                   title="추가 매수"
                                 >
                                   <Plus size={16} className="md:w-4.5 md:h-4.5" />
+                                  <span>추가 매수</span>
                                 </button>
 
                                 <button
@@ -1939,17 +2000,30 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                     e.stopPropagation();
                                     openSellModal(asset);
                                   }}
-                                  className="text-slate-400 hover:text-amber-600 hover:bg-amber-50 transition-colors p-2 rounded-xl"
-                                  title="매도"
+                                  className="inline-flex items-center gap-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
+                                  title="일부 매도"
                                 >
                                   <Minus size={16} className="md:w-4.5 md:h-4.5" />
+                                  <span>일부 매도</span>
+                                </button>
+
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openBuyDateModal(asset);
+                                  }}
+                                  className="inline-flex items-center gap-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
+                                  title="매수일 변경"
+                                >
+                                  <CalendarDays size={16} className="md:w-4.5 md:h-4.5" />
+                                  <span>매수일</span>
                                 </button>
                               </>
                             )}
 
                             <button
                               onClick={(e) => removeAsset(asset.id, e)}
-                              className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors p-2 rounded-xl"
+                              className="inline-flex items-center gap-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
                               title="자산 삭제"
                             >
                               <Trash2 size={16} className="md:w-4.5 md:h-4.5" />
@@ -2873,6 +2947,53 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           포트폴리오에 반영하기
         </button>
       </div>
+    </div>
+  </div>
+)}
+
+{/* 매수일 변경 모달 */}
+{selectedAssetToEditDate && (
+  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-105 flex items-center justify-center p-4 animate-in fade-in duration-200">
+    <div className="bg-white w-full max-w-md rounded-[30px] md:rounded-[40px] p-6 md:p-8 shadow-2xl animate-in zoom-in-95 duration-300">
+      <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
+        <h3 className="text-lg md:text-xl font-black text-slate-900">
+          {selectedAssetToEditDate.name} 매수일 변경
+        </h3>
+        <button
+          onClick={() => {
+            setSelectedAssetToEditDate(null);
+            setBuyDateForm({ buyDate: defaultBuyDate });
+          }}
+          className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors shrink-0"
+        >
+          <X size={18} />
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3">
+          <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">현재 매수일</p>
+          <p className="mt-1 text-sm font-black text-slate-800">{selectedAssetToEditDate.buyDate || '-'}</p>
+        </div>
+        <div>
+          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+            변경할 매수일
+          </label>
+          <input
+            type="date"
+            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-blue-50/50 border border-blue-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-blue-800"
+            value={buyDateForm.buyDate}
+            onChange={(e) => setBuyDateForm({ buyDate: e.target.value })}
+          />
+        </div>
+      </div>
+
+      <button
+        onClick={handleUpdateBuyDate}
+        className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-slate-200 hover:scale-[1.02] transition-all uppercase tracking-widest"
+      >
+        매수일 저장하기
+      </button>
     </div>
   </div>
 )}
