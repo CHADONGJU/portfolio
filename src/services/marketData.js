@@ -212,8 +212,8 @@ const readYahooPrice = (data) => {
   const meta = data?.chart?.result?.[0]?.meta;
   const quote = data?.chart?.result?.[0]?.indicators?.quote?.[0];
   const close = quote?.close?.findLast((value) => typeof value === 'number');
-  const price = pickMarketAwarePrice(meta)
-    ?? close
+  const price = close
+    ?? pickMarketAwarePrice(meta)
     ?? meta?.chartPreviousClose
     ?? null;
 
@@ -315,8 +315,38 @@ const getYahooTickers = (asset, ticker) => {
   return [...new Set(candidates)];
 };
 
+const fetchYahooChartQuote = async (yfTicker) => {
+  const urls = [
+    `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1d&range=5d`,
+  ];
+
+  for (const url of urls) {
+    const quote = readYahooPrice(await fetchWithSafeProxy(url));
+    if (quote !== null) return quote;
+  }
+
+  return null;
+};
+
+const fetchStooqQuote = async (asset, ticker) => {
+  for (const symbol of getStooqSymbols(asset, ticker)) {
+    const stooqUrl = `https://stooq.com/q/l/?s=${symbol}&f=sd2t2ohlcv&h&e=csv`;
+    const stooqPrice = readStooqPrice(await fetchTextWithSafeProxy(stooqUrl));
+    if (stooqPrice !== null) return {
+      price: stooqPrice,
+      currency: symbol.endsWith('.jp') ? 'JPY' : asset.currency || 'USD',
+      symbol,
+    };
+  }
+
+  return null;
+};
+
 export const fetchStockQuote = async (asset) => {
   const ticker = normalizeTicker(asset.ticker);
+  if (!ticker) return null;
 
   if (isDomesticStock(asset, ticker)) {
     const cleanTicker = ticker.replace(/[^0-9]/g, '');
@@ -332,15 +362,12 @@ export const fetchStockQuote = async (asset) => {
   }
 
   if (asset.currency === 'USD' || asset.currency === 'JPY' || isOverseasCategory(asset.category || '')) {
-    for (const symbol of getStooqSymbols(asset, ticker)) {
-      const stooqUrl = `https://stooq.com/q/l/?s=${symbol}&f=sd2t2ohlcv&h&e=csv`;
-      const stooqPrice = readStooqPrice(await fetchTextWithSafeProxy(stooqUrl));
-      if (stooqPrice !== null) return {
-        price: stooqPrice,
-        currency: symbol.endsWith('.jp') ? 'JPY' : asset.currency || 'USD',
-        symbol,
-      };
+    for (const yfTicker of getYahooTickers(asset, ticker)) {
+      const yahooQuote = await fetchYahooChartQuote(yfTicker);
+      if (yahooQuote !== null) return yahooQuote;
     }
+
+    return fetchStooqQuote(asset, ticker);
   }
 
   const yahooTickers = getYahooTickers(asset, ticker);
