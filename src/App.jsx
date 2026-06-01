@@ -327,6 +327,14 @@ const getTargetItemSnapshotKey = (targetPortfolio) => targetPortfolio.categories
   .join('|');
 
 const cleanForFirestore = (value) => JSON.parse(JSON.stringify(value));
+const emptyPortfolioSnapshot = () => ({
+  portfolioName: DEFAULT_PORTFOLIO_NAME,
+  assets: [],
+  trades: [],
+  memos: [],
+  tradeLedger: [],
+  targetPortfolio: DEFAULT_TARGET_PORTFOLIO,
+});
 
 const App = () => {
   const { user, signOutUser } = useAuth();
@@ -499,13 +507,20 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           setTargetPortfolio(compactedData.targetPortfolio);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
         } else {
+          const emptySnapshot = emptyPortfolioSnapshot();
+          setAssets([]);
+          setTrades([]);
+          setMemos([]);
+          setTradeLedger([]);
+          setPortfolioName(DEFAULT_PORTFOLIO_NAME);
+          setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
           await setDoc(portfolioRef, {
-            ...cleanForFirestore(compactPortfolioSnapshot(portfolioSnapshotRef.current)),
+            ...cleanForFirestore(emptySnapshot),
             userEmail,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
-          if (!cancelled) addLog('현재 데이터를 로그인 계정에 저장했습니다.', 'success');
+          if (!cancelled) addLog('새 포트폴리오를 빈 상태로 시작합니다.', 'success');
         }
       } catch (error) {
         console.error('Cloud portfolio load failed:', error);
