@@ -225,6 +225,30 @@ const mergeUniqueRecords = (primary = [], secondary = []) => {
   });
 };
 
+const compactPortfolioSnapshot = (snapshot = {}) => ({
+  ...snapshot,
+  assets: mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []),
+  trades: mergeUniqueRecords(Array.isArray(snapshot.trades) ? snapshot.trades : []),
+  memos: mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []),
+  tradeLedger: mergeUniqueRecords(Array.isArray(snapshot.tradeLedger) ? snapshot.tradeLedger : []),
+  targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
+  portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
+    ? snapshot.portfolioName
+    : DEFAULT_PORTFOLIO_NAME,
+});
+
+const isRecordForAsset = (record, asset) => {
+  if (!record || !asset) return false;
+  const assetId = String(asset.id);
+  const recordAssetId = record.assetId === undefined || record.assetId === null ? '' : String(record.assetId);
+  if (recordAssetId && recordAssetId === assetId) return true;
+  if (record.sourceId === `asset-${asset.id}`) return true;
+
+  const sameTicker = asset.ticker && record.ticker && String(record.ticker).toUpperCase() === String(asset.ticker).toUpperCase();
+  const sameName = asset.name && record.name && record.name === asset.name;
+  return Boolean(sameTicker || sameName);
+};
+
 const rebuildMissingAssetsFromLedger = (assets = [], ledger = []) => {
   const existingKeys = new Set(assets.map(getAssetIdentity));
   const buckets = new Map();
@@ -520,33 +544,17 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
         if (snapshot.exists()) {
           const data = snapshot.data();
-          const localSnapshot = portfolioSnapshotRef.current;
-          const nextTrades = mergeUniqueRecords(
-            Array.isArray(data.trades) ? data.trades : [],
-            localSnapshot.trades || []
-          );
-          const nextMemos = mergeUniqueRecords(
-            Array.isArray(data.memos) ? data.memos : [],
-            localSnapshot.memos || []
-          );
-          const nextTradeLedger = mergeUniqueRecords(
-            Array.isArray(data.tradeLedger) ? data.tradeLedger : [],
-            localSnapshot.tradeLedger || []
-          );
-          const mergedAssets = mergeUniqueAssets(
-            Array.isArray(data.assets) ? data.assets : [],
-            localSnapshot.assets || []
-          );
-          setAssets(rebuildMissingAssetsFromLedger(mergedAssets, nextTradeLedger.length > 0 ? nextTradeLedger : nextMemos));
-          setTrades(nextTrades);
-          setMemos(nextMemos);
-          setTradeLedger(nextTradeLedger);
-          setPortfolioName(typeof data.portfolioName === 'string' && data.portfolioName.trim() ? data.portfolioName : DEFAULT_PORTFOLIO_NAME);
-          setTargetPortfolio(data.targetPortfolio || DEFAULT_TARGET_PORTFOLIO);
+          const compactedData = compactPortfolioSnapshot(data);
+          setAssets(compactedData.assets);
+          setTrades(compactedData.trades);
+          setMemos(compactedData.memos);
+          setTradeLedger(compactedData.tradeLedger);
+          setPortfolioName(compactedData.portfolioName);
+          setTargetPortfolio(compactedData.targetPortfolio);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
         } else {
           await setDoc(portfolioRef, {
-            ...cleanForFirestore(portfolioSnapshotRef.current),
+            ...cleanForFirestore(compactPortfolioSnapshot(portfolioSnapshotRef.current)),
             userEmail,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
@@ -575,11 +583,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
     const saveTimer = setTimeout(async () => {
       try {
+        const compactedSnapshot = compactPortfolioSnapshot(portfolioSnapshot);
         await setDoc(doc(db, 'portfolioStates', userId), {
-          ...cleanForFirestore(portfolioSnapshot),
+          ...cleanForFirestore(compactedSnapshot),
           userEmail,
           updatedAt: serverTimestamp(),
-        }, { merge: true });
+        });
       } catch (error) {
         console.error('Cloud portfolio save failed:', error);
         const message = error?.code === 'permission-denied'
@@ -1306,7 +1315,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   const removeAsset = (id, e) => {
     if (e) e.stopPropagation();
+    const assetToRemove = assets.find(asset => asset.id === id);
     setAssets(prevAssets => prevAssets.filter(a => a.id !== id));
+    if (assetToRemove) {
+      setTrades(prevTrades => prevTrades.filter(trade => !isRecordForAsset(trade, assetToRemove)));
+      setMemos(prevMemos => prevMemos.filter(memo => !isRecordForAsset(memo, assetToRemove)));
+      setTradeLedger(prevLedger => prevLedger.filter(entry => !isRecordForAsset(entry, assetToRemove)));
+    }
     addLog("자산이 삭제되었습니다.", "success");
   };
 
