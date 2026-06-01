@@ -225,18 +225,6 @@ const mergeUniqueRecords = (primary = [], secondary = []) => {
   });
 };
 
-const compactPortfolioSnapshot = (snapshot = {}) => ({
-  ...snapshot,
-  assets: mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []),
-  trades: mergeUniqueRecords(Array.isArray(snapshot.trades) ? snapshot.trades : []),
-  memos: mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []),
-  tradeLedger: mergeUniqueRecords(Array.isArray(snapshot.tradeLedger) ? snapshot.tradeLedger : []),
-  targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
-  portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
-    ? snapshot.portfolioName
-    : DEFAULT_PORTFOLIO_NAME,
-});
-
 const isRecordForAsset = (record, asset) => {
   if (!record || !asset) return false;
   const assetId = String(asset.id);
@@ -249,65 +237,23 @@ const isRecordForAsset = (record, asset) => {
   return Boolean(sameTicker || sameName);
 };
 
-const rebuildMissingAssetsFromLedger = (assets = [], ledger = []) => {
-  const existingKeys = new Set(assets.map(getAssetIdentity));
-  const buckets = new Map();
+const pruneRecordsToAssets = (records = [], assets = []) => (
+  records.filter((record) => assets.some((asset) => isRecordForAsset(record, asset)))
+);
 
-  ledger.forEach((entry) => {
-    if (!entry.name || entry.category === '현금') return;
-    const key = getAssetIdentity(entry);
-    if (existingKeys.has(key)) return;
-
-    const side = getTradeSide(entry);
-    const quantity = Number(entry.quantity) || 0;
-    const price = Number(entry.price || entry.buyPrice || entry.sellPrice) || 0;
-    if (quantity <= 0) return;
-
-    const bucket = buckets.get(key) || {
-      name: entry.name,
-      ticker: entry.ticker || '',
-      category: entry.category || '',
-      currency: entry.currency || 'KRW',
-      quantity: 0,
-      buyCost: 0,
-      firstBuyDate: entry.date || entry.buyDate || '',
-    };
-
-    if (side === 'sell') {
-      bucket.quantity -= quantity;
-    } else {
-      bucket.quantity += quantity;
-      bucket.buyCost += quantity * price;
-      const entryDate = entry.date || entry.buyDate || '';
-      if (entryDate && (!bucket.firstBuyDate || new Date(entryDate) < new Date(bucket.firstBuyDate))) {
-        bucket.firstBuyDate = entryDate;
-      }
-    }
-    buckets.set(key, bucket);
-  });
-
-  const rebuiltAssets = [...assets];
-  buckets.forEach((bucket) => {
-    if (bucket.quantity <= 0) return;
-    const averagePrice = bucket.quantity > 0 ? bucket.buyCost / bucket.quantity : 0;
-    rebuiltAssets.push({
-      id: Date.now() + rebuiltAssets.length + Math.random(),
-      name: bucket.name,
-      ticker: bucket.ticker,
-      category: bucket.category,
-      currency: bucket.currency,
-      averagePrice,
-      quantity: bucket.quantity,
-      currentPrice: averagePrice,
-      originalCurrency: bucket.currency,
-      originalAveragePrice: averagePrice,
-      originalCurrentPrice: averagePrice,
-      buyDate: bucket.firstBuyDate,
-      color: getAssetColor(bucket.ticker || bucket.name, rebuiltAssets.length),
-    });
-  });
-
-  return rebuiltAssets;
+const compactPortfolioSnapshot = (snapshot = {}) => {
+  const assets = mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []);
+  return {
+    ...snapshot,
+    assets,
+    trades: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.trades) ? snapshot.trades : []), assets),
+    memos: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []), assets),
+    tradeLedger: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.tradeLedger) ? snapshot.tradeLedger : []), assets),
+    targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
+    portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
+      ? snapshot.portfolioName
+      : DEFAULT_PORTFOLIO_NAME,
+  };
 };
 
 const getTargetGroups = (targetPortfolio, categoryId) => {
@@ -606,17 +552,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     const initialLedger = buildInitialTradeLedger({ assets, trades, memos });
     if (initialLedger.length > 0) setTradeLedger(initialLedger);
   }, [assets, trades, memos, tradeLedger.length]);
-
-  useEffect(() => {
-    const ledgerSource = tradeLedger.length > 0 ? tradeLedger : memos;
-    if (ledgerSource.length === 0) return;
-
-    const recoveredAssets = rebuildMissingAssetsFromLedger(assets, ledgerSource);
-    if (recoveredAssets.length > assets.length) {
-      setAssets(recoveredAssets);
-      addLog('매매 기록에서 누락된 보유 자산을 복구했습니다.', 'success');
-    }
-  }, [assets, tradeLedger, memos]);
 
   useEffect(() => {
     if (!isCloudPortfolioLoaded || !dividendAssetSnapshotKey) return;
