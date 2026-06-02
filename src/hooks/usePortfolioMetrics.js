@@ -209,7 +209,11 @@ export const usePortfolioMetrics = ({
 
       const lastDiv = assetDivs[0];
       const lastDate = new Date(lastDiv.date);
-      expectedAmount = lastDiv.amount;
+      const currentQuantity = Number(asset.quantity) || 0;
+      const lastDividendQuantity = Number(lastDiv.quantity) || 0;
+      const perShareNetAmount = Number(lastDiv.perShareNetAmount)
+        || (lastDividendQuantity > 0 ? lastDiv.amount / lastDividendQuantity : 0);
+      expectedAmount = perShareNetAmount * currentQuantity;
 
       let monthDiff = 3; 
       if (assetDivs.length > 1) {

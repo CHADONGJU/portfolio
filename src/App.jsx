@@ -699,16 +699,19 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
                       const grossAmount = d.amount * heldQuantity;
                       const taxRate = getDividendWithholdingRate(currency, asset.category);
+                      const perShareNetAmount = d.amount * (1 - taxRate);
 
                       return {
                         id: `${asset.id}-${d.date}`,
                         date: dividendDate,
                         name: asset.name,
                         quantity: heldQuantity,
+                        perShareGrossAmount: d.amount,
+                        perShareNetAmount,
                         grossAmount,
                         taxAmount: grossAmount * taxRate,
                         taxRate,
-                        amount: grossAmount * (1 - taxRate),
+                        amount: perShareNetAmount * heldQuantity,
                         currency,
                       };
                     })
@@ -2382,6 +2385,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     <table className="w-full text-left table-auto">
                       <thead className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.3em] border-b border-slate-200/50">
                         <tr>
+                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">기준 수량</th>
+                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">주당 세후</th>
                           <th className="px-4 py-4 md:px-8 md:py-5">지급 일자</th>
                           <th className="px-4 py-4 md:px-8 md:py-5">종목명</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">세전</th>
@@ -2393,6 +2398,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       <tbody className="divide-y divide-slate-200/50">
                         {filteredHistory.length > 0 ? filteredHistory.map(div => (
                           <tr key={div.id} className="hover:bg-white transition-colors group">
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{Number(div.quantity || 0).toLocaleString()}주</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{formatMoney(div.perShareNetAmount ?? 0, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-slate-500 whitespace-nowrap">{div.date}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-black text-slate-800 whitespace-nowrap">{div.name}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{formatMoney(div.grossAmount ?? div.amount, div.currency)}</td>
@@ -2404,7 +2411,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                           </tr>
                         )) : (
                           <tr>
-                            <td colSpan="6" className="px-4 py-12 md:px-8 md:py-16 text-center">
+                            <td colSpan="8" className="px-4 py-12 md:px-8 md:py-16 text-center">
                               <p className="text-slate-400 font-bold mb-2 text-xs md:text-sm">해당하는 배당 지급 내역이 없습니다.</p>
                             </td>
                           </tr>
