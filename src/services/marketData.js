@@ -163,13 +163,11 @@ const normalizeTicker = (ticker) => ticker
   .replace(/\.TYO$/, '.T')
   .replace(/\s+/g, '');
 
-const isDomesticCategory = (category = '') => (
-  category.includes('국내') && category.includes('주식')
-);
+const normalizeCategory = (category = '') => String(category || '').trim();
 
-const isOverseasCategory = (category = '') => (
-  category.includes('해외') && category.includes('주식')
-);
+const isDomesticCategory = (category = '') => normalizeCategory(category) === '국내주식';
+
+const isOverseasCategory = (category = '') => normalizeCategory(category) === '해외주식';
 
 const getUsTickerAliases = (ticker) => {
   const cleanTicker = normalizeTicker(ticker);
@@ -236,6 +234,7 @@ const readYahooQuotePrice = (data) => {
 };
 
 const isDomesticStock = (asset, ticker) => {
+  if (isOverseasCategory(asset.category || '')) return false;
   return isDomesticCategory(asset.category || '') || /^\d{5,6}(\.(KS|KQ))?$/.test(ticker);
 };
 

@@ -11,10 +11,11 @@ import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
 import { useAuth } from './context/useAuth';
 import {
-  ASSET_COLORS,
   ASSETS_STORAGE_KEY,
   DEFAULT_PORTFOLIO_NAME,
   getAssetColor,
+  getCategoryColor,
+  getDetailChartColor,
   MEMOS_STORAGE_KEY,
   PORTFOLIO_NAME_STORAGE_KEY,
   TARGET_PORTFOLIO_STORAGE_KEY,
@@ -578,11 +579,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   // 2. 완벽한 데이터 연동 로직
   const assetsRef = useRef(assets);
+  const tradeLedgerRef = useRef(tradeLedger);
   const exchangeRateRef = useRef(exchangeRate);
   const jpyKrwRateRef = useRef(jpyKrwRate);
   const currencyRatesRef = useRef(currencyRates);
   const initialFetchDoneRef = useRef(false);
   useEffect(() => { assetsRef.current = assets; }, [assets]);
+  useEffect(() => { tradeLedgerRef.current = tradeLedger; }, [tradeLedger]);
   useEffect(() => { exchangeRateRef.current = exchangeRate; }, [exchangeRate]);
   useEffect(() => { jpyKrwRateRef.current = jpyKrwRate; }, [jpyKrwRate]);
   useEffect(() => { currencyRatesRef.current = currencyRates; }, [currencyRates]);
@@ -630,6 +633,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         if (currentJpyRate > 0) nextCurrencyRates.JPY = currentJpyRate;
 
         const currentAssets = assetsRef.current;
+        const currentTradeLedger = tradeLedgerRef.current;
         const dividendTasks = [];
         let successCount = 0;
         let failCount = 0;
@@ -677,20 +681,39 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     .filter(d => d.date >= buyTimestamp)
                     .map((d) => {
                       const currency = asset.originalCurrency || asset.currency;
-                      const grossAmount = d.amount * asset.quantity;
+                      const dividendDate = new Date(d.date * 1000).toISOString().split('T')[0];
+                      const relatedLedger = currentTradeLedger.filter((entry) => (
+                        entry.date
+                        && entry.date <= dividendDate
+                        && (
+                          (asset.ticker && entry.ticker && entry.ticker.toUpperCase() === asset.ticker.toUpperCase())
+                          || entry.name === asset.name
+                          || entry.assetId === asset.id
+                        )
+                      ));
+                      const ledgerQuantity = relatedLedger.reduce((sum, entry) => {
+                        const quantity = Number(entry.quantity) || 0;
+                        return getTradeSide(entry) === 'sell' ? sum - quantity : sum + quantity;
+                      }, 0);
+                      const heldQuantity = relatedLedger.length > 0 ? ledgerQuantity : Number(asset.quantity) || 0;
+                      if (heldQuantity <= 0) return null;
+
+                      const grossAmount = d.amount * heldQuantity;
                       const taxRate = getDividendWithholdingRate(currency, asset.category);
 
                       return {
                         id: `${asset.id}-${d.date}`,
-                        date: new Date(d.date * 1000).toISOString().split('T')[0],
+                        date: dividendDate,
                         name: asset.name,
+                        quantity: heldQuantity,
                         grossAmount,
                         taxAmount: grossAmount * taxRate,
                         taxRate,
                         amount: grossAmount * (1 - taxRate),
                         currency,
                       };
-                    });
+                    })
+                    .filter(Boolean);
                 }).catch(() => [])
               );
             }
@@ -910,7 +933,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       return acc;
     }, {})).sort((a, b) => b.value - a.value);
 
-    return grouped.map((category, index) => {
+    return grouped.map((category) => {
       const percent = totalConvertedKRW > 0 ? (category.value / totalConvertedKRW) * 100 : 0;
       const startPercent = cumulativePercent;
       cumulativePercent += percent;
@@ -920,13 +943,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         value: category.value,
         percent,
         startPercent,
-        color: ASSET_COLORS[index % ASSET_COLORS.length],
+        color: getCategoryColor(category.name),
       };
     });
   }, [enhancedAssets, totalConvertedKRW]);
   const targetGoalChartData = useMemo(() => {
     let cumulativePercent = 0;
-    return targetPortfolioGuide.map((category, index) => {
+    return targetPortfolioGuide.map((category) => {
       const percent = Number(category.percent) || 0;
       const startPercent = cumulativePercent;
       cumulativePercent += percent;
@@ -936,7 +959,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         value: category.targetValue,
         percent,
         startPercent,
-        color: ASSET_COLORS[index % ASSET_COLORS.length],
+        color: getCategoryColor(category.id),
       };
     });
   }, [targetPortfolioGuide]);
@@ -968,7 +991,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           value: item.targetValue,
           percent,
           startPercent,
-          color: ASSET_COLORS[index % ASSET_COLORS.length],
+          color: getDetailChartColor(item.ticker || item.name || item.id, index),
         };
       });
     }
@@ -989,7 +1012,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         value: group.targetValue,
         percent,
         startPercent,
-        color: ASSET_COLORS[index % ASSET_COLORS.length],
+        color: getDetailChartColor(group.name || group.id, index),
       };
     });
   }, [selectedTargetGuide, selectedTargetGroupGuide, targetGoalChartData]);

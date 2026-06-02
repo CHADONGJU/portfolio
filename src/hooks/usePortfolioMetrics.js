@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { getAssetColor } from '../constants';
+import { getAssetColor, getCategoryColor, getDetailChartColor } from '../constants';
 
 const withRunningPercent = (items, total, getValue) => {
   let cumulativePercent = 0;
@@ -68,7 +68,7 @@ export const usePortfolioMetrics = ({
   
   const categoryData = useMemo(() => {
     const grouped = enhancedAssets.reduce((acc, asset) => {
-      if (!acc[asset.category]) acc[asset.category] = { id: asset.category, name: asset.category, value: 0, color: asset.color };
+      if (!acc[asset.category]) acc[asset.category] = { id: asset.category, name: asset.category, value: 0, color: getCategoryColor(asset.category) };
       acc[asset.category].value += asset.currentKRW;
       return acc;
     }, {});
@@ -87,7 +87,7 @@ export const usePortfolioMetrics = ({
       filtered.sort((a, b) => b.currentKRW - a.currentKRW),
       subTotalKRW,
       (asset) => asset.currentKRW,
-    ).map((asset) => ({ ...asset, subTotal: subTotalKRW }));
+    ).map((asset, index) => ({ ...asset, color: getDetailChartColor(asset.ticker || asset.name, index), subTotal: subTotalKRW }));
   }, [enhancedAssets, selectedCategory]);
 
   const currentChartData = selectedCategory ? subChartData : categoryData;
