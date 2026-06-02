@@ -13,7 +13,6 @@ import { useAuth } from './context/useAuth';
 import {
   ASSETS_STORAGE_KEY,
   DEFAULT_PORTFOLIO_NAME,
-  getAssetColor,
   getCategoryColor,
   getDetailChartColor,
   MEMOS_STORAGE_KEY,
@@ -1839,7 +1838,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       originalAveragePrice: parsedAvgPrice, 
       originalCurrentPrice: parsedAvgPrice, 
       buyDate: newAsset.buyDate,
-      color: getAssetColor(newAsset.ticker || newAsset.name, assets.length)
+      color: getDetailChartColor(ticker || newAsset.name, assets.length)
     };
 
     setAssets(prevAssets => [...prevAssets, asset]);

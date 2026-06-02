@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { getAssetColor, getCategoryColor, getDetailChartColor } from '../constants';
+import { getCategoryColor, getDetailChartColor } from '../constants';
 
 const withRunningPercent = (items, total, getValue) => {
   let cumulativePercent = 0;
@@ -52,7 +52,7 @@ export const usePortfolioMetrics = ({
       
       return {
         ...a,
-        color: a.color || getAssetColor(a.ticker || a.name, index),
+        color: getDetailChartColor(a.ticker || a.name, index),
         purchaseNative,
         currentNative,
         purchaseKRW,
