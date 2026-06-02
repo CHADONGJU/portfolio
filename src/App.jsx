@@ -313,6 +313,40 @@ const getAssetInputCurrency = (category, ticker = '', savedCurrency = '') => {
   return 'KRW';
 };
 
+const isSameAssetRecord = (asset, record) => {
+  const assetTicker = normalizeInputTicker(asset.ticker);
+  const recordTicker = normalizeInputTicker(record.ticker);
+
+  return Boolean(
+    (asset.id && record.assetId && asset.id === record.assetId)
+    || (assetTicker && recordTicker && assetTicker === recordTicker)
+    || (asset.name && record.name && asset.name === record.name)
+  );
+};
+
+const getAssetLedgerRows = (asset, ledger = []) => ledger
+  .filter((entry) => entry.date && isSameAssetRecord(asset, entry))
+  .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+const getDividendStartDate = (asset, ledger = []) => {
+  const firstBuy = getAssetLedgerRows(asset, ledger)
+    .filter((entry) => getTradeSide(entry) === 'buy')
+    .map((entry) => entry.date)
+    .sort()[0];
+
+  return firstBuy || asset.buyDate || '';
+};
+
+const getHeldQuantityOnDate = (asset, ledger = [], date = '') => {
+  const relatedLedger = getAssetLedgerRows(asset, ledger).filter((entry) => entry.date <= date);
+  if (relatedLedger.length === 0) return Number(asset.quantity) || 0;
+
+  return relatedLedger.reduce((sum, entry) => {
+    const quantity = Number(entry.quantity) || 0;
+    return getTradeSide(entry) === 'sell' ? sum - quantity : sum + quantity;
+  }, 0);
+};
+
 const getCachedKrwRate = (currency, rates = {}, usdRate = 1350, yenRate = 9.5) => {
   if (currency === 'USD') return usdRate || rates.USD || 1350;
   if (currency === 'JPY') return yenRate || rates.JPY || 9.5;
@@ -453,11 +487,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   const [autoDividends, setAutoDividends] = useState([]);
   const dividendAssetSnapshotKey = useMemo(() => (
-    assets
-      .filter((asset) => asset.category !== '현금' && asset.ticker && asset.buyDate)
-      .map((asset) => `${asset.id}:${asset.ticker}:${asset.quantity}:${asset.buyDate}:${asset.category}`)
-      .join('|')
-  ), [assets]);
+    [
+      ...assets
+        .filter((asset) => asset.category !== '현금' && asset.ticker && asset.buyDate)
+        .map((asset) => `${asset.id}:${asset.ticker}:${asset.quantity}:${asset.buyDate}:${asset.category}`),
+      ...tradeLedger
+        .filter((entry) => entry.ticker || entry.name)
+        .map((entry) => `${entry.assetId || ''}:${entry.ticker || ''}:${entry.name || ''}:${entry.side || entry.action || ''}:${entry.date || ''}:${entry.quantity || ''}`),
+    ].join('|')
+  ), [assets, tradeLedger]);
   const lastDividendAssetSnapshotKeyRef = useRef('');
 
   const portfolioSnapshot = useMemo(() => ({
@@ -668,33 +706,28 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             }
 
             // 배당 갱신 실행 
-            if (asset.buyDate && !isCommodityCategory(asset.category)) {
+            if (!isCommodityCategory(asset.category)) {
               let yfTicker = asset.ticker.toUpperCase().trim();
               if (isDomesticStockCategory(asset.category) && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
+              const dividendStartDate = getDividendStartDate(asset, currentTradeLedger);
+              if (!dividendStartDate) return {
+                ...asset,
+                currency: nextAssetCurrency,
+                originalCurrency: nextAssetCurrency,
+                currentPrice: newCurrentPrice,
+                originalCurrentPrice: newOriginalCurrentPrice
+              };
 
               dividendTasks.push(
                 fetchDividends(yfTicker).then((divs) => {
                   if (!divs) return [];
-                  const buyTimestamp = new Date(asset.buyDate).getTime() / 1000;
+                  const buyTimestamp = new Date(dividendStartDate || asset.buyDate).getTime() / 1000;
                   return Object.values(divs)
                     .filter(d => d.date >= buyTimestamp)
                     .map((d) => {
                       const currency = asset.originalCurrency || asset.currency;
                       const dividendDate = new Date(d.date * 1000).toISOString().split('T')[0];
-                      const relatedLedger = currentTradeLedger.filter((entry) => (
-                        entry.date
-                        && entry.date <= dividendDate
-                        && (
-                          (asset.ticker && entry.ticker && entry.ticker.toUpperCase() === asset.ticker.toUpperCase())
-                          || entry.name === asset.name
-                          || entry.assetId === asset.id
-                        )
-                      ));
-                      const ledgerQuantity = relatedLedger.reduce((sum, entry) => {
-                        const quantity = Number(entry.quantity) || 0;
-                        return getTradeSide(entry) === 'sell' ? sum - quantity : sum + quantity;
-                      }, 0);
-                      const heldQuantity = relatedLedger.length > 0 ? ledgerQuantity : Number(asset.quantity) || 0;
+                      const heldQuantity = getHeldQuantityOnDate(asset, currentTradeLedger, dividendDate);
                       if (heldQuantity <= 0) return null;
 
                       const grossAmount = d.amount * heldQuantity;
