@@ -727,7 +727,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               };
 
               dividendTasks.push(
-                fetchDividends(yfTicker).then((divs) => {
+                fetchDividends({ ...asset, ticker: yfTicker }).then((divs) => {
                   if (!divs) return [];
                   const buyTimestamp = new Date(dividendStartDate || asset.buyDate).getTime() / 1000;
                   return Object.values(divs)

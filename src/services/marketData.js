@@ -404,10 +404,31 @@ export const fetchStockPrice = async (asset) => {
   return quote?.price ?? null;
 };
 
-export const fetchDividends = async (ticker) => {
-  const yfTicker = normalizeTicker(ticker);
-  const url = `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1mo&range=5y&events=div`;
-  const data = await fetchWithSafeProxy(url);
+const getDividendTickers = (input) => {
+  if (typeof input === 'string') return [normalizeTicker(input)];
 
-  return data?.chart?.result?.[0]?.events?.dividends ?? null;
+  const ticker = normalizeTicker(input?.ticker || '');
+  if (!ticker) return [];
+
+  return [
+    ticker,
+    ...getYahooTickers(input, ticker),
+  ].filter(Boolean).filter((symbol, index, symbols) => symbols.indexOf(symbol) === index);
+};
+
+export const fetchDividends = async (input) => {
+  for (const yfTicker of getDividendTickers(input)) {
+    const urls = [
+      `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1mo&range=5y&events=div`,
+      `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1mo&range=5y&events=div`,
+    ];
+
+    for (const url of urls) {
+      const data = await fetchWithSafeProxy(url);
+      const dividends = data?.chart?.result?.[0]?.events?.dividends;
+      if (dividends && Object.keys(dividends).length > 0) return dividends;
+    }
+  }
+
+  return null;
 };
