@@ -11,6 +11,7 @@ import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
 import { useAuth } from './context/useAuth';
 import {
+  AUTO_DIVIDENDS_STORAGE_KEY,
   ASSETS_STORAGE_KEY,
   DEFAULT_PORTFOLIO_NAME,
   getCategoryColor,
@@ -249,6 +250,7 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     trades: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.trades) ? snapshot.trades : []), assets),
     memos: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []), assets),
     tradeLedger: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.tradeLedger) ? snapshot.tradeLedger : []), assets),
+    autoDividends: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []), assets),
     targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
     portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
       ? snapshot.portfolioName
@@ -367,6 +369,7 @@ const emptyPortfolioSnapshot = () => ({
   trades: [],
   memos: [],
   tradeLedger: [],
+  autoDividends: [],
   targetPortfolio: DEFAULT_TARGET_PORTFOLIO,
 });
 
@@ -485,7 +488,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     getTargetItemSnapshotKey(targetPortfolio)
   ), [targetPortfolio]);
 
-  const [autoDividends, setAutoDividends] = useState([]);
+  const [autoDividends, setAutoDividends] = useState(() => loadJson(AUTO_DIVIDENDS_STORAGE_KEY, []));
   const dividendAssetSnapshotKey = useMemo(() => (
     [
       ...assets
@@ -504,14 +507,16 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     trades,
     memos,
     tradeLedger,
+    autoDividends,
     targetPortfolio,
-  }), [portfolioName, assets, trades, memos, tradeLedger, targetPortfolio]);
+  }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, targetPortfolio]);
   const portfolioSnapshotRef = useRef(portfolioSnapshot);
 
   useEffect(() => { saveJson(ASSETS_STORAGE_KEY, assets); }, [assets]);
   useEffect(() => { saveJson(TRADES_STORAGE_KEY, trades); }, [trades]);
   useEffect(() => { saveJson(MEMOS_STORAGE_KEY, memos); }, [memos]);
   useEffect(() => { saveJson(TRADE_LEDGER_STORAGE_KEY, tradeLedger); }, [tradeLedger]);
+  useEffect(() => { saveJson(AUTO_DIVIDENDS_STORAGE_KEY, autoDividends); }, [autoDividends]);
   useEffect(() => { saveJson(PORTFOLIO_NAME_STORAGE_KEY, portfolioName); }, [portfolioName]);
   useEffect(() => { saveJson(TARGET_PORTFOLIO_STORAGE_KEY, targetPortfolio); }, [targetPortfolio]);
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
@@ -541,6 +546,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           setTrades(compactedData.trades);
           setMemos(compactedData.memos);
           setTradeLedger(compactedData.tradeLedger);
+          setAutoDividends(compactedData.autoDividends);
           setPortfolioName(compactedData.portfolioName);
           setTargetPortfolio(compactedData.targetPortfolio);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
@@ -550,6 +556,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           setTrades([]);
           setMemos([]);
           setTradeLedger([]);
+          setAutoDividends([]);
           setPortfolioName(DEFAULT_PORTFOLIO_NAME);
           setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
           await setDoc(portfolioRef, {
@@ -629,6 +636,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   
 
   useEffect(() => {
+    if (!isCloudPortfolioLoaded) return undefined;
     if (refreshTrigger === 0 && initialFetchDoneRef.current) return;
     if (refreshTrigger === 0) initialFetchDoneRef.current = true;
     const fetchLiveData = async () => {
@@ -777,10 +785,16 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             const nextAutoDividends = dividendGroups
               .flat()
               .sort((a, b) => new Date(b.date) - new Date(a.date));
-            setAutoDividends(nextAutoDividends);
+            setAutoDividends(prevDividends => (
+              nextAutoDividends.length > 0
+                ? nextAutoDividends
+                : prevDividends.filter(dividend => currentAssets.some(asset => asset.name === dividend.name))
+            ));
           });
         } else {
-          setAutoDividends([]);
+          setAutoDividends(prevDividends => (
+            prevDividends.filter(dividend => currentAssets.some(asset => asset.name === dividend.name))
+          ));
         }
 
       } catch (e) { 
@@ -794,7 +808,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     let interval;
     if (isLiveMode) interval = setInterval(fetchLiveData, 300000); 
     return () => { if (interval) clearInterval(interval); };
-  }, [isLiveMode, refreshTrigger]);
+  }, [isLiveMode, refreshTrigger, isCloudPortfolioLoaded]);
 
   const {
     enhancedAssets,
