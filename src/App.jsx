@@ -1992,9 +1992,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               })}
             </section>
 
-            <div className="grid lg:grid-cols-[minmax(0,1fr)_22rem] gap-4 lg:gap-5">
+            <div className="grid lg:grid-cols-[minmax(0,1fr)_30rem] xl:grid-cols-[minmax(0,1fr)_34rem] gap-4 lg:gap-5">
             {/* SVG 드릴다운 차트 */}
-            <div className="order-2 lg:order-2 bg-white p-5 lg:p-5 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 flex flex-col items-center lg:sticky lg:top-6 self-start">
+            <div className="order-2 lg:order-2 bg-white p-5 lg:p-6 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 flex flex-col items-center lg:sticky lg:top-6 self-start">
               <div className="w-full flex justify-between items-center mb-5 lg:mb-5">
                 <h2 className="text-base lg:text-[15px] font-black text-slate-900 flex items-center gap-2"><PieIcon className="text-slate-500" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
                 {selectedCategory && (
@@ -2020,7 +2020,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   </button>
                 </div>
               ) : (
-	                <div className="relative w-64 h-64 lg:w-56 lg:h-56 xl:w-64 xl:h-64">
+		                <div className="relative w-64 h-64 lg:w-80 lg:h-80 xl:w-88 xl:h-88">
                   <div
                     className={`absolute inset-0 rounded-full transition-all duration-700 ${!selectedCategory ? 'cursor-pointer hover:opacity-90' : 'opacity-95'}`}
                     style={{ background: currentChartGradient }}
@@ -2029,22 +2029,22 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     tabIndex={!selectedCategory ? 0 : undefined}
                   />
                   <div className="absolute inset-[12%] rounded-full bg-white shadow-inner shadow-slate-100/80" />
-                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none p-4">
-                    <span className="text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
-                    <div className="flex flex-col items-center gap-0.5">
-                      {currentCategoryKRW > 0 && <span className="text-base md:text-lg font-bold text-slate-900 tracking-tight">{formatMoney(currentCategoryKRW, 'KRW')}</span>}
-                      {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[9px] text-slate-300 font-bold">+</span>}
-                      {currentCategoryUSD > 0 && <span className="text-base md:text-lg font-bold text-slate-900 tracking-tight">{formatMoney(currentCategoryUSD, 'USD')}</span>}
-                    </div>
+	                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none p-4 lg:p-6">
+	                    <span className="text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
+	                    <div className="flex flex-col items-center gap-0.5">
+	                      {currentCategoryKRW > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-slate-900 tracking-tight whitespace-nowrap">{formatMoney(currentCategoryKRW, 'KRW')}</span>}
+	                      {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[9px] text-slate-300 font-bold">+</span>}
+	                      {currentCategoryUSD > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-slate-900 tracking-tight whitespace-nowrap">{formatMoney(currentCategoryUSD, 'USD')}</span>}
+	                    </div>
                     {isDomesticStockChart ? (
-                      <div className={`mt-2 md:mt-3 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${profitBgTone}`}>
+	                      <div className={`mt-2 md:mt-3 max-w-[82%] px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center justify-center gap-1.5 ${profitBgTone}`}>
                         <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 수익금액</span>
                         <span className={`text-[10px] md:text-[11px] font-bold ${profitTone}`}>
                           {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
                         </span>
                       </div>
                     ) : isOverseasStockChart ? (
-                      <div className={`mt-2 md:mt-3 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${currentCategoryProfitUSD >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
+	                      <div className={`mt-2 md:mt-3 max-w-[82%] px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center justify-center gap-1.5 ${currentCategoryProfitUSD >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
                         <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 수익금액</span>
                         <span className={`text-[10px] md:text-[11px] font-bold ${currentCategoryProfitUSD >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {currentCategoryProfitUSD > 0 ? '+' : ''}{formatMoney(currentCategoryProfitUSD, 'USD')}
@@ -2052,13 +2052,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       </div>
                     ) : (
                       <>
-                        <div className="mt-2 md:mt-3 bg-slate-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full border border-slate-100 flex items-center gap-1.5">
-                          <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 평가가치</span>
-                          <span className="text-[10px] md:text-[11px] font-bold text-slate-700">{formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
-                        </div>
-                        <div className={`mt-1.5 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${profitBgTone}`}>
-                          <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 수익금액</span>
-                          <span className={`text-[10px] md:text-[11px] font-bold ${profitTone}`}>
+	                        <div className="mt-2 md:mt-3 max-w-[86%] bg-slate-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full border border-slate-100 flex items-center justify-center gap-1.5">
+	                          <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">총 평가가치</span>
+	                          <span className="text-[10px] md:text-[11px] lg:text-[12px] font-bold text-slate-700 whitespace-nowrap">{formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
+	                        </div>
+	                        <div className={`mt-1.5 max-w-[86%] px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center justify-center gap-1.5 ${profitBgTone}`}>
+	                          <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">총 수익금액</span>
+	                          <span className={`text-[10px] md:text-[11px] font-bold ${profitTone}`}>
                             {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
                           </span>
                           {isOverseasStockChart && currentCategoryProfitUSD !== 0 && (
