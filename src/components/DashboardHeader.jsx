@@ -33,7 +33,7 @@ const DashboardHeader = ({
   <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/95 p-4 md:p-6 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 relative overflow-hidden">
     <div className="absolute top-0 left-0 w-full h-1 bg-slate-900"></div>
     <div className="min-w-0 w-full md:w-auto">
-      <div className="flex items-start gap-3 text-slate-800">
+      <div className="flex items-center gap-3 text-slate-800">
         <div className="p-2 md:p-2.5 bg-slate-900 rounded-xl text-white shadow-sm shrink-0">
           <Briefcase size={20} className="md:w-6 md:h-6" />
         </div>
