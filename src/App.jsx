@@ -641,7 +641,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     if (refreshTrigger === 0) initialFetchDoneRef.current = true;
     const fetchLiveData = async () => {
       setIsFetching(true);
-      addLog("데이터 연동을 시작합니다...", "info");
+      const currentAssets = assetsRef.current;
+      const shouldShowSyncLogs = currentAssets.length > 0;
+      if (shouldShowSyncLogs) addLog("데이터 연동을 시작합니다...", "info");
 
       try {
         let currentRate = exchangeRateRef.current;
@@ -666,9 +668,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
         if (fetchedRate) {
           currentRate = fetchedRate;
-          addLog(`환율 연동 완료: 1$ = ${currentRate.toLocaleString(undefined, {maximumFractionDigits:2})}원`, "success");
+          if (shouldShowSyncLogs) addLog(`환율 연동 완료: 1$ = ${currentRate.toLocaleString(undefined, {maximumFractionDigits:2})}원`, "success");
         } else {
-          addLog("환율 서버 응답 지연", "error");
+          if (shouldShowSyncLogs) addLog("환율 서버 응답 지연", "error");
         }
         if (currentRate > 0) setExchangeRate(currentRate);
         if (currentRate > 0) nextCurrencyRates.USD = currentRate;
@@ -677,7 +679,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         if (currentJpyRate > 0) setJpyKrwRate(currentJpyRate);
         if (currentJpyRate > 0) nextCurrencyRates.JPY = currentJpyRate;
 
-        const currentAssets = assetsRef.current;
         const currentTradeLedger = tradeLedgerRef.current;
         const dividendTasks = [];
         let successCount = 0;
@@ -799,7 +800,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       } catch (e) { 
         console.error("Update error:", e); 
-        addLog("네트워크 오류로 갱신 실패", "error");
+        if (assetsRef.current.length > 0) addLog("네트워크 오류로 갱신 실패", "error");
       }
       finally { setIsFetching(false); }
     };
@@ -1920,12 +1921,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-8 text-slate-900 font-sans relative">
+    <div className="min-h-[100dvh] bg-slate-50 px-3 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-8 text-slate-900 font-sans relative">
       
       {/* 동기화 라이브 피드백 */}
       <SyncStatusToast syncStatus={syncStatus} />
 
-      <div className="max-w-6xl mx-auto space-y-8">
+      <div className="max-w-6xl mx-auto space-y-6 md:space-y-8">
         
         {/* Header */}
         <DashboardHeader
@@ -1994,29 +1995,29 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               })}
             </section>
 
-            <div className="grid lg:grid-cols-12 gap-6 md:gap-8">
+            <div className="grid lg:grid-cols-12 gap-4 md:gap-8">
             {/* SVG 드릴다운 차트 */}
-            <div className="lg:col-span-4 bg-white p-6 md:p-8 rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center">
-              <div className="w-full flex justify-between items-center mb-6 md:mb-8">
+            <div className="lg:col-span-4 bg-white p-5 md:p-8 rounded-[28px] md:rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center">
+              <div className="w-full flex justify-between items-center mb-5 md:mb-8">
                 <h2 className="text-base md:text-lg font-bold text-slate-900 flex items-center gap-2"><PieIcon className="text-blue-600" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
                 {selectedCategory && (
                   <button onClick={() => setSelectedCategory(null)} className="text-[9px] md:text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center gap-1 hover:bg-blue-100 uppercase tracking-widest"><ArrowLeft size={10} /> 메인으로</button>
                 )}
               </div>
               {enhancedAssets.length === 0 ? (
-                <div className="w-full min-h-65 md:min-h-80 flex flex-col items-center justify-center text-center px-4">
-                  <div className="w-16 h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-5">
-                    <Target size={28} />
+                <div className="w-full min-h-[18rem] md:min-h-80 flex flex-col items-center justify-center text-center px-3">
+                  <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4 md:mb-5">
+                    <Target size={24} className="md:w-7 md:h-7" />
                   </div>
-                  <p className="text-lg font-bold text-slate-900">첫 자산을 추가해보세요</p>
-                  <p className="mt-2 text-sm font-medium text-slate-400 leading-relaxed max-w-xs">
+                  <p className="text-base md:text-lg font-bold text-slate-900">첫 자산을 추가해보세요</p>
+                  <p className="mt-2 text-xs md:text-sm font-medium text-slate-400 leading-relaxed max-w-xs">
                     종목을 등록하면 비중, 수익률, 배당 기록이 이 화면에 바로 쌓입니다.
                   </p>
                   <button
                     onClick={() => {
                       setIsAdding(true);
                     }}
-                    className="mt-6 inline-flex items-center gap-2 px-5 py-3 bg-blue-600 text-white rounded-2xl text-sm font-bold shadow-lg shadow-blue-100"
+                    className="mt-5 md:mt-6 inline-flex items-center gap-2 px-5 py-3 bg-blue-600 text-white rounded-2xl text-sm font-bold shadow-lg shadow-blue-100"
                   >
                     <Plus size={16} /> 자산 추가
                   </button>
@@ -2074,7 +2075,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   </div>
                 </div>
               )}
-              <div className="mt-8 md:mt-12 w-full space-y-2">
+              <div className="mt-6 md:mt-12 w-full space-y-2">
                 {currentChartData.map(data => (
                   <button key={data.id || data.name} onClick={() => !selectedCategory && setSelectedCategory(data.name)} className={`w-full flex items-center justify-between p-3 md:p-4 rounded-2xl border transition-all ${!selectedCategory ? 'bg-slate-50 border-transparent hover:bg-white hover:shadow-md hover:scale-[1.01]' : 'bg-white border-slate-50'}`}>
                     <div className="flex items-center gap-3">
@@ -2089,8 +2090,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
             {/* List 섹션 */}
             <div className="lg:col-span-8 space-y-6">
-              <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-                <div className="p-6 md:p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
+              <div className="bg-white rounded-[28px] md:rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                <div className="p-5 md:p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
                   <h3 className="text-base md:text-lg font-bold text-slate-900">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
                 </div>
                 <div className="overflow-hidden">
@@ -2214,8 +2215,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     </tbody>
                   </table>
                   {enhancedAssets.length === 0 && (
-                    <div className="p-8 md:p-12 text-center">
-                      <div className="mx-auto w-14 h-14 rounded-2xl bg-slate-50 text-slate-400 flex items-center justify-center mb-4">
+                    <div className="p-6 md:p-12 text-center">
+                      <div className="mx-auto w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-slate-50 text-slate-400 flex items-center justify-center mb-4">
                         <Wallet size={24} />
                       </div>
                       <p className="text-slate-800 font-bold text-sm md:text-base">아직 등록된 자산이 없습니다.</p>
