@@ -1040,7 +1040,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           value: item.targetValue,
           percent,
           startPercent,
-          color: getDetailChartColor(item.ticker || item.name || item.id, index),
+          color: getDetailChartColor(index),
         };
       });
     }
@@ -1061,7 +1061,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         value: group.targetValue,
         percent,
         startPercent,
-        color: getDetailChartColor(group.name || group.id, index),
+        color: getDetailChartColor(index),
       };
     });
   }, [selectedTargetGuide, selectedTargetGroupGuide, targetGoalChartData]);
@@ -1888,7 +1888,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       originalAveragePrice: parsedAvgPrice, 
       originalCurrentPrice: parsedAvgPrice, 
       buyDate: newAsset.buyDate,
-      color: getDetailChartColor(ticker || newAsset.name, assets.length)
+      color: getDetailChartColor(assets.length)
     };
 
     setAssets(prevAssets => [...prevAssets, asset]);

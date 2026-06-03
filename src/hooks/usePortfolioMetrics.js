@@ -52,7 +52,7 @@ export const usePortfolioMetrics = ({
       
       return {
         ...a,
-        color: getDetailChartColor(a.ticker || a.name, index),
+        color: getDetailChartColor(index),
         purchaseNative,
         currentNative,
         purchaseKRW,
@@ -87,7 +87,7 @@ export const usePortfolioMetrics = ({
       filtered.sort((a, b) => b.currentKRW - a.currentKRW),
       subTotalKRW,
       (asset) => asset.currentKRW,
-    ).map((asset, index) => ({ ...asset, color: getDetailChartColor(asset.ticker || asset.name, index), subTotal: subTotalKRW }));
+    ).map((asset, index) => ({ ...asset, color: getDetailChartColor(index), subTotal: subTotalKRW }));
   }, [enhancedAssets, selectedCategory]);
 
   const currentChartData = selectedCategory ? subChartData : categoryData;

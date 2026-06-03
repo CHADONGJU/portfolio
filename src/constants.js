@@ -42,41 +42,31 @@ export const CATEGORY_COLORS = {
 };
 
 export const DETAIL_CHART_COLORS = [
-  '#10b981',
-  '#f97316',
-  '#8b5cf6',
-  '#06b6d4',
-  '#ec4899',
-  '#14b8a6',
-  '#6366f1',
-  '#84cc16',
-  '#0ea5e9',
-  '#d946ef',
-  '#22c55e',
-  '#f43f5e',
-  '#a855f7',
-  '#64748b',
-  '#fb7185',
-  '#2dd4bf',
-  '#c084fc',
-  '#fb923c',
-  '#38bdf8',
-  '#a3e635',
+  '#059669',
+  '#ea580c',
+  '#7c3aed',
+  '#0891b2',
+  '#db2777',
+  '#0f766e',
+  '#9333ea',
+  '#65a30d',
+  '#c026d3',
+  '#b45309',
+  '#0d9488',
+  '#86198f',
+  '#4d7c0f',
+  '#be185d',
+  '#0e7490',
+  '#6d28d9',
+  '#15803d',
+  '#a16207',
+  '#9d174d',
+  '#115e59',
 ];
 
 export const getCategoryColor = (category) => CATEGORY_COLORS[String(category || '').trim()] || '#94a3b8';
 
-export const getDetailChartColor = (key = '', fallbackIndex = 0) => {
-  const normalizedKey = String(key).trim();
-  if (!normalizedKey) return DETAIL_CHART_COLORS[fallbackIndex % DETAIL_CHART_COLORS.length];
-
-  let hash = 0;
-  for (let index = 0; index < normalizedKey.length; index += 1) {
-    hash = (hash * 31 + normalizedKey.charCodeAt(index)) >>> 0;
-  }
-
-  return DETAIL_CHART_COLORS[hash % DETAIL_CHART_COLORS.length];
-};
+export const getDetailChartColor = (fallbackIndex = 0) => DETAIL_CHART_COLORS[fallbackIndex % DETAIL_CHART_COLORS.length];
 
 export const getAssetColor = (key = '', fallbackIndex = 0) => {
   const normalizedKey = String(key).trim();
