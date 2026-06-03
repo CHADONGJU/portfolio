@@ -267,6 +267,7 @@ export const usePortfolioMetrics = ({
     enhancedAssets,
     totalConvertedKRW,
     currentChartData,
+    subChartData,
     currentCategoryKRW,
     currentCategoryUSD,
     currentCategoryTotalConverted,

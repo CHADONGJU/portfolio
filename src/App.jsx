@@ -814,6 +814,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     enhancedAssets,
     totalConvertedKRW,
     currentChartData,
+    subChartData,
     currentCategoryKRW,
     currentCategoryUSD,
     currentCategoryTotalConverted,
@@ -845,6 +846,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const isOverseasStockChart = selectedCategory?.includes('해외') && selectedCategory?.includes('주식');
   const profitTone = currentCategoryProfitKRW >= 0 ? 'text-emerald-600' : 'text-rose-600';
   const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
+  const visibleDetailAssets = selectedCategory ? subChartData : enhancedAssets;
   const currentChartGradient = useMemo(() => {
     if (currentChartData.length === 0) return 'conic-gradient(#e2e8f0 0% 100%)';
 
@@ -2102,7 +2104,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       </tr>
                     </thead>
                     <tbody className="block md:table-row-group divide-y divide-slate-50">
-                      {enhancedAssets.filter(asset => selectedCategory ? asset.category === selectedCategory : true).map((asset) => (
+                      {visibleDetailAssets.map((asset) => (
                         <tr key={asset.id} className="block md:table-row px-4 py-5 md:p-0 hover:bg-slate-50/50 transition-all group">
                           <td className="block md:table-cell px-0 py-0 md:px-6 md:py-6 whitespace-nowrap align-top">
                             <div className="flex items-center gap-4">
