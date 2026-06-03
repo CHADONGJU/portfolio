@@ -1921,7 +1921,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
 
   return (
-    <div className="min-h-[100dvh] bg-slate-50 px-3 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-8 text-slate-900 font-sans relative">
+    <div className="min-h-[100dvh] bg-[#f6f8fb] px-3 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-8 text-slate-900 font-sans relative">
       
       {/* 동기화 라이브 피드백 */}
       <SyncStatusToast syncStatus={syncStatus} />
@@ -1975,38 +1975,38 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   label: '배당 수익',
                   value: `${dashboardSummary.dividendKRW > 0 ? '+' : ''}${formatMoney(dashboardSummary.dividendKRW, 'KRW')}`,
                   icon: Receipt,
-                  tone: dashboardSummary.dividendKRW >= 0 ? 'text-blue-600' : 'text-rose-600',
+                  tone: dashboardSummary.dividendKRW >= 0 ? 'text-slate-900' : 'text-rose-600',
                   helper: '세후 자동 추출 누적',
                 },
               ].map((item) => {
                 const Icon = item.icon;
                 return (
-                  <div key={item.label} className="bg-white border border-slate-100 rounded-2xl p-4 md:p-5 shadow-sm">
+                  <div key={item.label} className="bg-white border border-slate-200/70 rounded-2xl p-4 md:p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
                     <div className="flex items-center justify-between gap-3 mb-3">
                       <p className="text-[10px] md:text-xs font-bold text-slate-400">{item.label}</p>
-                      <div className="w-8 h-8 rounded-xl bg-slate-50 text-slate-500 flex items-center justify-center">
+                      <div className="w-8 h-8 rounded-xl bg-slate-100/70 text-slate-500 flex items-center justify-center">
                         <Icon size={16} />
                       </div>
                     </div>
-                    <p className={`text-lg md:text-2xl font-bold tracking-tight wrap-break-word ${item.tone}`}>{item.value}</p>
+                    <p className={`text-lg md:text-2xl font-black tracking-tight wrap-break-word ${item.tone}`}>{item.value}</p>
                     <p className="mt-1 text-[10px] md:text-xs font-semibold text-slate-400">{item.helper}</p>
                   </div>
                 );
               })}
             </section>
 
-            <div className="grid lg:grid-cols-12 gap-4 md:gap-8">
+            <div className="grid lg:grid-cols-12 gap-4 md:gap-6">
             {/* SVG 드릴다운 차트 */}
-            <div className="lg:col-span-4 bg-white p-5 md:p-8 rounded-[28px] md:rounded-3xl shadow-sm border border-slate-100 flex flex-col items-center">
+            <div className="lg:col-span-4 bg-white p-5 md:p-7 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 flex flex-col items-center">
               <div className="w-full flex justify-between items-center mb-5 md:mb-8">
-                <h2 className="text-base md:text-lg font-bold text-slate-900 flex items-center gap-2"><PieIcon className="text-blue-600" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
+                <h2 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2"><PieIcon className="text-slate-500" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
                 {selectedCategory && (
-                  <button onClick={() => setSelectedCategory(null)} className="text-[9px] md:text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center gap-1 hover:bg-blue-100 uppercase tracking-widest"><ArrowLeft size={10} /> 메인으로</button>
+                  <button onClick={() => setSelectedCategory(null)} className="text-[9px] md:text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center gap-1 hover:bg-slate-200 uppercase tracking-widest"><ArrowLeft size={10} /> 메인으로</button>
                 )}
               </div>
               {enhancedAssets.length === 0 ? (
                 <div className="w-full min-h-[18rem] md:min-h-80 flex flex-col items-center justify-center text-center px-3">
-                  <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4 md:mb-5">
+                  <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-slate-100 text-slate-600 flex items-center justify-center mb-4 md:mb-5">
                     <Target size={24} className="md:w-7 md:h-7" />
                   </div>
                   <p className="text-base md:text-lg font-bold text-slate-900">첫 자산을 추가해보세요</p>
@@ -2017,7 +2017,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     onClick={() => {
                       setIsAdding(true);
                     }}
-                    className="mt-5 md:mt-6 inline-flex items-center gap-2 px-5 py-3 bg-blue-600 text-white rounded-2xl text-sm font-bold shadow-lg shadow-blue-100"
+                    className="mt-5 md:mt-6 inline-flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold shadow-sm hover:bg-slate-800 transition-colors"
                   >
                     <Plus size={16} /> 자산 추가
                   </button>
@@ -2031,13 +2031,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     role={!selectedCategory ? 'button' : undefined}
                     tabIndex={!selectedCategory ? 0 : undefined}
                   />
-                  <div className="absolute inset-[12%] rounded-full bg-white shadow-inner shadow-slate-100" />
+                  <div className="absolute inset-[12%] rounded-full bg-white shadow-inner shadow-slate-100/80" />
                   <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none p-4">
                     <span className="text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
                     <div className="flex flex-col items-center gap-0.5">
                       {currentCategoryKRW > 0 && <span className="text-base md:text-lg font-bold text-slate-900 tracking-tight">{formatMoney(currentCategoryKRW, 'KRW')}</span>}
                       {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[9px] text-slate-300 font-bold">+</span>}
-                      {currentCategoryUSD > 0 && <span className="text-base md:text-lg font-bold text-blue-600 tracking-tight">{formatMoney(currentCategoryUSD, 'USD')}</span>}
+                      {currentCategoryUSD > 0 && <span className="text-base md:text-lg font-bold text-slate-900 tracking-tight">{formatMoney(currentCategoryUSD, 'USD')}</span>}
                     </div>
                     {isDomesticStockChart ? (
                       <div className={`mt-2 md:mt-3 px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center gap-1.5 ${profitBgTone}`}>
@@ -2077,7 +2077,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               )}
               <div className="mt-6 md:mt-12 w-full space-y-2">
                 {currentChartData.map(data => (
-                  <button key={data.id || data.name} onClick={() => !selectedCategory && setSelectedCategory(data.name)} className={`w-full flex items-center justify-between p-3 md:p-4 rounded-2xl border transition-all ${!selectedCategory ? 'bg-slate-50 border-transparent hover:bg-white hover:shadow-md hover:scale-[1.01]' : 'bg-white border-slate-50'}`}>
+                  <button key={data.id || data.name} onClick={() => !selectedCategory && setSelectedCategory(data.name)} className={`w-full flex items-center justify-between p-3 md:p-4 rounded-xl border transition-all ${!selectedCategory ? 'bg-slate-50 border-slate-100 hover:bg-white hover:border-slate-200' : 'bg-white border-slate-100'}`}>
                     <div className="flex items-center gap-3">
                       <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full shadow-inner" style={{ backgroundColor: data.color }}></div>
                       <span className="text-[11px] md:text-xs font-bold text-slate-700">{data.name}</span>
@@ -2090,14 +2090,14 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
             {/* List 섹션 */}
             <div className="lg:col-span-8 space-y-6">
-              <div className="bg-white rounded-[28px] md:rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-                <div className="p-5 md:p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
-                  <h3 className="text-base md:text-lg font-bold text-slate-900">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
+              <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden">
+                <div className="p-5 md:p-7 border-b border-slate-100 flex justify-between items-center bg-white">
+                  <h3 className="text-base md:text-lg font-black text-slate-900">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
                 </div>
                 <div className="overflow-hidden">
                   <table className="w-full table-fixed text-left">
                     <thead className="hidden md:table-header-group">
-                      <tr className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em] border-b border-slate-100">
+                      <tr className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.16em] border-b border-slate-100 bg-slate-50/50">
                         <th className="px-4 py-4 md:px-6 md:py-5 w-[28%]">종목/자산</th>
                         <th className="px-4 py-4 md:px-6 md:py-5 w-[39%]">상세 가치</th>
                         <th className="px-4 py-4 md:px-4 md:py-5 text-right w-[20%]">수익률</th>
@@ -2106,10 +2106,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     </thead>
                     <tbody className="block md:table-row-group divide-y divide-slate-50">
                       {visibleDetailAssets.map((asset) => (
-                        <tr key={asset.id} className="block md:table-row px-4 py-5 md:p-0 hover:bg-slate-50/50 transition-all group">
+                        <tr key={asset.id} className="block md:table-row px-4 py-5 md:p-0 hover:bg-slate-50/60 transition-all group">
                           <td className="block md:table-cell px-0 py-0 md:px-6 md:py-6 whitespace-nowrap align-top">
                             <div className="flex items-center gap-4">
-                              <div className="w-12 h-12 md:w-12 md:h-12 shrink-0 rounded-[18px] md:rounded-[18px] flex items-center justify-center text-white font-black text-xl md:text-2xl shadow-md shadow-slate-200 group-hover:scale-[1.03] transition-transform" style={{ backgroundColor: asset.color }}>
+                              <div className="w-11 h-11 md:w-12 md:h-12 shrink-0 rounded-2xl flex items-center justify-center text-white font-black text-xl md:text-2xl shadow-sm group-hover:scale-[1.02] transition-transform" style={{ backgroundColor: asset.color }}>
                                 {asset.category === '현금' ? <Banknote size={24}/> : asset.name[0]}
                               </div>
                               <div className="min-w-0 flex-1">
@@ -2126,7 +2126,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                             </div>
                           </td>
                           <td className="block md:table-cell px-0 py-4 md:px-6 md:py-5 align-top">
-                            <div className="grid grid-cols-2 gap-x-4 md:gap-x-5 gap-y-3 bg-slate-50 px-4 py-3.5 rounded-2xl border border-slate-100 group-hover:border-blue-100 transition-colors w-full min-w-0">
+                            <div className="grid grid-cols-2 gap-x-4 md:gap-x-5 gap-y-3 bg-slate-50/80 px-4 py-3.5 rounded-xl border border-slate-200/70 group-hover:border-slate-300 transition-colors w-full min-w-0">
                               <div className="flex flex-col">
                                 <span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">{asset.category === '현금' ? '보유 원금' : '총 매입'}</span>
                                 <span className="font-black text-slate-700 text-xs md:text-sm mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.purchaseNative, asset.currency)}</span>
@@ -2137,12 +2137,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                 )}
                               </div>
                               <div className="flex flex-col">
-                                <span className="text-[8px] md:text-[9px] text-blue-500 font-black uppercase tracking-widest">총 가치</span>
-                                <span className="font-black text-blue-600 text-xs md:text-sm mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.currentNative, asset.currency)}</span>
+                                <span className="text-[8px] md:text-[9px] text-slate-500 font-black uppercase tracking-widest">총 가치</span>
+                                <span className="font-black text-slate-900 text-xs md:text-sm mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.currentNative, asset.currency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[8px] md:text-[9px] text-blue-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-blue-600 text-xs md:text-sm mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalCurrentPrice || asset.currentPrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[8px] md:text-[9px] text-slate-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-slate-900 text-xs md:text-sm mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalCurrentPrice || asset.currentPrice, asset.originalCurrency || asset.currency)}</span></>
                                 )}
                               </div>
                             </div>
@@ -2150,10 +2150,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                           <td className="block md:table-cell px-0 pb-4 md:px-4 md:py-6 text-left md:text-right whitespace-nowrap align-top">
                             {asset.category === '현금' ? <span className="text-[10px] md:text-xs font-black text-slate-300">-</span> : (
                               <div className="flex flex-row md:flex-col items-stretch md:items-end gap-2">
-                                <div className={`inline-flex items-center justify-center gap-1.5 flex-1 md:flex-none md:w-full px-2 md:px-3 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                <div className={`inline-flex items-center justify-center gap-1.5 flex-1 md:flex-none md:w-full px-2 md:px-3 py-2.5 rounded-xl text-xs md:text-sm font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
                                   {asset.returnPercent >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {Math.abs(asset.returnPercent).toFixed(2)}%
                                 </div>
-                                <div className={`inline-flex items-center justify-center flex-1 md:flex-none md:w-full px-2 md:px-3 py-2.5 rounded-2xl text-xs md:text-sm font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                                <div className={`inline-flex items-center justify-center flex-1 md:flex-none md:w-full px-2 md:px-3 py-2.5 rounded-xl text-xs md:text-sm font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
                                   {asset.profitNative > 0 ? '+' : ''}{formatMoney(asset.profitNative, asset.currency)}
                                 </div>
                               </div>
@@ -2168,7 +2168,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                     e.stopPropagation();
                                     openAddBuyModal(asset);
                                   }}
-                                  className="inline-flex items-center justify-center gap-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
+                                  className="inline-flex items-center justify-center gap-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
                                   title="추가 매수"
                                 >
                                   <Plus size={16} className="md:w-4.5 md:h-4.5" />
@@ -2234,23 +2234,23 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         {activeTab === 'history' && (
           <div className="space-y-8 animate-in fade-in duration-500">
             
-            <h3 className="text-lg md:text-xl font-black text-slate-800 flex items-center gap-2"><ArrowRightLeft className="text-blue-600" size={20} /> 종목 매매(실현) 수익 요약</h3>
+            <h3 className="text-lg md:text-xl font-black text-slate-800 flex items-center gap-2"><ArrowRightLeft className="text-slate-500" size={20} /> 종목 매매(실현) 수익 요약</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-              <div className="bg-white p-6 md:p-8 rounded-[30px] border border-slate-100 shadow-sm flex flex-col justify-center">
+              <div className="bg-white p-5 md:p-7 rounded-2xl border border-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex flex-col justify-center">
                 <div className="w-10 h-10 md:w-12 md:h-12 bg-slate-50 text-slate-600 rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><Banknote size={20} /></div>
                 <p className="text-slate-400 text-[10px] md:text-[11px] font-black uppercase tracking-[0.2em] mb-1">원화 매매 순수익</p>
                 <p className={`text-2xl md:text-3xl font-black tracking-tighter ${krwNetProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                   {krwNetProfit > 0 ? '+' : ''}{formatMoney(krwNetProfit, 'KRW')}
                 </p>
               </div>
-              <div className="bg-white p-6 md:p-8 rounded-[30px] border border-slate-100 shadow-sm flex flex-col justify-center">
-                <div className="w-10 h-10 md:w-12 md:h-12 bg-blue-50 text-blue-600 rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><DollarSign size={20} /></div>
+              <div className="bg-white p-5 md:p-7 rounded-2xl border border-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex flex-col justify-center">
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-slate-50 text-slate-600 rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><DollarSign size={20} /></div>
                 <p className="text-slate-400 text-[10px] md:text-[11px] font-black uppercase tracking-[0.2em] mb-1">달러 매매 순수익</p>
                 <p className={`text-2xl md:text-3xl font-black tracking-tighter ${usdNetProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                   {usdNetProfit > 0 ? '+' : ''}{formatMoney(usdNetProfit, 'USD')}
                 </p>
               </div>
-              <div className="bg-slate-900 p-6 md:p-8 rounded-[30px] shadow-xl shadow-slate-200 flex flex-col justify-center text-white relative overflow-hidden">
+              <div className="bg-slate-900 p-5 md:p-7 rounded-2xl shadow-sm flex flex-col justify-center text-white relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-4 opacity-10"><Wallet size={50}/></div>
                 <p className="text-slate-400 text-[10px] md:text-[11px] font-black uppercase tracking-[0.2em] mb-1">총 환산 매매 순수익</p>
                 <p className={`text-3xl md:text-4xl font-black tracking-tighter ${totalConvertedNetProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -2259,8 +2259,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               </div>
             </div>
 
-            <div className="bg-white rounded-[30px] md:rounded-[40px] shadow-sm border border-slate-100 overflow-hidden">
-              <div className="p-6 md:p-8 border-b border-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-50/30">
+            <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden">
+              <div className="p-5 md:p-7 border-b border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white">
                 <div>
                   <h3 className="text-base md:text-lg font-black text-slate-900">종목별 총 손익</h3>
                   <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">평가손익, 실현손익, 세후 배당을 합산합니다.</p>
@@ -2271,7 +2271,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     value={performanceSearchTerm}
                     onChange={(e) => setPerformanceSearchTerm(e.target.value)}
                     placeholder="종목명 또는 티커 검색"
-                    className="w-full pl-10 pr-4 py-3 bg-white border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold text-slate-700"
+                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-700"
                   />
                 </div>
               </div>
@@ -2342,8 +2342,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               </div>
             </div>
 
-            <div className="bg-slate-900 rounded-[30px] md:rounded-[40px] p-6 md:p-8 shadow-xl shadow-slate-200">
-              <h3 className="text-white font-black flex items-center gap-2 mb-4 md:mb-6 text-base md:text-lg"><Globe className="text-blue-400" size={18} /> 달러 자산 요약</h3>
+            <div className="bg-slate-900 rounded-2xl p-5 md:p-7 shadow-sm">
+              <h3 className="text-white font-black flex items-center gap-2 mb-4 md:mb-6 text-base md:text-lg"><Globe className="text-slate-300" size={18} /> 달러 자산 요약</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
                 <div className="col-span-1 flex flex-col justify-center md:border-r border-b md:border-b-0 border-slate-700/50 pb-4 md:pb-0 md:pr-6 relative">
                   <div className="absolute top-0 right-2 opacity-10"><DollarSign size={60}/></div>
@@ -2351,17 +2351,17 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   <span className="text-3xl md:text-4xl font-black text-white tracking-tighter">{formatMoney(totalUsdPurchase, 'USD')}</span>
                 </div>
                 <div className="col-span-2 flex flex-col justify-center gap-3 md:pl-2">
-                  <div className="flex justify-between items-center bg-slate-800/50 px-4 md:px-6 py-3 md:py-4 rounded-2xl md:rounded-3xl">
+                  <div className="flex justify-between items-center bg-slate-800/50 px-4 md:px-6 py-3 md:py-4 rounded-xl">
                     <span className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest">현재 평가 금액 (USD)</span>
                     <span className="text-lg md:text-xl font-black text-white">{formatMoney(currentUsdValueForUsd, 'USD')}</span>
                   </div>
-                  <div className="flex justify-between items-center bg-blue-900/20 border border-blue-800/30 px-4 md:px-6 py-3 md:py-4 rounded-2xl md:rounded-3xl relative">
+                  <div className="flex justify-between items-center bg-slate-800/60 border border-slate-700 px-4 md:px-6 py-3 md:py-4 rounded-xl relative">
                     <div className="flex flex-col">
-                      <span className="text-[9px] md:text-[10px] text-blue-400 font-black uppercase tracking-widest">총 수익금액 (USD)</span>
-                      <span className="text-xl md:text-2xl font-black text-blue-400 tracking-tighter">{formatMoney(currentUsdValueForUsd - totalUsdPurchase, 'USD')}</span>
+                      <span className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest">총 수익금액 (USD)</span>
+                      <span className="text-xl md:text-2xl font-black text-white tracking-tighter">{formatMoney(currentUsdValueForUsd - totalUsdPurchase, 'USD')}</span>
                     </div>
                     <div className="flex flex-col items-end">
-                      <span className="text-[8px] md:text-[10px] text-blue-400 font-black uppercase tracking-widest mb-1">수익률</span>
+                      <span className="text-[8px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">수익률</span>
                       <span className={`inline-flex font-black px-2 py-0.5 md:px-3 md:py-1 rounded-lg md:rounded-xl text-xs md:text-sm ${fxProfitPercent >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
                         {fxProfitPercent > 0 ? '+' : ''}{fxProfitPercent.toFixed(2)}%
                       </span>
@@ -2371,10 +2371,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               </div>
             </div>
 
-            <div className="bg-white p-6 md:p-10 rounded-[30px] md:rounded-[40px] shadow-sm border border-slate-100">
+            <div className="bg-white p-5 md:p-7 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 md:mb-8 gap-3 md:gap-4">
                 <h3 className="text-lg md:text-xl font-black flex items-center gap-2 md:gap-3">
-                  <Receipt className="text-blue-600" size={20}/> 
+                  <Receipt className="text-slate-500" size={20}/> 
                   {selectedDividendAsset ? `${selectedDividendAsset} 배당 상세 기록` : '종목별 누적 배당 요약'}
                 </h3>
                 
@@ -2389,12 +2389,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       <option value="올해">올해</option>
                       <option value="전체">전체 기간</option>
                     </select>
-                    <button onClick={() => { setSelectedDividendAsset(null); setDividendFilter('전체'); }} className="text-[9px] md:text-[10px] font-black text-blue-600 bg-blue-50 px-3 py-1.5 md:px-4 md:py-2 rounded-full flex items-center gap-1 hover:bg-blue-100 uppercase tracking-widest transition-all">
+                    <button onClick={() => { setSelectedDividendAsset(null); setDividendFilter('전체'); }} className="text-[9px] md:text-[10px] font-black text-slate-600 bg-slate-100 px-3 py-1.5 md:px-4 md:py-2 rounded-full flex items-center gap-1 hover:bg-slate-200 uppercase tracking-widest transition-all">
                       <ArrowLeft size={12} /> 전체 보기
                     </button>
                   </div>
                 ) : (
-                  <span className="text-[9px] md:text-[10px] bg-blue-50 text-blue-600 px-2 py-1 md:px-3 md:py-1.5 rounded-full font-black tracking-widest uppercase">
+                  <span className="text-[9px] md:text-[10px] bg-slate-100 text-slate-600 px-2 py-1 md:px-3 md:py-1.5 rounded-full font-black tracking-widest uppercase">
                     매수일 기준 세후 자동 추출
                   </span>
                 )}
@@ -2406,20 +2406,20 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     <div 
                       key={summary.name} 
                       onClick={() => setSelectedDividendAsset(summary.name)} 
-                      className="p-5 md:p-6 bg-slate-50 rounded-4xl md:rounded-[2.5rem] border border-slate-100 cursor-pointer hover:bg-white hover:shadow-xl hover:shadow-slate-100/50 hover:scale-[1.02] transition-all group"
+                      className="p-5 md:p-6 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer hover:bg-white hover:border-slate-200 transition-all group"
                     >
                       <div className="flex justify-between items-start mb-4 md:mb-6">
                         <div className="whitespace-nowrap overflow-hidden pr-3 md:pr-4">
-                          <h4 className="font-black text-slate-800 text-base md:text-lg group-hover:text-blue-600 transition-colors truncate">{summary.name}</h4>
+                          <h4 className="font-black text-slate-800 text-base md:text-lg group-hover:text-slate-900 transition-colors truncate">{summary.name}</h4>
                           <p className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">상세 보기</p>
                         </div>
                         <div className="text-right whitespace-nowrap shrink-0">
                           <p className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest mb-0.5 md:mb-1">세후 누적 배당금</p>
-                          <p className="text-lg md:text-xl font-black text-blue-600">{formatMoney(summary.totalAmount, summary.currency)}</p>
+                          <p className="text-lg md:text-xl font-black text-slate-900">{formatMoney(summary.totalAmount, summary.currency)}</p>
                         </div>
                       </div>
                       
-                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl md:rounded-2xl text-[10px] md:text-[11px] font-black tracking-widest ${summary.status.includes('완료') ? 'bg-emerald-50 text-emerald-600' : summary.status.includes('이번 달') ? 'bg-blue-50 text-blue-600' : 'bg-slate-200/50 text-slate-500'}`}>
+                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[10px] md:text-[11px] font-black tracking-widest ${summary.status.includes('완료') ? 'bg-emerald-50 text-emerald-600' : summary.status.includes('이번 달') ? 'bg-slate-100 text-slate-700' : 'bg-slate-200/50 text-slate-500'}`}>
                         {summary.status} {summary.status.includes('예정') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
                       </div>
                     </div>
@@ -2430,7 +2430,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   )}
                 </div>
               ) : (
-                <div className="bg-slate-50 rounded-4xl md:rounded-[2.5rem] p-1 md:p-2 border border-slate-100">
+                <div className="bg-slate-50 rounded-2xl p-1 md:p-2 border border-slate-100">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left table-auto">
                       <thead className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.3em] border-b border-slate-200/50">
@@ -2454,7 +2454,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                             <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-black text-slate-800 whitespace-nowrap">{div.name}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{formatMoney(div.grossAmount ?? div.amount, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-rose-500 whitespace-nowrap">-{formatMoney(div.taxAmount ?? 0, div.currency)}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-black text-blue-600 whitespace-nowrap">{formatMoney(div.amount, div.currency)}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-black text-slate-900 whitespace-nowrap">{formatMoney(div.amount, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-center whitespace-nowrap">
                               <span className="text-[9px] md:text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-black tracking-widest uppercase">지급 완료</span>
                             </td>
@@ -2473,8 +2473,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               )}
             </div>
 
-            <div className="bg-white rounded-[30px] md:rounded-[40px] shadow-sm border border-slate-100 overflow-hidden">
-              <div className="p-6 md:p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/30">
+            <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden">
+              <div className="p-5 md:p-7 border-b border-slate-100 flex justify-between items-center bg-white">
                 <h3 className="text-base md:text-lg font-black text-slate-900">과거 매매 기록</h3>
               </div>
               <div className="p-5 md:p-6 border-b border-slate-50 bg-white space-y-4">
@@ -2482,7 +2482,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   <select
                     value={tradeStockFilter}
                     onChange={(e) => setTradeStockFilter(e.target.value)}
-                    className="px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-slate-700"
+                    className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-700"
                   >
                     <option value="all">전체 종목</option>
                     {tradeStockOptions.map((name) => (
@@ -2492,7 +2492,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   <select
                     value={tradeSortMode}
                     onChange={(e) => setTradeSortMode(e.target.value)}
-                    className="px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-slate-700"
+                    className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-700"
                   >
                     {TRADE_SORT_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
@@ -2500,15 +2500,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   </select>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매수 수량</p>
                     <p className="text-lg font-black text-slate-800">{tradeSummary.totalBuyQuantity.toLocaleString()}</p>
                   </div>
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매도 수량</p>
                     <p className="text-lg font-black text-slate-800">{tradeSummary.totalSellQuantity.toLocaleString()}</p>
                   </div>
-                  <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">실현 손익</p>
                     <p className={`text-lg font-black ${tradeSummary.totalProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                       {tradeSummary.totalProfit > 0 ? '+' : ''}{formatMoney(tradeSummary.totalProfit, 'KRW')}
@@ -2587,7 +2587,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     {hasMoreTrades && (
                       <button
                         onClick={() => setTradeVisibleCount(count => count + TRADE_PAGE_SIZE)}
-                        className="px-4 py-2 bg-white border border-slate-100 rounded-xl text-[10px] md:text-xs font-black text-slate-700 hover:text-blue-600 hover:border-blue-100 transition-colors"
+                        className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-[10px] md:text-xs font-black text-slate-700 hover:text-slate-900 hover:border-slate-300 transition-colors"
                       >
                         더보기
                       </button>
@@ -2610,8 +2610,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
         {activeTab === 'target' && (
           <div className="space-y-8 animate-in fade-in duration-500">
-            <div className="bg-white rounded-[30px] md:rounded-[40px] shadow-sm border border-slate-100 overflow-hidden">
-              <div className="p-6 md:p-8 border-b border-slate-50 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-50/30">
+            <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden">
+              <div className="p-5 md:p-7 border-b border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white">
                 <div>
                   <h3 className="text-base md:text-lg font-black text-slate-900">목표 포트폴리오 설정</h3>
                   <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">분류별 목표 비중과 분류 안 종목별 목표 비중을 저장합니다.</p>
@@ -2624,7 +2624,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     value={formatInputNumber(targetPortfolio.budget)}
                     onChange={(e) => setTargetPortfolio(prev => ({ ...prev, budget: sanitizeNumericInput(e.target.value) }))}
                     placeholder={`현재 총자산 ${formatMoney(totalConvertedKRW, 'KRW')}`}
-                    className="w-full px-4 py-3 bg-white border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 text-sm font-black text-slate-800"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-sm font-black text-slate-800"
                   />
                 </div>
               </div>
@@ -2638,7 +2638,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     <select
                       value={targetCategoryDraft}
                       onChange={(e) => setTargetCategoryDraft(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-slate-700"
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-700"
                     >
                       {['국내주식', '해외주식', '현금', '가상화폐', '원자재'].map(category => (
                         <option key={category} value={category}>{category}</option>
@@ -2647,19 +2647,19 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   </div>
                   <button
                     onClick={addTargetCategory}
-                    className="px-5 py-3 bg-slate-900 text-white rounded-2xl font-black text-xs md:text-sm flex items-center justify-center gap-2"
+                    className="px-5 py-3 bg-slate-900 text-white rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors"
                   >
                     <Plus size={16} /> 분류 추가
                   </button>
-                  <div className={`px-5 py-3 rounded-2xl border text-xs md:text-sm font-black ${Math.abs(targetCategoryTotalPercent - 100) < 0.001 ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
+                  <div className={`px-5 py-3 rounded-xl border text-xs md:text-sm font-black ${Math.abs(targetCategoryTotalPercent - 100) < 0.001 ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
                     전체 목표 {targetCategoryTotalPercent.toFixed(1)}%
                   </div>
                   {targetPriceSyncStatus && (
-                    <div className="px-5 py-3 rounded-2xl border bg-blue-50 border-blue-100 text-blue-600 text-xs md:text-sm font-black">
+                    <div className="px-5 py-3 rounded-xl border bg-slate-50 border-slate-200 text-slate-700 text-xs md:text-sm font-black">
                       {targetPriceSyncStatus}
                     </div>
                   )}
-                  <div className="flex bg-slate-100 border border-slate-100 rounded-2xl p-1">
+                  <div className="flex bg-slate-100 border border-slate-100 rounded-xl p-1">
                     {[
                       { id: 'table', label: '표' },
                       { id: 'chart', label: '파이그래프' },
@@ -2667,7 +2667,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       <button
                         key={mode.id}
                         onClick={() => setTargetViewMode(mode.id)}
-                        className={`px-4 py-2 rounded-xl text-xs font-black transition-all ${targetViewMode === mode.id ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-400 hover:text-slate-700'}`}
+                        className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${targetViewMode === mode.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-700'}`}
                       >
                         {mode.label}
                       </button>
@@ -2695,7 +2695,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       drilldown: true,
                     },
                   ].map((chart) => (
-                    <div key={chart.title} className="bg-slate-50 border border-slate-100 rounded-[28px] p-5 md:p-6">
+                    <div key={chart.title} className="bg-slate-50 border border-slate-100 rounded-2xl p-5 md:p-6">
                       <div className="flex items-center justify-between gap-3 mb-5">
                         <h4 className="text-sm md:text-base font-black text-slate-900">{chart.title}</h4>
                         {chart.drilldown && selectedTargetGuide ? (
@@ -2707,7 +2707,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                 setSelectedTargetCategory(null);
                               }
                             }}
-                            className="text-[10px] font-black text-blue-600 bg-white border border-blue-100 px-3 py-1.5 rounded-xl flex items-center gap-1"
+                            className="text-[10px] font-black text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-1"
                           >
                             <ArrowLeft size={12} /> {selectedTargetGroupGuide ? '폴더 목록' : '전체 목표'}
                           </button>
@@ -2758,7 +2758,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                 }
                                 else if (chart.drilldown && selectedTargetGuide && !selectedTargetGroupGuide && item.groupId) setSelectedTargetGroup(item.groupId);
                               }}
-                              className={`w-full flex items-center justify-between gap-3 bg-white rounded-2xl px-4 py-3 border border-slate-100 text-left ${chart.drilldown && !selectedTargetGroupGuide ? 'hover:border-blue-100 hover:text-blue-600 transition-colors' : ''}`}
+                              className={`w-full flex items-center justify-between gap-3 bg-white rounded-xl px-4 py-3 border border-slate-100 text-left ${chart.drilldown && !selectedTargetGroupGuide ? 'hover:border-slate-300 hover:text-slate-900 transition-colors' : ''}`}
                             >
                               <div className="flex items-center gap-2 min-w-0">
                                 <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
@@ -2796,12 +2796,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                           inputMode="decimal"
                           value={category.percent}
                           onChange={(e) => updateTargetCategoryPercent(category.id, e.target.value)}
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 text-sm font-black text-slate-800"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-sm font-black text-slate-800"
                         />
                       </div>
                       <button
                         onClick={() => removeTargetCategory(category.id)}
-                        className="px-4 py-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-2xl transition-colors justify-self-start lg:justify-self-end"
+                        className="px-4 py-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors justify-self-start lg:justify-self-end"
                         title="분류 삭제"
                       >
                         <Trash2 size={17} />
@@ -2809,15 +2809,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">현재 가치</p>
                         <p className="text-lg font-black text-slate-800">{formatMoney(category.currentValue, 'KRW')}</p>
                       </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">목표 가치</p>
-                        <p className="text-lg font-black text-blue-600">{formatMoney(category.targetValue, 'KRW')}</p>
+                        <p className="text-lg font-black text-slate-900">{formatMoney(category.targetValue, 'KRW')}</p>
                       </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4">
+                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
                         <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{category.gapValue >= 0 ? '추가 필요 금액' : '목표 초과 금액'}</p>
                         <p className={`text-lg font-black ${category.gapValue >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {formatMoney(Math.abs(category.gapValue), 'KRW')}
@@ -2835,22 +2835,22 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                         </div>
                         <button
                           onClick={() => addTargetGroup(category.id)}
-                          className="px-4 py-2.5 bg-blue-50 text-blue-600 rounded-xl font-black text-xs flex items-center gap-2"
+                          className="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl font-black text-xs flex items-center gap-2 hover:bg-slate-200 transition-colors"
                         >
                           <Plus size={14} /> 폴더 추가
                         </button>
                       </div>
 
                       {category.groups.map((group) => (
-                        <div key={group.id} className="bg-slate-50 border border-slate-100 rounded-3xl p-4 md:p-5 space-y-3">
+                        <div key={group.id} className="bg-slate-50 border border-slate-100 rounded-2xl p-4 md:p-5 space-y-3">
                           <div className="grid grid-cols-1 lg:grid-cols-[1fr_0.5fr_auto_auto] gap-2 lg:items-center">
                             <div className="flex items-center gap-2 min-w-0">
-                              <Folder size={17} className="text-blue-600 shrink-0" />
+                              <Folder size={17} className="text-slate-500 shrink-0" />
                               <input
                                 value={group.name}
                                 onChange={(e) => updateTargetGroup(category.id, group.id, { name: e.target.value })}
                                 placeholder="폴더명 예: 빅테크"
-                                className="w-full px-3 py-2.5 bg-white border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-black"
+                                className="w-full px-3 py-2.5 bg-white border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-black"
                               />
                             </div>
                             <input
@@ -2858,11 +2858,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                               value={group.percent}
                               onChange={(e) => updateTargetGroup(category.id, group.id, { percent: sanitizeNumericInput(e.target.value) })}
                               placeholder="폴더 비중 %"
-                              className="px-3 py-2.5 bg-white border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold"
+                              className="px-3 py-2.5 bg-white border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold"
                             />
                             <button
                               onClick={() => addTargetItem(category.id, group.id)}
-                              className="px-3 py-2.5 bg-white text-blue-600 border border-blue-100 rounded-xl font-black text-xs flex items-center justify-center gap-1.5"
+                              className="px-3 py-2.5 bg-white text-slate-700 border border-slate-200 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 hover:bg-slate-50 transition-colors"
                             >
                               <Plus size={13} /> 종목
                             </button>
@@ -2877,34 +2877,34 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
                           <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-[10px] md:text-xs font-black">
                             <span className="bg-white rounded-xl px-3 py-2 text-slate-500">폴더 목표 {Number(group.percent || 0).toFixed(1)}%</span>
-                            <span className="bg-white rounded-xl px-3 py-2 text-blue-600">목표 {formatMoney(group.targetValue, 'KRW')}</span>
+                            <span className="bg-white rounded-xl px-3 py-2 text-slate-900">목표 {formatMoney(group.targetValue, 'KRW')}</span>
                             <span className="bg-white rounded-xl px-3 py-2 text-slate-500">현재 {formatMoney(group.currentValue, 'KRW')}</span>
                             <span className={`${Math.abs(group.itemTotalPercent - 100) < 0.001 || group.items.length === 0 ? 'text-slate-500' : 'text-amber-600'} bg-white rounded-xl px-3 py-2`}>
                               종목 합계 {group.itemTotalPercent.toFixed(1)}%
                             </span>
                           </div>
 
-                          <div className="space-y-2 pl-3 md:pl-5 border-l-2 border-blue-100">
+                          <div className="space-y-2 pl-3 md:pl-5 border-l-2 border-slate-200">
                             {group.items.map((item) => (
                               <div key={item.id} className="grid grid-cols-1 lg:grid-cols-[1fr_0.8fr_0.55fr_0.8fr_auto] gap-2 bg-white border border-slate-100 rounded-2xl p-3">
                                 <input
                                   value={item.name}
                                   onChange={(e) => updateTargetItem(category.id, group.id, item.id, { name: e.target.value })}
                                   placeholder="종목명"
-                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold"
+                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold"
                                 />
                                 <input
                                   value={item.ticker}
                                   onChange={(e) => updateTargetItem(category.id, group.id, item.id, { ticker: e.target.value.toUpperCase() })}
                                   placeholder="티커"
-                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold"
+                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold"
                                 />
                                 <input
                                   inputMode="decimal"
                                   value={item.percent}
                                   onChange={(e) => updateTargetItem(category.id, group.id, item.id, { percent: sanitizeNumericInput(e.target.value) })}
                                   placeholder="%"
-                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-blue-600 text-xs md:text-sm font-bold"
+                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold"
                                 />
                                 <div className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs md:text-sm font-bold text-slate-700">
                                   {item.currentPriceKRW > 0 ? (
@@ -2912,7 +2912,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                       <span className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">자동 현재가</span>
                                       <span>{formatMoney(item.currentPriceKRW, 'KRW')}</span>
                                       {item.currency && item.currency !== 'KRW' && (
-                                        <span className="block text-[10px] text-blue-600 mt-0.5">{formatMoney(item.currentPriceNative, item.currency)}</span>
+                                        <span className="block text-[10px] text-slate-500 mt-0.5">{formatMoney(item.currentPriceNative, item.currency)}</span>
                                       )}
                                     </>
                                   ) : (
@@ -2928,7 +2928,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                 </button>
                                 <div className="lg:col-span-5 grid grid-cols-1 md:grid-cols-4 gap-2 text-[10px] md:text-xs font-black">
                                   <span className="bg-slate-50 rounded-xl px-3 py-2 text-slate-500">현재 {formatMoney(item.currentValue, 'KRW')}</span>
-                                  <span className="bg-slate-50 rounded-xl px-3 py-2 text-blue-600">목표 {formatMoney(item.targetValue, 'KRW')}</span>
+                                  <span className="bg-slate-50 rounded-xl px-3 py-2 text-slate-900">목표 {formatMoney(item.targetValue, 'KRW')}</span>
                                   <span className={`bg-slate-50 rounded-xl px-3 py-2 ${item.gapValue >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                                     {item.gapValue >= 0 ? '추가 필요' : '목표 초과'} {formatMoney(Math.abs(item.gapValue), 'KRW')}
                                   </span>
@@ -2986,7 +2986,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       {/* 자산 추가 모달 */}
 {isAdding && (
   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-100 flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-[30px] md:rounded-[40px] p-6 md:p-8 shadow-2xl animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
+    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
       <div className="flex justify-between items-center mb-6 md:mb-8 sticky top-0 bg-white z-10 pt-2 pb-2">
         <h3 className="text-lg md:text-xl font-black text-slate-900">새 자산 등록</h3>
         <button
@@ -3006,7 +3006,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               자산 구분
             </label>
             <select
-              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm"
+              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm"
               value={newAsset.category}
               onChange={(e) => setNewAsset({ ...newAsset, category: e.target.value })}
             >
@@ -3022,7 +3022,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               통화 (Currency)
             </label>
             <select
-              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm"
+              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm"
               value={newAsset.currency}
               onChange={(e) => setNewAsset({ ...newAsset, currency: e.target.value })}
             >
@@ -3041,7 +3041,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             <Search size={18} className="absolute left-4 top-3.5 text-slate-400" />
             <input
               type="text"
-              className="w-full pl-11 pr-4 py-2.5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm"
+              className="w-full pl-11 pr-4 py-2.5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm"
               value={newAsset.name}
               onChange={(e) => setNewAsset({ ...newAsset, name: e.target.value })}
             />
@@ -3055,7 +3055,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             </label>
             <input
               type="text"
-              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold uppercase text-xs md:text-sm text-blue-700"
+              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold uppercase text-xs md:text-sm text-slate-800"
               value={newAsset.ticker}
               onChange={(e) => setNewAsset({ ...newAsset, ticker: e.target.value.toUpperCase() })}
             />
@@ -3070,7 +3070,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             <input
               type="text"
               inputMode="decimal"
-              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-black text-blue-600 text-xs md:text-sm"
+              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
               value={formatInputNumber(newAsset.averagePrice)}
               onChange={(e) =>
                 setNewAsset({
@@ -3089,7 +3089,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           <input
             type="text"
             inputMode="decimal"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-black text-blue-600 text-xs md:text-sm"
+            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
             value={formatInputNumber(newAsset.quantity)}
             onChange={(e) =>
               setNewAsset({
@@ -3107,7 +3107,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             </label>
             <input
               type="date"
-              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-blue-50/50 border border-blue-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-blue-800"
+              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-200 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-800"
               value={newAsset.buyDate}
               onChange={(e) => setNewAsset({ ...newAsset, buyDate: e.target.value })}
             />
@@ -3122,7 +3122,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           </label>
           <textarea
             rows="3"
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm resize-none"
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm resize-none"
             placeholder="매수 근거를 간단히 남겨두세요."
             value={newAsset.memo}
             onChange={(e) => setNewAsset({ ...newAsset, memo: e.target.value })}
@@ -3130,7 +3130,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         </div>
         <button
           onClick={handleAddAsset}
-          className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-slate-200 hover:scale-[1.02] transition-all uppercase tracking-widest"
+          className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm hover:scale-[1.02] transition-all uppercase tracking-widest"
         >
           포트폴리오에 반영하기
         </button>
@@ -3142,7 +3142,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 {/* 매수일 변경 모달 */}
 {selectedAssetToEditDate && (
   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-105 flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-[30px] md:rounded-[40px] p-6 md:p-8 shadow-2xl animate-in zoom-in-95 duration-300">
+    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
       <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-black text-slate-900">
           {selectedAssetToEditDate.name} 매수일 변경
@@ -3169,7 +3169,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           </label>
           <input
             type="date"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-blue-50/50 border border-blue-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-blue-800"
+            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-200 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-800"
             value={buyDateForm.buyDate}
             onChange={(e) => setBuyDateForm({ buyDate: e.target.value })}
           />
@@ -3178,7 +3178,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       <button
         onClick={handleUpdateBuyDate}
-        className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-slate-200 hover:scale-[1.02] transition-all uppercase tracking-widest"
+        className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm hover:scale-[1.02] transition-all uppercase tracking-widest"
       >
         매수일 저장하기
       </button>
@@ -3189,7 +3189,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 {/* 추가 매수 모달 */}
 {isUpdatingAsset && selectedAssetToUpdate && (
   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-110 flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-[30px] md:rounded-[40px] p-6 md:p-8 shadow-2xl animate-in zoom-in-95 duration-300">
+    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
       <div className="flex justify-between items-center mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-black text-slate-900">
           {selectedAssetToUpdate.name} 추가 매수
@@ -3213,7 +3213,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           <input
             type="text"
             inputMode="decimal"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-black text-blue-600 text-xs md:text-sm"
+            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
             value={formatInputNumber(addBuyForm.averagePrice)}
             onChange={(e) =>
               setAddBuyForm((prev) => ({
@@ -3231,7 +3231,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           <input
             type="text"
             inputMode="decimal"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-black text-blue-600 text-xs md:text-sm"
+            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
             value={formatInputNumber(addBuyForm.quantity)}
             onChange={(e) =>
               setAddBuyForm((prev) => ({
@@ -3248,7 +3248,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           </label>
           <input
             type="date"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-blue-50/50 border border-blue-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-blue-800"
+            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-200 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-800"
             value={addBuyForm.buyDate}
             onChange={(e) =>
               setAddBuyForm((prev) => ({
@@ -3267,7 +3267,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           </label>
           <textarea
             rows="3"
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm resize-none"
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm resize-none"
             placeholder="추가 매수 근거를 간단히 남겨두세요."
             value={addBuyForm.memo}
             onChange={(e) =>
@@ -3280,7 +3280,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         </div>
       <button
         onClick={handleAddBuyToAsset}
-        className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-slate-200 hover:scale-[1.02] transition-all uppercase tracking-widest"
+        className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm hover:scale-[1.02] transition-all uppercase tracking-widest"
       >
         추가 매수 반영하기
       </button>
@@ -3291,7 +3291,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 {/* 매도 모달 */}
 {isSellingAsset && selectedAssetToSell && (
   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-120 flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-[30px] md:rounded-[40px] p-6 md:p-8 shadow-2xl animate-in zoom-in-95 duration-300">
+    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
       <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-black text-slate-900 whitespace-nowrap">
           {selectedAssetToSell.name} 매도
@@ -3315,7 +3315,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           <input
             type="text"
             inputMode="decimal"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-black text-blue-600 text-xs md:text-sm"
+            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
             value={formatInputNumber(sellForm.sellPrice)}
             onChange={(e) =>
               setSellForm((prev) => ({
@@ -3333,7 +3333,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           <input
             type="text"
             inputMode="decimal"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-black text-blue-600 text-xs md:text-sm"
+            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
             value={formatInputNumber(sellForm.quantity)}
             onChange={(e) =>
               setSellForm((prev) => ({
@@ -3350,7 +3350,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           </label>
           <input
             type="date"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-blue-50/50 border border-blue-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm text-blue-800"
+            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-200 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-800"
             value={sellForm.sellDate}
             onChange={(e) =>
               setSellForm((prev) => ({
@@ -3369,7 +3369,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           </label>
           <textarea
             rows="3"
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-blue-600 font-bold text-xs md:text-sm resize-none"
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm resize-none"
             placeholder="매도 근거를 간단히 남겨두세요."
             value={sellForm.memo}
             onChange={(e) =>
@@ -3382,7 +3382,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         </div>
       <button
         onClick={handleSellAsset}
-        className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-xl shadow-slate-200 hover:scale-[1.02] transition-all uppercase tracking-widest"
+        className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm hover:scale-[1.02] transition-all uppercase tracking-widest"
       >
         매도 반영하기
       </button>

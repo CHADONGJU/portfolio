@@ -20,9 +20,9 @@ const AuthGate = ({ children }) => {
 
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="bg-white border border-slate-100 rounded-3xl p-8 shadow-sm text-center">
-          <div className="w-12 h-12 mx-auto rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center mb-4">
+      <div className="min-h-[100dvh] bg-[#f6f8fb] flex items-center justify-center p-6">
+        <div className="bg-white border border-slate-200/70 rounded-2xl p-8 shadow-[0_1px_2px_rgba(15,23,42,0.04)] text-center">
+          <div className="w-12 h-12 mx-auto rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center mb-4">
             <ShieldCheck size={24} />
           </div>
           <p className="text-sm font-bold text-slate-500">로그인 상태를 확인하는 중입니다.</p>
@@ -46,10 +46,10 @@ const AuthGate = ({ children }) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 md:p-8 text-slate-900">
-      <div className="w-full max-w-md bg-white border border-slate-100 rounded-3xl shadow-sm overflow-hidden">
+    <div className="min-h-[100dvh] bg-[#f6f8fb] flex items-center justify-center p-4 md:p-8 text-slate-900">
+      <div className="w-full max-w-md bg-white border border-slate-200/70 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-hidden">
         <div className="p-6 md:p-8 border-b border-slate-100 text-center">
-          <div className="w-12 h-12 mx-auto rounded-2xl bg-blue-600 text-white flex items-center justify-center mb-5 shadow-md shadow-blue-100">
+          <div className="w-12 h-12 mx-auto rounded-xl bg-slate-900 text-white flex items-center justify-center mb-5 shadow-sm">
             <LockKeyhole size={22} />
           </div>
           <h1 className="text-2xl font-bold text-slate-900">로그인</h1>
@@ -66,7 +66,7 @@ const AuthGate = ({ children }) => {
             <button
               type="button"
               onClick={() => setAllowLocalPreview(true)}
-              className="w-full px-5 py-3 bg-slate-900 text-white rounded-2xl font-bold text-sm"
+              className="w-full px-5 py-3 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-slate-800 transition-colors"
             >
               설정 전 로컬로 보기
             </button>
@@ -74,7 +74,7 @@ const AuthGate = ({ children }) => {
         ) : (
           <div className="p-6 md:p-8 space-y-4">
             {error && (
-              <p className="rounded-2xl bg-rose-50 border border-rose-100 px-4 py-3 text-xs font-bold text-rose-600">
+                <p className="rounded-xl bg-rose-50 border border-rose-100 px-4 py-3 text-xs font-bold text-rose-600">
                 {error}
               </p>
             )}
@@ -83,9 +83,9 @@ const AuthGate = ({ children }) => {
               type="button"
               onClick={handleGoogleSignIn}
               disabled={isSubmitting}
-              className="w-full px-5 py-3.5 bg-white text-slate-800 rounded-2xl font-bold text-sm border border-slate-200 shadow-sm hover:bg-slate-50 disabled:opacity-60 flex items-center justify-center gap-3"
+              className="w-full px-5 py-3.5 bg-white text-slate-800 rounded-xl font-bold text-sm border border-slate-200 shadow-sm hover:bg-slate-50 disabled:opacity-60 flex items-center justify-center gap-3"
             >
-              <span className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-base font-black text-blue-600">G</span>
+              <span className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-base font-black text-slate-900">G</span>
               {isSubmitting ? 'Google 로그인 중...' : 'Google로 계속하기'}
             </button>
 

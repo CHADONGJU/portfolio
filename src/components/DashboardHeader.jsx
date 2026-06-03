@@ -30,11 +30,11 @@ const DashboardHeader = ({
   };
 
   return (
-  <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-5 md:p-7 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden">
-    <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-600"></div>
+  <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/95 p-4 md:p-6 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 relative overflow-hidden">
+    <div className="absolute top-0 left-0 w-full h-1 bg-slate-900"></div>
     <div className="min-w-0 w-full md:w-auto">
       <div className="flex items-start gap-3 text-slate-800">
-        <div className="p-2 md:p-2.5 bg-blue-600 rounded-2xl text-white shadow-md shadow-blue-100 shrink-0">
+        <div className="p-2 md:p-2.5 bg-slate-900 rounded-xl text-white shadow-sm shrink-0">
           <Briefcase size={20} className="md:w-6 md:h-6" />
         </div>
         {isEditingName ? (
@@ -54,12 +54,12 @@ const DashboardHeader = ({
                   cancelNameEdit();
                 }
               }}
-              className="min-w-0 w-full max-w-[24rem] rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xl md:text-2xl font-bold text-slate-800 outline-none ring-2 ring-blue-100 focus:border-blue-300 focus:ring-blue-200"
+              className="min-w-0 w-full max-w-[24rem] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xl md:text-2xl font-bold text-slate-800 outline-none ring-2 ring-slate-100 focus:border-slate-400 focus:ring-slate-200"
               autoFocus
             />
             <button
               type="submit"
-              className="shrink-0 p-2.5 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+              className="shrink-0 p-2.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition-colors"
               title="이름 저장"
             >
               <Check size={16} />
@@ -82,7 +82,7 @@ const DashboardHeader = ({
                 setNameDraft(resolvedPortfolioName);
                 setIsEditingName(true);
               }}
-              className="shrink-0 p-2 rounded-xl text-slate-400 hover:bg-slate-50 hover:text-blue-600 transition-colors"
+              className="shrink-0 p-2 rounded-xl text-slate-400 hover:bg-slate-50 hover:text-slate-900 transition-colors"
               title="이름 편집"
             >
               <Pencil size={15} />
@@ -103,29 +103,29 @@ const DashboardHeader = ({
     </div>
     <div className="flex flex-wrap gap-2 w-full md:w-auto">
       {userEmail && (
-        <div className="w-full md:w-auto flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-100 rounded-2xl text-slate-500">
-          <UserCircle size={16} className="text-blue-600 shrink-0" />
+        <div className="w-full md:w-auto flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-slate-500">
+          <UserCircle size={16} className="text-slate-500 shrink-0" />
           <span className="min-w-0 truncate text-[11px] font-bold max-w-[180px]">{userEmail}</span>
         </div>
       )}
       <button
         onClick={onRefresh}
         disabled={isFetching}
-        className="p-3 md:p-4 bg-slate-50 rounded-2xl hover:bg-slate-100 transition-all border border-slate-100 disabled:opacity-50 text-blue-600"
+        className="p-3 md:p-3.5 bg-slate-50 rounded-xl hover:bg-slate-100 transition-all border border-slate-200/70 disabled:opacity-50 text-slate-600"
         title="수동 갱신"
       >
         <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
       </button>
       <button
         onClick={onAddAsset}
-        className="flex-1 md:flex-none justify-center bg-slate-900 text-white px-5 md:px-6 py-3 md:py-4 rounded-2xl font-bold text-xs shadow-lg shadow-slate-200 hover:-translate-y-0.5 transition-transform flex items-center gap-2"
+        className="flex-1 md:flex-none justify-center bg-slate-900 text-white px-5 md:px-6 py-3 md:py-3.5 rounded-xl font-bold text-xs shadow-sm hover:bg-slate-800 transition-colors flex items-center gap-2"
       >
         <Plus size={16} /> 자산 추가
       </button>
       {onSignOut && (
         <button
           onClick={onSignOut}
-          className="p-3 md:p-4 bg-white rounded-2xl hover:bg-rose-50 transition-all border border-slate-100 text-slate-400 hover:text-rose-600"
+          className="p-3 md:p-3.5 bg-white rounded-xl hover:bg-rose-50 transition-all border border-slate-200/70 text-slate-400 hover:text-rose-600"
           title="로그아웃"
         >
           <LogOut size={18} />
