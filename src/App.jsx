@@ -1923,7 +1923,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       {/* 동기화 라이브 피드백 */}
       <SyncStatusToast syncStatus={syncStatus} />
 
-      <div className="max-w-6xl mx-auto space-y-6 md:space-y-8">
+      <div className="max-w-[1480px] mx-auto space-y-6 md:space-y-7">
         
         {/* Header */}
         <DashboardHeader
@@ -1944,8 +1944,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
         {activeTab === 'portfolio' && (
-          <div className="space-y-6 animate-in fade-in duration-500">
-            <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+          <div className="space-y-5 animate-in fade-in duration-500">
+            <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-3">
               {[
                 {
                   label: '총 평가금액',
@@ -1978,25 +1978,25 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               ].map((item) => {
                 const Icon = item.icon;
                 return (
-                  <div key={item.label} className="bg-white border border-slate-200/70 rounded-2xl p-4 md:p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                      <p className="text-[10px] md:text-xs font-bold text-slate-400">{item.label}</p>
-                      <div className="w-8 h-8 rounded-xl bg-slate-100/70 text-slate-500 flex items-center justify-center">
-                        <Icon size={16} />
+                  <div key={item.label} className="bg-white border border-slate-200/70 rounded-xl p-4 lg:p-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <p className="text-[10px] md:text-[11px] font-bold text-slate-400">{item.label}</p>
+                      <div className="w-7 h-7 rounded-lg bg-slate-100/70 text-slate-500 flex items-center justify-center">
+                        <Icon size={15} />
                       </div>
                     </div>
-                    <p className={`text-lg md:text-2xl font-black tracking-tight wrap-break-word ${item.tone}`}>{item.value}</p>
+                    <p className={`text-lg md:text-xl lg:text-[21px] font-black tracking-tight wrap-break-word ${item.tone}`}>{item.value}</p>
                     <p className="mt-1 text-[10px] md:text-xs font-semibold text-slate-400">{item.helper}</p>
                   </div>
                 );
               })}
             </section>
 
-            <div className="grid lg:grid-cols-12 gap-4 md:gap-6">
+            <div className="grid lg:grid-cols-[minmax(0,1fr)_22rem] gap-4 lg:gap-5">
             {/* SVG 드릴다운 차트 */}
-            <div className="lg:col-span-4 bg-white p-5 md:p-7 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 flex flex-col items-center">
-              <div className="w-full flex justify-between items-center mb-5 md:mb-8">
-                <h2 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2"><PieIcon className="text-slate-500" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
+            <div className="order-2 lg:order-2 bg-white p-5 lg:p-5 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 flex flex-col items-center lg:sticky lg:top-6 self-start">
+              <div className="w-full flex justify-between items-center mb-5 lg:mb-5">
+                <h2 className="text-base lg:text-[15px] font-black text-slate-900 flex items-center gap-2"><PieIcon className="text-slate-500" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
                 {selectedCategory && (
                   <button onClick={() => setSelectedCategory(null)} className="text-[9px] md:text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center gap-1 hover:bg-slate-200 uppercase tracking-widest"><ArrowLeft size={10} /> 메인으로</button>
                 )}
@@ -2020,7 +2020,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   </button>
                 </div>
               ) : (
-                <div className="relative w-64 h-64 md:w-72 md:h-72">
+	                <div className="relative w-64 h-64 lg:w-56 lg:h-56 xl:w-64 xl:h-64">
                   <div
                     className={`absolute inset-0 rounded-full transition-all duration-700 ${!selectedCategory ? 'cursor-pointer hover:opacity-90' : 'opacity-95'}`}
                     style={{ background: currentChartGradient }}
@@ -2072,9 +2072,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   </div>
                 </div>
               )}
-              <div className="mt-6 md:mt-12 w-full space-y-2">
+              <div className="mt-6 lg:mt-6 w-full space-y-1.5">
                 {currentChartData.map(data => (
-                  <button key={data.id || data.name} onClick={() => !selectedCategory && setSelectedCategory(data.name)} className={`w-full flex items-center justify-between p-3 md:p-4 rounded-xl border transition-all ${!selectedCategory ? 'bg-slate-50 border-slate-100 hover:bg-white hover:border-slate-200' : 'bg-white border-slate-100'}`}>
+                  <button key={data.id || data.name} onClick={() => !selectedCategory && setSelectedCategory(data.name)} className={`w-full flex items-center justify-between p-3 lg:px-3 lg:py-2.5 rounded-xl border transition-all ${!selectedCategory ? 'bg-slate-50 border-slate-100 hover:bg-white hover:border-slate-200' : 'bg-white border-slate-100'}`}>
                     <div className="flex items-center gap-3">
                       <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full shadow-inner" style={{ backgroundColor: data.color }}></div>
                       <span className="text-[11px] md:text-xs font-bold text-slate-700">{data.name}</span>
@@ -2086,78 +2086,78 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             </div>
 
             {/* List 섹션 */}
-            <div className="lg:col-span-8 space-y-6">
+            <div className="order-1 lg:order-1 space-y-6 min-w-0">
               <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden">
-                <div className="p-5 md:p-7 border-b border-slate-100 flex justify-between items-center bg-white">
-                  <h3 className="text-base md:text-lg font-black text-slate-900">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
+                <div className="p-5 lg:px-5 lg:py-4 border-b border-slate-100 flex justify-between items-center bg-white">
+                  <h3 className="text-base lg:text-[15px] font-black text-slate-900">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
                 </div>
-                <div className="overflow-hidden">
+                <div className="overflow-x-auto">
                   <table className="w-full table-fixed text-left">
                     <thead className="hidden md:table-header-group">
                       <tr className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.16em] border-b border-slate-100 bg-slate-50/50">
-                        <th className="px-4 py-4 md:px-6 md:py-5 w-[28%]">종목/자산</th>
-                        <th className="px-4 py-4 md:px-6 md:py-5 w-[39%]">상세 가치</th>
-                        <th className="px-4 py-4 md:px-4 md:py-5 text-right w-[20%]">수익률</th>
-                        <th className="px-4 py-4 md:px-3 md:py-5 text-center w-[13%]">관리</th>
+                        <th className="px-4 py-3 md:px-5 md:py-3.5 w-[30%]">종목/자산</th>
+                        <th className="px-4 py-3 md:px-5 md:py-3.5 w-[38%]">상세 가치</th>
+                        <th className="px-4 py-3 md:px-4 md:py-3.5 text-right w-[20%]">수익률</th>
+                        <th className="px-4 py-3 md:px-3 md:py-3.5 text-center w-[12%]">관리</th>
                       </tr>
                     </thead>
                     <tbody className="block md:table-row-group divide-y divide-slate-50">
                       {visibleDetailAssets.map((asset) => (
                         <tr key={asset.id} className="block md:table-row px-4 py-5 md:p-0 hover:bg-slate-50/60 transition-all group">
-                          <td className="block md:table-cell px-0 py-0 md:px-6 md:py-6 whitespace-nowrap align-top">
-                            <div className="flex items-center gap-4">
-                              <div className="w-11 h-11 md:w-12 md:h-12 shrink-0 rounded-2xl flex items-center justify-center text-white font-black text-xl md:text-2xl shadow-sm group-hover:scale-[1.02] transition-transform" style={{ backgroundColor: asset.color }}>
-                                {asset.category === '현금' ? <Banknote size={24}/> : asset.name[0]}
+                          <td className="block md:table-cell px-0 py-0 md:px-5 md:py-4 whitespace-nowrap align-middle">
+                            <div className="flex items-center gap-3">
+                              <div className="w-11 h-11 md:w-9 md:h-9 shrink-0 rounded-2xl md:rounded-xl flex items-center justify-center text-white font-black text-xl md:text-lg shadow-sm group-hover:scale-[1.02] transition-transform" style={{ backgroundColor: asset.color }}>
+                                {asset.category === '현금' ? <Banknote size={20}/> : asset.name[0]}
                               </div>
                               <div className="min-w-0 flex-1">
-                                <p className="font-black text-slate-900 text-base md:text-lg leading-none truncate">{asset.name}</p>
-                                <p className="text-xs md:text-sm text-slate-400 font-bold mt-2 uppercase tracking-widest truncate">
+                                <p className="font-black text-slate-900 text-base md:text-[15px] leading-none truncate">{asset.name}</p>
+                                <p className="text-xs md:text-[12px] text-slate-400 font-bold mt-2 md:mt-1.5 uppercase tracking-[0.14em] truncate">
                                   {asset.category === '현금' ? 'CASH' : asset.ticker} {asset.category !== '현금' && `• ${asset.quantity.toLocaleString()}${asset.category==='원자재'?'단위':'주'}`}
                                 </p>
                                 {asset.category !== '현금' && (
-                                  <p className="text-[10px] md:text-xs text-slate-400 font-bold mt-1 truncate">
+                                  <p className="text-[10px] md:text-[11px] text-slate-400 font-bold mt-1 truncate">
                                     매수일 {asset.buyDate || '-'}
                                   </p>
                                 )}
                               </div>
                             </div>
                           </td>
-                          <td className="block md:table-cell px-0 py-4 md:px-6 md:py-5 align-top">
-                            <div className="grid grid-cols-2 gap-x-4 md:gap-x-5 gap-y-3 bg-slate-50/80 px-4 py-3.5 rounded-xl border border-slate-200/70 group-hover:border-slate-300 transition-colors w-full min-w-0">
+                          <td className="block md:table-cell px-0 py-4 md:px-5 md:py-4 align-middle">
+                            <div className="grid grid-cols-2 gap-x-4 md:gap-x-5 gap-y-3 md:gap-y-1.5 bg-slate-50/80 md:bg-transparent px-4 py-3.5 md:p-0 rounded-xl md:rounded-none border border-slate-200/70 md:border-0 group-hover:border-slate-300 transition-colors w-full min-w-0">
                               <div className="flex flex-col">
                                 <span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">{asset.category === '현금' ? '보유 원금' : '총 매입'}</span>
-                                <span className="font-black text-slate-700 text-xs md:text-sm mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.purchaseNative, asset.currency)}</span>
+                                <span className="font-black text-slate-700 text-xs md:text-[13px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.purchaseNative, asset.currency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">평단가</span><span className="font-black text-slate-700 text-xs md:text-sm mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalAveragePrice || asset.averagePrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">평단가</span><span className="font-black text-slate-700 text-xs md:text-[13px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalAveragePrice || asset.averagePrice, asset.originalCurrency || asset.currency)}</span></>
                                 )}
                               </div>
                               <div className="flex flex-col">
                                 <span className="text-[8px] md:text-[9px] text-slate-500 font-black uppercase tracking-widest">총 가치</span>
-                                <span className="font-black text-slate-900 text-xs md:text-sm mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.currentNative, asset.currency)}</span>
+                                <span className="font-black text-slate-900 text-xs md:text-[13px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.currentNative, asset.currency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[8px] md:text-[9px] text-slate-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-slate-900 text-xs md:text-sm mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalCurrentPrice || asset.currentPrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[8px] md:text-[9px] text-slate-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-slate-900 text-xs md:text-[13px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalCurrentPrice || asset.currentPrice, asset.originalCurrency || asset.currency)}</span></>
                                 )}
                               </div>
                             </div>
                           </td>
-                          <td className="block md:table-cell px-0 pb-4 md:px-4 md:py-6 text-left md:text-right whitespace-nowrap align-top">
+                          <td className="block md:table-cell px-0 pb-4 md:px-4 md:py-4 text-left md:text-right whitespace-nowrap align-middle">
                             {asset.category === '현금' ? <span className="text-[10px] md:text-xs font-black text-slate-300">-</span> : (
                               <div className="flex flex-row md:flex-col items-stretch md:items-end gap-2">
-                                <div className={`inline-flex items-center justify-center gap-1.5 flex-1 md:flex-none md:w-full px-2 md:px-3 py-2.5 rounded-xl text-xs md:text-sm font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                                <div className={`inline-flex items-center justify-center gap-1.5 flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[13px] font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
                                   {asset.returnPercent >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {Math.abs(asset.returnPercent).toFixed(2)}%
                                 </div>
-                                <div className={`inline-flex items-center justify-center flex-1 md:flex-none md:w-full px-2 md:px-3 py-2.5 rounded-xl text-xs md:text-sm font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                                <div className={`inline-flex items-center justify-center flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[13px] font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
                                   {asset.profitNative > 0 ? '+' : ''}{formatMoney(asset.profitNative, asset.currency)}
                                 </div>
                               </div>
                             )}
                           </td>
-                          <td className="block md:table-cell px-0 py-0 md:px-3 md:py-5 text-right md:text-center whitespace-nowrap align-top">
-                          <div className="flex flex-wrap md:flex-col items-center justify-end md:justify-center gap-2">
+                          <td className="block md:table-cell px-0 py-0 md:px-3 md:py-4 text-right md:text-center whitespace-nowrap align-middle">
+                          <div className="flex flex-wrap md:flex-col items-center justify-end md:justify-center gap-2 md:gap-1">
                             {asset.category !== '현금' && (
                               <>
                                 <button
@@ -2169,7 +2169,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                   title="추가 매수"
                                 >
                                   <Plus size={16} className="md:w-4.5 md:h-4.5" />
-                                  <span className="md:hidden xl:inline">추가 매수</span>
+                                  <span className="md:hidden">추가 매수</span>
                                 </button>
 
                                 <button
@@ -2181,7 +2181,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                   title="일부 매도"
                                 >
                                   <Minus size={16} className="md:w-4.5 md:h-4.5" />
-                                  <span className="md:hidden xl:inline">일부 매도</span>
+                                  <span className="md:hidden">일부 매도</span>
                                 </button>
 
                                 <button
@@ -2193,7 +2193,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                   title="매수일 변경"
                                 >
                                   <CalendarDays size={16} className="md:w-4.5 md:h-4.5" />
-                                  <span className="md:hidden xl:inline">매수일</span>
+                                  <span className="md:hidden">매수일</span>
                                 </button>
                               </>
                             )}
