@@ -3,7 +3,7 @@ import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
-  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, Globe, ArrowRightLeft, Search, Folder, Target, CalendarDays
+  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, ArrowRightLeft, Search, Folder, Target, CalendarDays
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
 import MemoTab from './components/MemoTab';
@@ -821,9 +821,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     currentCategoryTotalConverted,
     currentCategoryProfitKRW,
     currentCategoryProfitUSD,
-    totalUsdPurchase,
-    fxProfitPercent,
-    currentUsdValueForUsd,
     krwNetProfit,
     usdNetProfit,
     totalConvertedNetProfit,
@@ -2339,35 +2336,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                 {filteredPerformanceSummary.length === 0 && (
                   <p className="p-8 md:p-10 text-center text-slate-400 font-bold text-xs md:text-sm">검색 결과가 없습니다.</p>
                 )}
-              </div>
-            </div>
-
-            <div className="bg-slate-900 rounded-2xl p-5 md:p-7 shadow-sm">
-              <h3 className="text-white font-black flex items-center gap-2 mb-4 md:mb-6 text-base md:text-lg"><Globe className="text-slate-300" size={18} /> 달러 자산 요약</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-                <div className="col-span-1 flex flex-col justify-center md:border-r border-b md:border-b-0 border-slate-700/50 pb-4 md:pb-0 md:pr-6 relative">
-                  <div className="absolute top-0 right-2 opacity-10"><DollarSign size={60}/></div>
-                  <span className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1.5 md:mb-2">총 매입 금액 (USD)</span>
-                  <span className="text-3xl md:text-4xl font-black text-white tracking-tighter">{formatMoney(totalUsdPurchase, 'USD')}</span>
-                </div>
-                <div className="col-span-2 flex flex-col justify-center gap-3 md:pl-2">
-                  <div className="flex justify-between items-center bg-slate-800/50 px-4 md:px-6 py-3 md:py-4 rounded-xl">
-                    <span className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest">현재 평가 금액 (USD)</span>
-                    <span className="text-lg md:text-xl font-black text-white">{formatMoney(currentUsdValueForUsd, 'USD')}</span>
-                  </div>
-                  <div className="flex justify-between items-center bg-slate-800/60 border border-slate-700 px-4 md:px-6 py-3 md:py-4 rounded-xl relative">
-                    <div className="flex flex-col">
-                      <span className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest">총 수익금액 (USD)</span>
-                      <span className="text-xl md:text-2xl font-black text-white tracking-tighter">{formatMoney(currentUsdValueForUsd - totalUsdPurchase, 'USD')}</span>
-                    </div>
-                    <div className="flex flex-col items-end">
-                      <span className="text-[8px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest mb-1">수익률</span>
-                      <span className={`inline-flex font-black px-2 py-0.5 md:px-3 md:py-1 rounded-lg md:rounded-xl text-xs md:text-sm ${fxProfitPercent >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-rose-500/20 text-rose-400'}`}>
-                        {fxProfitPercent > 0 ? '+' : ''}{fxProfitPercent.toFixed(2)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
 
