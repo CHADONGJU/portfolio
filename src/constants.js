@@ -8,65 +8,74 @@ export const AUTO_DIVIDENDS_STORAGE_KEY = 'portfolio_auto_dividends_v1';
 export const TARGET_PORTFOLIO_STORAGE_KEY = 'portfolio_target_plan_v1';
 
 export const ASSET_COLORS = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#06b6d4',
-  '#eab308',
-  '#ec4899',
-  '#14b8a6',
-  '#f97316',
-  '#6366f1',
-  '#84cc16',
-  '#0ea5e9',
-  '#d946ef',
-  '#22c55e',
-  '#f43f5e',
-  '#a855f7',
+  '#334155',
+  '#475569',
   '#64748b',
-  '#fb7185',
-  '#2dd4bf',
-  '#c084fc',
-  '#fb923c',
-  '#38bdf8',
-  '#a3e635',
+  '#0f766e',
+  '#b45309',
+  '#7c3aed',
+  '#be123c',
+  '#0369a1',
 ];
 
 export const CATEGORY_COLORS = {
-  현금: '#facc15',
-  국내주식: '#ef4444',
-  해외주식: '#2563eb',
-  원자재: '#111827',
+  현금: '#d6a21d',
+  국내주식: '#e05555',
+  해외주식: '#4169e1',
+  원자재: '#273445',
 };
 
 export const DETAIL_CHART_COLORS = [
-  '#059669',
-  '#ea580c',
-  '#7c3aed',
-  '#0891b2',
-  '#db2777',
+  '#334155',
+  '#475569',
+  '#64748b',
   '#0f766e',
-  '#9333ea',
-  '#65a30d',
-  '#c026d3',
   '#b45309',
-  '#0d9488',
-  '#86198f',
-  '#4d7c0f',
-  '#be185d',
-  '#0e7490',
-  '#6d28d9',
-  '#15803d',
-  '#a16207',
-  '#9d174d',
-  '#115e59',
+  '#7c3aed',
+  '#be123c',
+  '#0369a1',
 ];
+
+export const CATEGORY_DETAIL_COLOR_SCALES = {
+  국내주식: [
+    '#b91c1c',
+    '#dc2626',
+    '#ef4444',
+    '#f87171',
+    '#fca5a5',
+    '#fecaca',
+  ],
+  해외주식: [
+    '#1d4ed8',
+    '#2563eb',
+    '#3b82f6',
+    '#60a5fa',
+    '#93c5fd',
+    '#bfdbfe',
+  ],
+  현금: [
+    '#a16207',
+    '#ca8a04',
+    '#eab308',
+    '#facc15',
+  ],
+  원자재: [
+    '#111827',
+    '#273445',
+    '#475569',
+    '#64748b',
+  ],
+};
 
 export const getCategoryColor = (category) => CATEGORY_COLORS[String(category || '').trim()] || '#94a3b8';
 
 export const getDetailChartColor = (fallbackIndex = 0) => DETAIL_CHART_COLORS[fallbackIndex % DETAIL_CHART_COLORS.length];
+
+export const getCategoryDetailColor = (category, rankIndex = 0) => {
+  const scale = CATEGORY_DETAIL_COLOR_SCALES[String(category || '').trim()];
+  if (!scale) return getDetailChartColor(rankIndex);
+  return scale[rankIndex % scale.length];
+};
 
 export const getAssetColor = (key = '', fallbackIndex = 0) => {
   const normalizedKey = String(key).trim();

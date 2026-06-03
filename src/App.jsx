@@ -15,7 +15,7 @@ import {
   ASSETS_STORAGE_KEY,
   DEFAULT_PORTFOLIO_NAME,
   getCategoryColor,
-  getDetailChartColor,
+  getCategoryDetailColor,
   MEMOS_STORAGE_KEY,
   PORTFOLIO_NAME_STORAGE_KEY,
   TARGET_PORTFOLIO_STORAGE_KEY,
@@ -1054,7 +1054,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           value: item.targetValue,
           percent,
           startPercent,
-          color: getDetailChartColor(index),
+          color: getCategoryDetailColor(selectedTargetGuide.id, index),
         };
       });
     }
@@ -1075,7 +1075,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         value: group.targetValue,
         percent,
         startPercent,
-        color: getDetailChartColor(index),
+        color: getCategoryDetailColor(selectedTargetGuide.id, index),
       };
     });
   }, [selectedTargetGuide, selectedTargetGroupGuide, targetGoalChartData]);
@@ -1902,7 +1902,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       originalAveragePrice: parsedAvgPrice, 
       originalCurrentPrice: parsedAvgPrice, 
       buyDate: newAsset.buyDate,
-      color: getDetailChartColor(assets.length)
+      color: getCategoryDetailColor(newAsset.category, assets.filter(asset => asset.category === newAsset.category).length)
     };
 
     setAssets(prevAssets => [...prevAssets, asset]);

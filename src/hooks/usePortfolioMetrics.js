@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { getCategoryColor, getDetailChartColor } from '../constants';
+import { getCategoryColor, getCategoryDetailColor } from '../constants';
 
 const withRunningPercent = (items, total, getValue) => {
   let cumulativePercent = 0;
@@ -34,7 +34,7 @@ export const usePortfolioMetrics = ({
       return 1;
     };
 
-    return assets.map((a, index) => {
+    const calculatedAssets = assets.map((a) => {
       // originalAveragePrice가 무조건 있어야 수학이 맞음
       const safeOrigAvgPrice = a.originalAveragePrice || a.averagePrice;
       const safeOrigCurrPrice = a.originalCurrentPrice || a.currentPrice;
@@ -52,7 +52,6 @@ export const usePortfolioMetrics = ({
       
       return {
         ...a,
-        color: getDetailChartColor(index),
         purchaseNative,
         currentNative,
         purchaseKRW,
@@ -62,6 +61,22 @@ export const usePortfolioMetrics = ({
         returnPercent,
       };
     });
+
+    const rankByCategory = calculatedAssets.reduce((acc, asset) => {
+      if (!acc[asset.category]) acc[asset.category] = [];
+      acc[asset.category].push(asset);
+      return acc;
+    }, {});
+
+    Object.values(rankByCategory).forEach((categoryAssets) => {
+      categoryAssets
+        .sort((a, b) => b.currentKRW - a.currentKRW)
+        .forEach((asset, index) => {
+          asset.color = getCategoryDetailColor(asset.category, index);
+        });
+    });
+
+    return calculatedAssets;
   }, [assets, exchangeRate, jpyKrwRate, currencyRates]);
 
   const totalConvertedKRW = useMemo(() => enhancedAssets.reduce((acc, a) => acc + a.currentKRW, 0), [enhancedAssets]);
