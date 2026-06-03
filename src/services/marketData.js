@@ -233,6 +233,20 @@ const readYahooQuotePrice = (data) => {
   };
 };
 
+const fetchYahooQuote = async (yfTicker) => {
+  const urls = [
+    `https://query2.finance.yahoo.com/v7/finance/quote?symbols=${yfTicker}`,
+    `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${yfTicker}`,
+  ];
+
+  for (const url of urls) {
+    const quote = readYahooQuotePrice(await fetchWithSafeProxy(url));
+    if (quote !== null) return quote;
+  }
+
+  return null;
+};
+
 const isDomesticStock = (asset, ticker) => {
   if (isOverseasCategory(asset.category || '')) return false;
   return isDomesticCategory(asset.category || '') || /^\d{5,6}(\.(KS|KQ))?$/.test(ticker);
@@ -295,7 +309,10 @@ const readStooqPrice = (csv) => {
 };
 
 const getYahooTickers = (asset, ticker) => {
-  if (isDomesticStock(asset, ticker)) return [ticker.includes('.') ? ticker : `${ticker}.KS`];
+  if (isDomesticStock(asset, ticker)) {
+    if (ticker.includes('.')) return [ticker];
+    return [`${ticker}.KS`, `${ticker}.KQ`];
+  }
 
   if (ticker.includes('.')) return [ticker];
 
@@ -326,7 +343,7 @@ const fetchYahooChartQuote = async (yfTicker) => {
     if (quote !== null) return quote;
   }
 
-  return null;
+  return fetchYahooQuote(yfTicker);
 };
 
 const fetchStooqQuote = async (asset, ticker) => {
@@ -349,15 +366,25 @@ export const fetchStockQuote = async (asset) => {
 
   if (isDomesticStock(asset, ticker)) {
     const cleanTicker = ticker.replace(/[^0-9]/g, '');
-    const naverUrl = `https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:${cleanTicker}`;
-    const data = await fetchWithSafeProxy(naverUrl);
+    if (cleanTicker) {
+      const naverUrl = `https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:${cleanTicker}`;
+      const data = await fetchWithSafeProxy(naverUrl);
 
-    const naverPrice = readNaverPrice(data);
-    if (naverPrice !== null) return {
-      price: naverPrice,
-      currency: 'KRW',
-      symbol: ticker,
-    };
+      const naverPrice = readNaverPrice(data);
+      if (naverPrice !== null) return {
+        price: naverPrice,
+        currency: 'KRW',
+        symbol: ticker,
+      };
+    }
+
+    for (const yfTicker of getYahooTickers(asset, ticker)) {
+      const yahooQuote = await fetchYahooChartQuote(yfTicker);
+      if (yahooQuote !== null) return {
+        ...yahooQuote,
+        currency: yahooQuote.currency || 'KRW',
+      };
+    }
   }
 
   if (asset.currency === 'USD' || asset.currency === 'JPY' || isOverseasCategory(asset.category || '')) {

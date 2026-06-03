@@ -393,7 +393,10 @@ const App = () => {
   const [syncStatus, setSyncStatus] = useState([]);
   const addLog = (msg, type = 'info') => {
     const id = Date.now() + Math.random();
-    setSyncStatus(prev => [{ id, msg, type }, ...prev].slice(0, 4));
+    setSyncStatus(prev => {
+      if (prev.some(log => log.msg === msg && log.type === type)) return prev;
+      return [{ id, msg, type }, ...prev].slice(0, 3);
+    });
     setTimeout(() => {
       setSyncStatus(prev => prev.filter(log => log.id !== id));
     }, 3000);
@@ -708,6 +711,17 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               newOriginalCurrentPrice = fetchedPrice;
               newCurrentPrice = Math.round(newOriginalCurrentPrice * quoteRate);
               nextAssetCurrency = quoteCurrency;
+              successCount++;
+            } else if (Number(asset.originalCurrentPrice) > 0 || Number(asset.currentPrice) > 0) {
+              const cachedCurrency = asset.currency || asset.originalCurrency || 'KRW';
+              const cachedRate = await getCurrencyRate(cachedCurrency);
+              nextAssetCurrency = cachedCurrency;
+              newOriginalCurrentPrice = Number(asset.originalCurrentPrice) > 0
+                ? Number(asset.originalCurrentPrice)
+                : Number(asset.currentPrice) / cachedRate;
+              newCurrentPrice = Number(asset.currentPrice) > 0
+                ? Number(asset.currentPrice)
+                : Math.round(newOriginalCurrentPrice * cachedRate);
               successCount++;
             } else {
               failCount++;
@@ -1994,7 +2008,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
             <div className="grid lg:grid-cols-[minmax(0,1fr)_30rem] xl:grid-cols-[minmax(0,1fr)_34rem] gap-4 lg:gap-5">
             {/* SVG 드릴다운 차트 */}
-            <div className="order-2 lg:order-2 bg-white p-5 lg:p-6 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 flex flex-col items-center lg:sticky lg:top-6 self-start">
+            <div className="order-2 lg:order-2 bg-white p-5 lg:p-6 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 flex flex-col items-center h-full">
               <div className="w-full flex justify-between items-center mb-5 lg:mb-5">
                 <h2 className="text-base lg:text-[15px] font-black text-slate-900 flex items-center gap-2"><PieIcon className="text-slate-500" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
                 {selectedCategory && (
