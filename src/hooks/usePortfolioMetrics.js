@@ -87,7 +87,7 @@ export const usePortfolioMetrics = ({
       filtered.sort((a, b) => b.currentKRW - a.currentKRW),
       subTotalKRW,
       (asset) => asset.currentKRW,
-    ).map((asset, index) => ({ ...asset, color: getDetailChartColor(index), subTotal: subTotalKRW }));
+    ).map((asset) => ({ ...asset, subTotal: subTotalKRW }));
   }, [enhancedAssets, selectedCategory]);
 
   const currentChartData = selectedCategory ? subChartData : categoryData;
