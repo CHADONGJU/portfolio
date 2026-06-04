@@ -18,6 +18,7 @@ export const usePortfolioMetrics = ({
   trades,
   tradeLedger = [],
   autoDividends,
+  dividendAssetRegistry = [],
   exchangeRate,
   jpyKrwRate,
   currencyRates = {},
@@ -214,9 +215,33 @@ export const usePortfolioMetrics = ({
     const currentMonth = today.getMonth() + 1;
     const currentYear = today.getFullYear();
 
+    const activeDividendAssets = new Map();
+
+    dividendAssetRegistry.forEach((entry) => {
+      if (!entry?.hasDividends || !entry.name) return;
+      const asset = assets.find(candidate => candidate.name === entry.name);
+      if (!asset) return;
+      activeDividendAssets.set(entry.name, { asset, registry: entry });
+    });
+
     assets.forEach(asset => {
       const assetDivs = autoDividends.filter(d => d.name === asset.name);
-      if (assetDivs.length === 0) return;
+      if (assetDivs.length > 0) activeDividendAssets.set(asset.name, { asset, registry: null });
+    });
+
+    activeDividendAssets.forEach(({ asset, registry }) => {
+      const assetDivs = autoDividends.filter(d => d.name === asset.name);
+      if (assetDivs.length === 0) {
+        summary[asset.name] = {
+          name: asset.name,
+          currency: asset.currency || registry?.currency || 'KRW',
+          totalAmount: 0,
+          status: '지급 기록 대기',
+          expectedAmount: 0,
+          history: [],
+        };
+        return;
+      }
 
       const totalAmount = assetDivs.reduce((sum, d) => sum + d.amount, 0);
       let status = '';
@@ -259,7 +284,7 @@ export const usePortfolioMetrics = ({
     });
     
     return Object.values(summary).sort((a, b) => b.totalAmount - a.totalAmount);
-  }, [autoDividends, assets]);
+  }, [autoDividends, assets, dividendAssetRegistry]);
 
   const filteredHistory = useMemo(() => {
     if (!selectedDividendAsset) return [];

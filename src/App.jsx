@@ -952,6 +952,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     trades,
     tradeLedger,
     autoDividends,
+    dividendAssetRegistry,
     exchangeRate,
     jpyKrwRate,
     currencyRates,
