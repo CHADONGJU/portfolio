@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { getCategoryColor, getCategoryDetailColor } from '../constants';
 
+const parseMetricNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
+
 const getDividendCategoryOrder = (category = '') => {
   if (category?.includes('국내') && category?.includes('주식')) return 10;
   if (category?.includes('해외') && category?.includes('주식')) return 20;
@@ -203,7 +205,7 @@ export const usePortfolioMetrics = ({
         ticker: firstAsset?.ticker || firstTrade?.ticker || '',
         category: firstAsset?.category || firstTrade?.category || '',
         currency,
-        quantity: assetRows.reduce((sum, asset) => sum + (Number(asset.quantity) || 0), 0),
+        quantity: assetRows.reduce((sum, asset) => sum + parseMetricNumber(asset.quantity), 0),
         totalBuyQuantity: buyRows.reduce((sum, record) => sum + (Number(record.quantity) || 0), 0),
         totalSellQuantity: sellRows.reduce((sum, record) => sum + (Number(record.quantity) || 0), 0),
         totalBuyAmountKRW: buyRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * getRecordRate(record.currency)), 0),
@@ -259,7 +261,7 @@ export const usePortfolioMetrics = ({
 
       const lastDiv = assetDivs[0];
       const lastDate = new Date(lastDiv.date);
-      const currentQuantity = Number(asset.quantity) || 0;
+      const currentQuantity = parseMetricNumber(asset.quantity);
       const lastDividendQuantity = Number(lastDiv.quantity) || 0;
       const perShareNetAmount = Number(lastDiv.perShareNetAmount)
         || (lastDividendQuantity > 0 ? lastDiv.amount / lastDividendQuantity : 0);

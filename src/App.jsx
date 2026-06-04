@@ -430,7 +430,8 @@ const getHeldQuantityOnDate = (asset, ledger = [], date = '') => {
     const entryTimestamp = getDateTimestampSeconds(entry.date);
     return entryTimestamp > 0 && targetTimestamp > 0 && entryTimestamp <= targetTimestamp;
   });
-  if (relatedLedger.length === 0) return Number(asset.quantity) || 0;
+  const currentAssetQuantity = parseNumber(asset.quantity);
+  if (relatedLedger.length === 0) return currentAssetQuantity;
 
   const ledgerQuantity = relatedLedger.reduce((sum, entry) => {
     const quantity = Number(entry.quantity) || 0;
@@ -439,10 +440,10 @@ const getHeldQuantityOnDate = (asset, ledger = [], date = '') => {
 
   if (ledgerQuantity > 0) return ledgerQuantity;
   if (
-    Number(asset.quantity) > 0
+    currentAssetQuantity > 0
     && getDateTimestampSeconds(asset.buyDate) > 0
     && targetTimestamp >= getDateTimestampSeconds(asset.buyDate)
-  ) return Number(asset.quantity);
+  ) return currentAssetQuantity;
   return 0;
 };
 
@@ -873,7 +874,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       const currency = asset.originalCurrency || asset.currency;
                       const dividendDate = new Date(d.date * 1000).toISOString().split('T')[0];
                       const heldQuantity = useCurrentQuantityFallback
-                        ? Number(asset.quantity) || 0
+                        ? parseNumber(asset.quantity)
                         : getHeldQuantityOnDate(asset, currentTradeLedger, dividendDate);
                       if (heldQuantity <= 0) return null;
 
@@ -897,7 +898,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     })
                     .filter(Boolean);
                   let rows = buildDividendRows(buyTimestamp);
-                  if (rows.length === 0 && Number(asset.quantity) > 0) {
+                  if (rows.length === 0 && parseNumber(asset.quantity) > 0) {
                     const assetBuyTimestamp = getDateTimestampSeconds(asset.buyDate);
                     rows = buildDividendRows(assetBuyTimestamp || buyTimestamp, true);
                   }
