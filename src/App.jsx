@@ -226,6 +226,37 @@ const mergeUniqueRecords = (primary = [], secondary = []) => {
   });
 };
 
+const mergeUniqueDividends = (primary = [], secondary = []) => {
+  const seen = new Set();
+  return [...primary, ...secondary].filter((dividend) => {
+    const key = [
+      dividend.id || '',
+      dividend.name || '',
+      dividend.ticker || '',
+      dividend.date || '',
+      dividend.currency || '',
+      dividend.quantity || '',
+      dividend.perShareGrossAmount || '',
+      dividend.grossAmount || '',
+      dividend.amount || '',
+    ].join('::');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const mergeDividendResultsByAsset = (previousDividends = [], nextDividends = [], assets = []) => {
+  const nextAssetNames = new Set(nextDividends.map((dividend) => dividend.name).filter(Boolean));
+  const activeAssetNames = new Set(assets.map((asset) => asset.name).filter(Boolean));
+  const preserved = previousDividends.filter((dividend) => (
+    activeAssetNames.has(dividend.name) && !nextAssetNames.has(dividend.name)
+  ));
+
+  return mergeUniqueDividends(nextDividends, preserved)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+};
+
 const isRecordForAsset = (record, asset) => {
   if (!record || !asset) return false;
   const assetId = String(asset.id);
@@ -250,7 +281,7 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     trades: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.trades) ? snapshot.trades : []), assets),
     memos: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []), assets),
     tradeLedger: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.tradeLedger) ? snapshot.tradeLedger : []), assets),
-    autoDividends: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []), assets),
+    autoDividends: pruneRecordsToAssets(mergeUniqueDividends(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []), assets),
     targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
     portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
       ? snapshot.portfolioName
@@ -812,7 +843,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               .sort((a, b) => new Date(b.date) - new Date(a.date));
             setAutoDividends(prevDividends => (
               nextAutoDividends.length > 0
-                ? nextAutoDividends
+                ? mergeDividendResultsByAsset(prevDividends, nextAutoDividends, currentAssets)
                 : prevDividends.filter(dividend => currentAssets.some(asset => asset.name === dividend.name))
             ));
           });
