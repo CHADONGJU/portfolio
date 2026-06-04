@@ -1,6 +1,15 @@
 import { useMemo } from 'react';
 import { getCategoryColor, getCategoryDetailColor } from '../constants';
 
+const getDividendCategoryOrder = (category = '') => {
+  if (category?.includes('국내') && category?.includes('주식')) return 10;
+  if (category?.includes('해외') && category?.includes('주식')) return 20;
+  if (category?.includes('원자재')) return 30;
+  if (category?.includes('가상')) return 40;
+  if (category?.includes('현금')) return 50;
+  return 90;
+};
+
 const withRunningPercent = (items, total, getValue) => {
   let cumulativePercent = 0;
 
@@ -234,6 +243,7 @@ export const usePortfolioMetrics = ({
       if (assetDivs.length === 0) {
         summary[asset.name] = {
           name: asset.name,
+          category: asset.category || registry?.category || '',
           currency: asset.currency || registry?.currency || 'KRW',
           totalAmount: 0,
           status: '지급 기록 대기',
@@ -279,11 +289,21 @@ export const usePortfolioMetrics = ({
       }
 
       summary[asset.name] = {
-        name: asset.name, currency: lastDiv.currency, totalAmount, status, expectedAmount, history: assetDivs
+        name: asset.name,
+        category: asset.category || '',
+        currency: lastDiv.currency,
+        totalAmount,
+        status,
+        expectedAmount,
+        history: assetDivs,
       };
     });
     
-    return Object.values(summary).sort((a, b) => b.totalAmount - a.totalAmount);
+    return Object.values(summary).sort((a, b) => {
+      const categoryDelta = getDividendCategoryOrder(a.category) - getDividendCategoryOrder(b.category);
+      if (categoryDelta !== 0) return categoryDelta;
+      return b.totalAmount - a.totalAmount;
+    });
   }, [autoDividends, assets, dividendAssetRegistry]);
 
   const filteredHistory = useMemo(() => {

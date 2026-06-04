@@ -402,7 +402,16 @@ const getDividendStartDate = (asset, ledger = []) => {
     .map((entry) => entry.date)
     .sort()[0];
 
-  return firstBuy || asset.buyDate || '';
+  const candidates = [firstBuy, asset.buyDate]
+    .filter(Boolean)
+    .map((date) => ({
+      date,
+      timestamp: getDateTimestampSeconds(date),
+    }))
+    .filter((entry) => entry.timestamp > 0)
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  return candidates[0]?.date || firstBuy || asset.buyDate || '';
 };
 
 const getDateTimestampSeconds = (date = '') => {
