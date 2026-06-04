@@ -406,12 +406,20 @@ const getDividendStartDate = (asset, ledger = []) => {
 };
 
 const getDateTimestampSeconds = (date = '') => {
-  const timestamp = new Date(date).getTime();
+  const normalizedDate = String(date || '')
+    .trim()
+    .replace(/\s*\/\s*/g, '-')
+    .replace(/\s+/g, '');
+  const timestamp = new Date(normalizedDate).getTime();
   return Number.isFinite(timestamp) ? timestamp / 1000 : 0;
 };
 
 const getHeldQuantityOnDate = (asset, ledger = [], date = '') => {
-  const relatedLedger = getAssetLedgerRows(asset, ledger).filter((entry) => entry.date <= date);
+  const targetTimestamp = getDateTimestampSeconds(date);
+  const relatedLedger = getAssetLedgerRows(asset, ledger).filter((entry) => {
+    const entryTimestamp = getDateTimestampSeconds(entry.date);
+    return entryTimestamp > 0 && targetTimestamp > 0 && entryTimestamp <= targetTimestamp;
+  });
   if (relatedLedger.length === 0) return Number(asset.quantity) || 0;
 
   const ledgerQuantity = relatedLedger.reduce((sum, entry) => {
@@ -420,7 +428,11 @@ const getHeldQuantityOnDate = (asset, ledger = [], date = '') => {
   }, 0);
 
   if (ledgerQuantity > 0) return ledgerQuantity;
-  if (asset.buyDate && date >= asset.buyDate && Number(asset.quantity) > 0) return Number(asset.quantity);
+  if (
+    Number(asset.quantity) > 0
+    && getDateTimestampSeconds(asset.buyDate) > 0
+    && targetTimestamp >= getDateTimestampSeconds(asset.buyDate)
+  ) return Number(asset.quantity);
   return 0;
 };
 
