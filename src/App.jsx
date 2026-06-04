@@ -268,7 +268,21 @@ const mergeDividendAssetRegistry = (previousRegistry = [], nextRegistry = [], as
   );
 
   nextRegistry.forEach((entry) => {
-    if (entry.name) registryByName.set(entry.name, entry);
+    if (!entry.name) return;
+    const previous = registryByName.get(entry.name);
+    registryByName.set(entry.name, {
+      ...previous,
+      ...entry,
+      hasDividends: Boolean(previous?.hasDividends || entry.hasDividends),
+      sourceDividendCount: Math.max(
+        Number(previous?.sourceDividendCount) || 0,
+        Number(entry.sourceDividendCount) || 0,
+      ),
+      earnedDividendCount: Math.max(
+        Number(previous?.earnedDividendCount) || 0,
+        Number(entry.earnedDividendCount) || 0,
+      ),
+    });
   });
 
   return [...registryByName.values()].sort((a, b) => a.name.localeCompare(b.name));
