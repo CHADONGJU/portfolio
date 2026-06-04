@@ -405,14 +405,23 @@ const getDividendStartDate = (asset, ledger = []) => {
   return firstBuy || asset.buyDate || '';
 };
 
+const getDateTimestampSeconds = (date = '') => {
+  const timestamp = new Date(date).getTime();
+  return Number.isFinite(timestamp) ? timestamp / 1000 : 0;
+};
+
 const getHeldQuantityOnDate = (asset, ledger = [], date = '') => {
   const relatedLedger = getAssetLedgerRows(asset, ledger).filter((entry) => entry.date <= date);
   if (relatedLedger.length === 0) return Number(asset.quantity) || 0;
 
-  return relatedLedger.reduce((sum, entry) => {
+  const ledgerQuantity = relatedLedger.reduce((sum, entry) => {
     const quantity = Number(entry.quantity) || 0;
     return getTradeSide(entry) === 'sell' ? sum - quantity : sum + quantity;
   }, 0);
+
+  if (ledgerQuantity > 0) return ledgerQuantity;
+  if (asset.buyDate && date >= asset.buyDate && Number(asset.quantity) > 0) return Number(asset.quantity);
+  return 0;
 };
 
 const getAssetCategoryOrder = (category = '') => {
@@ -834,7 +843,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     rows: [],
                   };
 
-                  const buyTimestamp = new Date(dividendStartDate || asset.buyDate).getTime() / 1000;
+                  const buyTimestamp = getDateTimestampSeconds(dividendStartDate || asset.buyDate);
                   const rows = Object.values(divs)
                     .filter(d => d.date >= buyTimestamp)
                     .map((d) => {
