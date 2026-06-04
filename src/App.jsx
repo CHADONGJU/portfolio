@@ -415,11 +415,12 @@ const getDividendStartDate = (asset, ledger = []) => {
 };
 
 const getDateTimestampSeconds = (date = '') => {
-  const normalizedDate = String(date || '')
-    .trim()
-    .replace(/\s*\/\s*/g, '-')
-    .replace(/\s+/g, '');
-  const timestamp = new Date(normalizedDate).getTime();
+  const rawDate = String(date || '').trim();
+  const dateParts = rawDate.match(/\d+/g);
+  const normalizedDate = dateParts?.length >= 3
+    ? `${dateParts[0].padStart(4, '0')}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`
+    : rawDate.replace(/\s*\/\s*/g, '-').replace(/\s+/g, '');
+  const timestamp = new Date(`${normalizedDate}T00:00:00`).getTime();
   return Number.isFinite(timestamp) ? timestamp / 1000 : 0;
 };
 
@@ -865,12 +866,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                   };
 
                   const buyTimestamp = getDateTimestampSeconds(dividendStartDate || asset.buyDate);
-                  const rows = Object.values(divs)
-                    .filter(d => d.date >= buyTimestamp)
+                  const dividendEvents = Object.values(divs);
+                  const buildDividendRows = (startTimestamp, useCurrentQuantityFallback = false) => dividendEvents
+                    .filter(d => d.date >= startTimestamp)
                     .map((d) => {
                       const currency = asset.originalCurrency || asset.currency;
                       const dividendDate = new Date(d.date * 1000).toISOString().split('T')[0];
-                      const heldQuantity = getHeldQuantityOnDate(asset, currentTradeLedger, dividendDate);
+                      const heldQuantity = useCurrentQuantityFallback
+                        ? Number(asset.quantity) || 0
+                        : getHeldQuantityOnDate(asset, currentTradeLedger, dividendDate);
                       if (heldQuantity <= 0) return null;
 
                       const grossAmount = d.amount * heldQuantity;
@@ -892,6 +896,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       };
                     })
                     .filter(Boolean);
+                  let rows = buildDividendRows(buyTimestamp);
+                  if (rows.length === 0 && Number(asset.quantity) > 0) {
+                    const assetBuyTimestamp = getDateTimestampSeconds(asset.buyDate);
+                    rows = buildDividendRows(assetBuyTimestamp || buyTimestamp, true);
+                  }
 
                   return {
                     asset,
