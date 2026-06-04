@@ -14,6 +14,7 @@ import {
   AUTO_DIVIDENDS_STORAGE_KEY,
   ASSETS_STORAGE_KEY,
   DEFAULT_PORTFOLIO_NAME,
+  DIVIDEND_ASSET_REGISTRY_STORAGE_KEY,
   getCategoryColor,
   getCategoryDetailColor,
   MEMOS_STORAGE_KEY,
@@ -246,15 +247,31 @@ const mergeUniqueDividends = (primary = [], secondary = []) => {
   });
 };
 
-const mergeDividendResultsByAsset = (previousDividends = [], nextDividends = [], assets = []) => {
+const mergeDividendResultsByAsset = (previousDividends = [], nextDividends = [], assets = [], refreshedAssetNames = null) => {
   const nextAssetNames = new Set(nextDividends.map((dividend) => dividend.name).filter(Boolean));
+  const refreshedNames = new Set((refreshedAssetNames || [...nextAssetNames]).filter(Boolean));
   const activeAssetNames = new Set(assets.map((asset) => asset.name).filter(Boolean));
   const preserved = previousDividends.filter((dividend) => (
-    activeAssetNames.has(dividend.name) && !nextAssetNames.has(dividend.name)
+    activeAssetNames.has(dividend.name) && !refreshedNames.has(dividend.name)
   ));
 
   return mergeUniqueDividends(nextDividends, preserved)
     .sort((a, b) => new Date(b.date) - new Date(a.date));
+};
+
+const mergeDividendAssetRegistry = (previousRegistry = [], nextRegistry = [], assets = []) => {
+  const activeAssetNames = new Set(assets.map((asset) => asset.name).filter(Boolean));
+  const registryByName = new Map(
+    previousRegistry
+      .filter((entry) => activeAssetNames.has(entry.name))
+      .map((entry) => [entry.name, entry])
+  );
+
+  nextRegistry.forEach((entry) => {
+    if (entry.name) registryByName.set(entry.name, entry);
+  });
+
+  return [...registryByName.values()].sort((a, b) => a.name.localeCompare(b.name));
 };
 
 const isRecordForAsset = (record, asset) => {
@@ -282,6 +299,7 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     memos: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []), assets),
     tradeLedger: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.tradeLedger) ? snapshot.tradeLedger : []), assets),
     autoDividends: pruneRecordsToAssets(mergeUniqueDividends(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []), assets),
+    dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], assets),
     targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
     portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
       ? snapshot.portfolioName
@@ -411,6 +429,7 @@ const emptyPortfolioSnapshot = () => ({
   memos: [],
   tradeLedger: [],
   autoDividends: [],
+  dividendAssetRegistry: [],
   targetPortfolio: DEFAULT_TARGET_PORTFOLIO,
 });
 
@@ -527,6 +546,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const [tradeLedger, setTradeLedger] = useState(() => loadJson(TRADE_LEDGER_STORAGE_KEY, []));
   const [portfolioName, setPortfolioName] = useState(() => loadJson(PORTFOLIO_NAME_STORAGE_KEY, DEFAULT_PORTFOLIO_NAME));
   const [targetPortfolio, setTargetPortfolio] = useState(() => loadJson(TARGET_PORTFOLIO_STORAGE_KEY, DEFAULT_TARGET_PORTFOLIO));
+  const [dividendAssetRegistry, setDividendAssetRegistry] = useState(() => loadJson(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY, []));
   const targetPortfolioRef = useRef(targetPortfolio);
   const targetTickerSnapshotKey = useMemo(() => (
     getTargetItemSnapshotKey(targetPortfolio)
@@ -552,8 +572,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     memos,
     tradeLedger,
     autoDividends,
+    dividendAssetRegistry,
     targetPortfolio,
-  }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, targetPortfolio]);
+  }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, dividendAssetRegistry, targetPortfolio]);
   const portfolioSnapshotRef = useRef(portfolioSnapshot);
 
   useEffect(() => { saveJson(ASSETS_STORAGE_KEY, assets); }, [assets]);
@@ -561,6 +582,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   useEffect(() => { saveJson(MEMOS_STORAGE_KEY, memos); }, [memos]);
   useEffect(() => { saveJson(TRADE_LEDGER_STORAGE_KEY, tradeLedger); }, [tradeLedger]);
   useEffect(() => { saveJson(AUTO_DIVIDENDS_STORAGE_KEY, autoDividends); }, [autoDividends]);
+  useEffect(() => { saveJson(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY, dividendAssetRegistry); }, [dividendAssetRegistry]);
   useEffect(() => { saveJson(PORTFOLIO_NAME_STORAGE_KEY, portfolioName); }, [portfolioName]);
   useEffect(() => { saveJson(TARGET_PORTFOLIO_STORAGE_KEY, targetPortfolio); }, [targetPortfolio]);
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
@@ -591,6 +613,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           setMemos(compactedData.memos);
           setTradeLedger(compactedData.tradeLedger);
           setAutoDividends(compactedData.autoDividends);
+          setDividendAssetRegistry(compactedData.dividendAssetRegistry);
           setPortfolioName(compactedData.portfolioName);
           setTargetPortfolio(compactedData.targetPortfolio);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
@@ -601,6 +624,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           setMemos([]);
           setTradeLedger([]);
           setAutoDividends([]);
+          setDividendAssetRegistry([]);
           setPortfolioName(DEFAULT_PORTFOLIO_NAME);
           setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
           await setDoc(portfolioRef, {
@@ -784,9 +808,17 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
               dividendTasks.push(
                 fetchDividends({ ...asset, ticker: yfTicker }).then((divs) => {
-                  if (!divs) return [];
+                  const sourceDividendCount = divs ? Object.keys(divs).length : 0;
+                  if (!divs) return {
+                    asset,
+                    error: false,
+                    hasDividends: false,
+                    sourceDividendCount: 0,
+                    rows: [],
+                  };
+
                   const buyTimestamp = new Date(dividendStartDate || asset.buyDate).getTime() / 1000;
-                  return Object.values(divs)
+                  const rows = Object.values(divs)
                     .filter(d => d.date >= buyTimestamp)
                     .map((d) => {
                       const currency = asset.originalCurrency || asset.currency;
@@ -813,7 +845,21 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       };
                     })
                     .filter(Boolean);
-                }).catch(() => [])
+
+                  return {
+                    asset,
+                    error: false,
+                    hasDividends: sourceDividendCount > 0,
+                    sourceDividendCount,
+                    rows,
+                  };
+                }).catch(() => ({
+                  asset,
+                  error: true,
+                  hasDividends: false,
+                  sourceDividendCount: 0,
+                  rows: [],
+                }))
               );
             }
           }
@@ -837,13 +883,32 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         else if (failCount > 0) addLog(`일부 종목 갱신 실패 (${failCount}건).`, "error");
 
         if (dividendTasks.length > 0) {
-          Promise.all(dividendTasks).then((dividendGroups) => {
-            const nextAutoDividends = dividendGroups
-              .flat()
+          Promise.all(dividendTasks).then((dividendResults) => {
+            const successfulResults = dividendResults.filter((result) => !result.error);
+            const refreshedAssetNames = successfulResults.map((result) => result.asset.name).filter(Boolean);
+            const nextAutoDividends = successfulResults
+              .flatMap((result) => result.rows)
               .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            const nextRegistry = successfulResults.map((result) => ({
+              assetId: result.asset.id,
+              name: result.asset.name,
+              ticker: result.asset.ticker,
+              category: result.asset.category,
+              currency: result.asset.currency,
+              hasDividends: result.hasDividends,
+              sourceDividendCount: result.sourceDividendCount,
+              earnedDividendCount: result.rows.length,
+              checkedAt: new Date().toISOString(),
+            }));
+
+            setDividendAssetRegistry(prevRegistry => (
+              mergeDividendAssetRegistry(prevRegistry, nextRegistry, currentAssets)
+            ));
+
             setAutoDividends(prevDividends => (
-              nextAutoDividends.length > 0
-                ? mergeDividendResultsByAsset(prevDividends, nextAutoDividends, currentAssets)
+              successfulResults.length > 0
+                ? mergeDividendResultsByAsset(prevDividends, nextAutoDividends, currentAssets, refreshedAssetNames)
                 : prevDividends.filter(dividend => currentAssets.some(asset => asset.name === dividend.name))
             ));
           });
