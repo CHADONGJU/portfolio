@@ -913,15 +913,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     return `conic-gradient(${currentChartData.flatMap((item) => {
       const start = Math.max(0, item.startPercent);
       const end = Math.min(100, item.startPercent + item.percent);
-      const gap = hasMultipleSlices
-        ? Math.min(selectedCategory ? 0.42 : 0.08, item.percent * (selectedCategory ? 0.18 : 0.08))
-        : 0;
+      const gap = hasMultipleSlices ? Math.min(0.07, item.percent * 0.08) : 0;
       const colorEnd = Math.max(start, end - gap);
       const colorSlice = `${item.color} ${start.toFixed(3)}% ${colorEnd.toFixed(3)}%`;
       if (gap <= 0.02 || colorEnd >= end) return [colorSlice];
-      return [colorSlice, `rgba(255,255,255,${selectedCategory ? 0.96 : 0.62}) ${colorEnd.toFixed(3)}% ${end.toFixed(3)}%`];
+      return [colorSlice, `rgba(255,255,255,0.58) ${colorEnd.toFixed(3)}% ${end.toFixed(3)}%`];
     }).join(', ')})`;
-  }, [currentChartData, selectedCategory]);
+  }, [currentChartData]);
   const handleChartRingClick = (event) => {
     if (selectedCategory || currentChartData.length === 0) return;
 
