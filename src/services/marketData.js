@@ -432,15 +432,25 @@ export const fetchStockPrice = async (asset) => {
 };
 
 const getDividendTickers = (input) => {
-  if (typeof input === 'string') return [normalizeTicker(input)];
+  const withFallbacks = (symbols = []) => {
+    const expanded = symbols.flatMap((symbol) => {
+      const cleanSymbol = normalizeTicker(symbol);
+      const baseSymbol = cleanSymbol.replace(/\.US$/, '');
+      return cleanSymbol === baseSymbol ? [cleanSymbol] : [cleanSymbol, baseSymbol];
+    });
+
+    return expanded.filter(Boolean).filter((symbol, index, allSymbols) => allSymbols.indexOf(symbol) === index);
+  };
+
+  if (typeof input === 'string') return withFallbacks([input]);
 
   const ticker = normalizeTicker(input?.ticker || '');
   if (!ticker) return [];
 
-  return [
+  return withFallbacks([
     ticker,
     ...getYahooTickers(input, ticker),
-  ].filter(Boolean).filter((symbol, index, symbols) => symbols.indexOf(symbol) === index);
+  ]);
 };
 
 export const fetchDividends = async (input) => {
