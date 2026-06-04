@@ -447,6 +447,49 @@ const getHeldQuantityOnDate = (asset, ledger = [], date = '') => {
   return 0;
 };
 
+const buildAutoDividendRows = ({ asset, ledger = [], dividends = {}, dividendStartDate = '' }) => {
+  const buyTimestamp = getDateTimestampSeconds(dividendStartDate || asset.buyDate);
+  const dividendEvents = Object.values(dividends || {});
+  const currentQuantity = parseNumber(asset.quantity);
+  const buildRows = (startTimestamp, useCurrentQuantityFallback = false) => dividendEvents
+    .filter(d => d.date >= startTimestamp)
+    .map((d) => {
+      const currency = asset.originalCurrency || asset.currency;
+      const dividendDate = new Date(d.date * 1000).toISOString().split('T')[0];
+      const heldQuantity = useCurrentQuantityFallback
+        ? currentQuantity
+        : getHeldQuantityOnDate(asset, ledger, dividendDate);
+      if (heldQuantity <= 0) return null;
+
+      const grossAmount = d.amount * heldQuantity;
+      const taxRate = getDividendWithholdingRate(currency, asset.category);
+      const perShareNetAmount = d.amount * (1 - taxRate);
+
+      return {
+        id: `${asset.id}-${d.date}`,
+        date: dividendDate,
+        name: asset.name,
+        quantity: heldQuantity,
+        perShareGrossAmount: d.amount,
+        perShareNetAmount,
+        grossAmount,
+        taxAmount: grossAmount * taxRate,
+        taxRate,
+        amount: perShareNetAmount * heldQuantity,
+        currency,
+      };
+    })
+    .filter(Boolean);
+
+  let rows = buildRows(buyTimestamp);
+  if (rows.length === 0 && currentQuantity > 0) {
+    const assetBuyTimestamp = getDateTimestampSeconds(asset.buyDate);
+    rows = buildRows(assetBuyTimestamp || buyTimestamp, true);
+  }
+
+  return rows;
+};
+
 const getAssetCategoryOrder = (category = '') => {
   const normalizedCategory = String(category || '').trim();
   if (normalizedCategory === '국내주식') return 10;
@@ -750,6 +793,92 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   useEffect(() => { exchangeRateRef.current = exchangeRate; }, [exchangeRate]);
   useEffect(() => { jpyKrwRateRef.current = jpyKrwRate; }, [jpyKrwRate]);
   useEffect(() => { currencyRatesRef.current = currencyRates; }, [currencyRates]);
+
+  useEffect(() => {
+    if (!isCloudPortfolioLoaded || !dividendAssetSnapshotKey) return undefined;
+    let cancelled = false;
+
+    const refreshDividendsOnly = async () => {
+      const currentAssets = assetsRef.current;
+      const currentTradeLedger = tradeLedgerRef.current;
+      const dividendAssets = currentAssets.filter(asset => (
+        asset.ticker
+        && asset.buyDate
+        && !isCommodityCategory(asset.category)
+        && parseNumber(asset.quantity) > 0
+      ));
+
+      if (dividendAssets.length === 0) return;
+
+      const dividendResults = await Promise.all(dividendAssets.map(async (asset) => {
+        let yfTicker = asset.ticker.toUpperCase().trim();
+        if (isDomesticStockCategory(asset.category) && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
+        const dividendStartDate = getDividendStartDate(asset, currentTradeLedger);
+
+        try {
+          const divs = await fetchDividends({ ...asset, ticker: yfTicker });
+          const sourceDividendCount = divs ? Object.keys(divs).length : 0;
+          const rows = divs
+            ? buildAutoDividendRows({
+              asset,
+              ledger: currentTradeLedger,
+              dividends: divs,
+              dividendStartDate,
+            })
+            : [];
+
+          return {
+            asset,
+            error: false,
+            hasDividends: sourceDividendCount > 0,
+            sourceDividendCount,
+            rows,
+          };
+        } catch {
+          return {
+            asset,
+            error: true,
+            hasDividends: false,
+            sourceDividendCount: 0,
+            rows: [],
+          };
+        }
+      }));
+
+      if (cancelled) return;
+
+      const successfulResults = dividendResults.filter((result) => !result.error);
+      if (successfulResults.length === 0) return;
+
+      const refreshedAssetNames = successfulResults.map((result) => result.asset.name).filter(Boolean);
+      const nextAutoDividends = successfulResults
+        .flatMap((result) => result.rows)
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      const nextRegistry = successfulResults.map((result) => ({
+        assetId: result.asset.id,
+        name: result.asset.name,
+        ticker: result.asset.ticker,
+        category: result.asset.category,
+        currency: result.asset.currency,
+        hasDividends: result.hasDividends,
+        sourceDividendCount: result.sourceDividendCount,
+        earnedDividendCount: result.rows.length,
+        checkedAt: new Date().toISOString(),
+      }));
+
+      setDividendAssetRegistry(prevRegistry => (
+        mergeDividendAssetRegistry(prevRegistry, nextRegistry, currentAssets)
+      ));
+
+      setAutoDividends(prevDividends => (
+        mergeDividendResultsByAsset(prevDividends, nextAutoDividends, currentAssets, refreshedAssetNames)
+      ));
+    };
+
+    refreshDividendsOnly();
+    return () => { cancelled = true; };
+  }, [isCloudPortfolioLoaded, dividendAssetSnapshotKey]);
   
 
   useEffect(() => {
@@ -866,42 +995,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     rows: [],
                   };
 
-                  const buyTimestamp = getDateTimestampSeconds(dividendStartDate || asset.buyDate);
-                  const dividendEvents = Object.values(divs);
-                  const buildDividendRows = (startTimestamp, useCurrentQuantityFallback = false) => dividendEvents
-                    .filter(d => d.date >= startTimestamp)
-                    .map((d) => {
-                      const currency = asset.originalCurrency || asset.currency;
-                      const dividendDate = new Date(d.date * 1000).toISOString().split('T')[0];
-                      const heldQuantity = useCurrentQuantityFallback
-                        ? parseNumber(asset.quantity)
-                        : getHeldQuantityOnDate(asset, currentTradeLedger, dividendDate);
-                      if (heldQuantity <= 0) return null;
-
-                      const grossAmount = d.amount * heldQuantity;
-                      const taxRate = getDividendWithholdingRate(currency, asset.category);
-                      const perShareNetAmount = d.amount * (1 - taxRate);
-
-                      return {
-                        id: `${asset.id}-${d.date}`,
-                        date: dividendDate,
-                        name: asset.name,
-                        quantity: heldQuantity,
-                        perShareGrossAmount: d.amount,
-                        perShareNetAmount,
-                        grossAmount,
-                        taxAmount: grossAmount * taxRate,
-                        taxRate,
-                        amount: perShareNetAmount * heldQuantity,
-                        currency,
-                      };
-                    })
-                    .filter(Boolean);
-                  let rows = buildDividendRows(buyTimestamp);
-                  if (rows.length === 0 && parseNumber(asset.quantity) > 0) {
-                    const assetBuyTimestamp = getDateTimestampSeconds(asset.buyDate);
-                    rows = buildDividendRows(assetBuyTimestamp || buyTimestamp, true);
-                  }
+                  const rows = buildAutoDividendRows({
+                    asset,
+                    ledger: currentTradeLedger,
+                    dividends: divs,
+                    dividendStartDate,
+                  });
 
                   return {
                     asset,
