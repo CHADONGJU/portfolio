@@ -249,7 +249,10 @@ const mergeUniqueDividends = (primary = [], secondary = []) => {
 
 const mergeDividendResultsByAsset = (previousDividends = [], nextDividends = [], assets = [], refreshedAssetNames = null) => {
   const nextAssetNames = new Set(nextDividends.map((dividend) => dividend.name).filter(Boolean));
-  const refreshedNames = new Set((refreshedAssetNames || [...nextAssetNames]).filter(Boolean));
+  const replaceNames = refreshedAssetNames
+    ? refreshedAssetNames.filter((name) => nextAssetNames.has(name))
+    : [...nextAssetNames];
+  const refreshedNames = new Set(replaceNames.filter(Boolean));
   const activeAssetNames = new Set(assets.map((asset) => asset.name).filter(Boolean));
   const preserved = previousDividends.filter((dividend) => (
     activeAssetNames.has(dividend.name) && !refreshedNames.has(dividend.name)
