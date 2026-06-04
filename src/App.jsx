@@ -349,6 +349,16 @@ const getHeldQuantityOnDate = (asset, ledger = [], date = '') => {
   }, 0);
 };
 
+const getAssetCategoryOrder = (category = '') => {
+  const normalizedCategory = String(category || '').trim();
+  if (normalizedCategory === '국내주식') return 10;
+  if (normalizedCategory === '해외주식') return 20;
+  if (normalizedCategory === '원자재') return 30;
+  if (normalizedCategory === '가상화폐') return 40;
+  if (normalizedCategory === '현금') return 50;
+  return 90;
+};
+
 const getCachedKrwRate = (currency, rates = {}, usdRate = 1350, yenRate = 9.5) => {
   if (currency === 'USD') return usdRate || rates.USD || 1350;
   if (currency === 'JPY') return yenRate || rates.JPY || 9.5;
@@ -858,7 +868,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const isOverseasStockChart = selectedCategory?.includes('해외') && selectedCategory?.includes('주식');
   const profitTone = currentCategoryProfitKRW >= 0 ? 'text-emerald-600' : 'text-rose-600';
   const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
-  const visibleDetailAssets = selectedCategory ? subChartData : enhancedAssets;
+  const visibleDetailAssets = useMemo(() => (
+    [...(selectedCategory ? subChartData : enhancedAssets)].sort((a, b) => {
+      const categoryDelta = getAssetCategoryOrder(a.category) - getAssetCategoryOrder(b.category);
+      if (categoryDelta !== 0) return categoryDelta;
+      return b.currentKRW - a.currentKRW;
+    })
+  ), [enhancedAssets, selectedCategory, subChartData]);
   const currentChartGradient = useMemo(() => {
     if (currentChartData.length === 0) return 'conic-gradient(#e2e8f0 0% 100%)';
 
@@ -866,13 +882,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     return `conic-gradient(${currentChartData.flatMap((item) => {
       const start = Math.max(0, item.startPercent);
       const end = Math.min(100, item.startPercent + item.percent);
-      const gap = hasMultipleSlices ? Math.min(0.07, item.percent * 0.08) : 0;
+      const gap = hasMultipleSlices
+        ? Math.min(selectedCategory ? 0.42 : 0.08, item.percent * (selectedCategory ? 0.18 : 0.08))
+        : 0;
       const colorEnd = Math.max(start, end - gap);
       const colorSlice = `${item.color} ${start.toFixed(3)}% ${colorEnd.toFixed(3)}%`;
       if (gap <= 0.02 || colorEnd >= end) return [colorSlice];
-      return [colorSlice, `rgba(255,255,255,0.58) ${colorEnd.toFixed(3)}% ${end.toFixed(3)}%`];
+      return [colorSlice, `rgba(255,255,255,${selectedCategory ? 0.96 : 0.62}) ${colorEnd.toFixed(3)}% ${end.toFixed(3)}%`];
     }).join(', ')})`;
-  }, [currentChartData]);
+  }, [currentChartData, selectedCategory]);
   const handleChartRingClick = (event) => {
     if (selectedCategory || currentChartData.length === 0) return;
 
