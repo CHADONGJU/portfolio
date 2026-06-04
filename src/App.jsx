@@ -2515,7 +2515,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
               </div>
 
               {!selectedDividendAsset ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                <div className="max-h-[620px] overflow-y-auto pr-1 md:pr-2">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                   {dividendSummary.length > 0 ? dividendSummary.map(summary => (
                     <div 
                       key={summary.name} 
@@ -2542,6 +2543,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                       {isFetching ? '배당 데이터를 갱신 중입니다...' : '매수일 이후 배당 내역이 없거나 데이터를 불러올 수 없습니다.'}
                     </div>
                   )}
+                  </div>
                 </div>
               ) : (
                 <div className="bg-slate-50 rounded-2xl p-1 md:p-2 border border-slate-100">
