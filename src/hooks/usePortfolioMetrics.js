@@ -13,6 +13,16 @@ const getDividendCategoryOrder = (category = '') => {
   return 90;
 };
 
+const getPerformanceCategoryOrder = (category = '') => {
+  const normalizedCategory = String(category || '').trim();
+  if (normalizedCategory.includes('국내') && normalizedCategory.includes('주식')) return 10;
+  if (normalizedCategory.includes('해외') && normalizedCategory.includes('주식')) return 20;
+  if (normalizedCategory.includes('원자재')) return 30;
+  if (normalizedCategory.includes('가상')) return 40;
+  if (normalizedCategory.includes('현금')) return 50;
+  return 90;
+};
+
 const withRunningPercent = (items, total, getValue) => {
   let cumulativePercent = 0;
 
@@ -217,7 +227,11 @@ export const usePortfolioMetrics = ({
         totalKRW,
         totalNative: currency === 'KRW' ? totalKRW : unrealizedNative + realizedNative + dividendNative,
       };
-    }).sort((a, b) => Math.abs(b.totalKRW) - Math.abs(a.totalKRW));
+    }).sort((a, b) => {
+      const categoryDelta = getPerformanceCategoryOrder(a.category) - getPerformanceCategoryOrder(b.category);
+      if (categoryDelta !== 0) return categoryDelta;
+      return Math.abs(b.totalKRW) - Math.abs(a.totalKRW);
+    });
   }, [enhancedAssets, canonicalTradeRows, autoDividends, exchangeRate, jpyKrwRate, currencyRates]);
 
   // 5. 배당금 그룹화

@@ -311,7 +311,10 @@ const getYahooTickers = (asset, ticker) => {
     return [`${ticker}.KS`, `${ticker}.KQ`];
   }
 
-  if (ticker.includes('.')) return [ticker];
+  if (ticker.includes('.')) {
+    if (/\.(KS|KQ|T)$/i.test(ticker)) return [ticker];
+    return getUsTickerAliases(ticker).map((symbol) => symbol.replace(/\.US$/, ''));
+  }
 
   const candidates = [];
 

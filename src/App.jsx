@@ -2871,15 +2871,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     ))}
                   </select>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매수 수량</p>
-                    <p className="text-lg font-black text-slate-800">{tradeSummary.totalBuyQuantity.toLocaleString()}</p>
-                  </div>
-                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매도 수량</p>
-                    <p className="text-lg font-black text-slate-800">{tradeSummary.totalSellQuantity.toLocaleString()}</p>
-                  </div>
+                <div className="grid grid-cols-1 gap-3">
                   <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">실현 손익</p>
                     <p className={`text-lg font-black ${tradeSummary.totalProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
