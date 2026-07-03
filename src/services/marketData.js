@@ -205,8 +205,8 @@ const readYahooPrice = (data) => {
   const meta = data?.chart?.result?.[0]?.meta;
   const quote = data?.chart?.result?.[0]?.indicators?.quote?.[0];
   const close = quote?.close?.findLast((value) => typeof value === 'number');
-  const price = close
-    ?? pickMarketAwarePrice(meta)
+  const price = pickMarketAwarePrice(meta)
+    ?? close
     ?? meta?.chartPreviousClose
     ?? null;
 

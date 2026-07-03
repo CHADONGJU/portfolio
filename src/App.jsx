@@ -829,6 +829,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const jpyKrwRateRef = useRef(jpyKrwRate);
   const currencyRatesRef = useRef(currencyRates);
   const initialFetchDoneRef = useRef(false);
+  const liveFetchRunIdRef = useRef(0);
   useEffect(() => { assetsRef.current = assets; }, [assets]);
   useEffect(() => { tradeLedgerRef.current = tradeLedger; }, [tradeLedger]);
   useEffect(() => { exchangeRateRef.current = exchangeRate; }, [exchangeRate]);
@@ -927,6 +928,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     if (refreshTrigger === 0 && initialFetchDoneRef.current) return;
     if (refreshTrigger === 0) initialFetchDoneRef.current = true;
     const fetchLiveData = async () => {
+      const runId = liveFetchRunIdRef.current + 1;
+      liveFetchRunIdRef.current = runId;
+      const isLatestRun = () => runId === liveFetchRunIdRef.current;
+
       setIsFetching(true);
       const currentAssets = assetsRef.current;
       const shouldShowSyncLogs = currentAssets.length > 0;
@@ -1069,6 +1074,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           };
         }));
 
+        if (!isLatestRun()) return;
+
         setCurrencyRates(prev => {
           const changed = Object.entries(nextCurrencyRates).some(([currency, rate]) => prev[currency] !== rate);
           return changed ? nextCurrencyRates : prev;
@@ -1081,6 +1088,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
         if (dividendTasks.length > 0) {
           Promise.all(dividendTasks).then((dividendResults) => {
+            if (!isLatestRun()) return;
+
             const successfulResults = dividendResults.filter((result) => !result.error);
             const refreshedAssetNames = successfulResults.map((result) => result.asset.name).filter(Boolean);
             const nextAutoDividends = successfulResults
@@ -1117,9 +1126,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       } catch (e) { 
         console.error("Update error:", e); 
-        if (assetsRef.current.length > 0) addLog("네트워크 오류로 갱신 실패", "error");
+        if (isLatestRun() && assetsRef.current.length > 0) addLog("네트워크 오류로 갱신 실패", "error");
       }
-      finally { setIsFetching(false); }
+      finally {
+        if (isLatestRun()) setIsFetching(false);
+      }
     };
     
     fetchLiveData();
@@ -2043,8 +2054,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const handleAddBuyToAsset = () => {
   if (!selectedAssetToUpdate) return;
 
-  const addedQty = parseFloat(String(addBuyForm.quantity).replace(/,/g, ''));
-  const addedAvgNative = parseFloat(String(addBuyForm.averagePrice).replace(/,/g, ''));
+  const addedQty = parseNumber(addBuyForm.quantity);
+  const addedAvgNative = parseNumber(addBuyForm.averagePrice);
 
   if (isNaN(addedQty) || addedQty <= 0) {
     addLog("추가 매수 수량을 올바르게 입력해주세요.", "error");
@@ -2060,8 +2071,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     prevAssets.map(asset => {
       if (asset.id !== selectedAssetToUpdate.id) return asset;
 
-      const oldQty = Number(asset.quantity) || 0;
-      const oldAvgNative = Number(asset.originalAveragePrice || asset.averagePrice) || 0;
+      const oldQty = parseNumber(asset.quantity);
+      const oldAvgNative = parseNumber(asset.originalAveragePrice || asset.averagePrice);
 
       const totalQty = oldQty + addedQty;
       const totalCostNative = oldQty * oldAvgNative + addedQty * addedAvgNative;
@@ -2111,8 +2122,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const handleSellAsset = () => {
   if (!selectedAssetToSell) return;
 
-  const sellQty = parseFloat(String(sellForm.quantity).replace(/,/g, ''));
-  const sellPriceNative = parseFloat(String(sellForm.sellPrice).replace(/,/g, ''));
+  const sellQty = parseNumber(sellForm.quantity);
+  const sellPriceNative = parseNumber(sellForm.sellPrice);
 
   if (isNaN(sellQty) || sellQty <= 0) {
     addLog("매도 수량을 올바르게 입력해주세요.", "error");
@@ -2124,13 +2135,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     return;
   }
 
-  const currentQty = Number(selectedAssetToSell.quantity) || 0;
+  const currentQty = parseNumber(selectedAssetToSell.quantity);
   if (sellQty > currentQty) {
     addLog("보유 수량보다 많이 매도할 수 없습니다.", "error");
     return;
   }
 
-  const avgBuyNative = Number(selectedAssetToSell.originalAveragePrice || selectedAssetToSell.averagePrice) || 0;
+  const avgBuyNative = parseNumber(selectedAssetToSell.originalAveragePrice || selectedAssetToSell.averagePrice);
   const pnlNative = (sellPriceNative - avgBuyNative) * sellQty;
 
   const trade = {
@@ -2197,10 +2208,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     
     const ticker = normalizeInputTicker(newAsset.ticker);
     const assetCurrency = getAssetInputCurrency(newAsset.category, ticker, newAsset.currency);
-    const parsedQty = parseFloat(String(newAsset.quantity).replace(/,/g, ''));
+    const parsedQty = parseNumber(newAsset.quantity);
   const parsedAvgPrice = newAsset.category === '현금'
     ? 1
-    : parseFloat(String(newAsset.averagePrice).replace(/,/g, ''));
+    : parseNumber(newAsset.averagePrice);
     let krwAveragePrice = parsedAvgPrice;
     if (assetCurrency === 'USD' || assetCurrency === 'JPY') krwAveragePrice = parsedAvgPrice;
 
