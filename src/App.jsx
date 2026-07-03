@@ -26,6 +26,7 @@ import {
 import { fetchBitcoinPrices, fetchDividends, fetchKrwRate, fetchStockQuote, fetchUsdKrwRate } from './services/marketData';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { loadJson, saveJson } from './utils/storage';
+import { buildCanonicalTradeRows, reconcileAssetsWithTradeLedger } from './utils/tradeReconciliation';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { db } from './firebase';
 
@@ -320,19 +321,32 @@ const isRecordForAsset = (record, asset) => {
   return Boolean(sameTicker || sameName);
 };
 
-const pruneRecordsToAssets = (records = [], assets = []) => (
-  records.filter((record) => assets.some((asset) => isRecordForAsset(record, asset)))
-);
+const isTradeLinkedToLedger = (trade, ledger = []) => ledger.some((entry) => (
+  getTradeSide(entry) === 'sell'
+  && trade.name === entry.name
+  && (!trade.ticker || !entry.ticker || String(trade.ticker).toUpperCase() === String(entry.ticker).toUpperCase())
+  && trade.sellDate === getRecordDate(entry)
+  && numbersMatch(trade.quantity, entry.quantity)
+  && numbersMatch(trade.sellPrice, entry.price)
+));
 
 const compactPortfolioSnapshot = (snapshot = {}) => {
-  const assets = mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []);
+  const tradeLedger = mergeUniqueRecords(Array.isArray(snapshot.tradeLedger) ? snapshot.tradeLedger : []);
+  const rawTrades = mergeUniqueRecords(Array.isArray(snapshot.trades) ? snapshot.trades : []);
+  const trades = tradeLedger.length > 0
+    ? rawTrades.filter((trade) => isTradeLinkedToLedger(trade, tradeLedger))
+    : rawTrades;
+  const assets = reconcileAssetsWithTradeLedger(
+    mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []),
+    tradeLedger,
+  );
   return {
     ...snapshot,
     assets,
-    trades: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.trades) ? snapshot.trades : []), assets),
-    memos: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []), assets),
-    tradeLedger: pruneRecordsToAssets(mergeUniqueRecords(Array.isArray(snapshot.tradeLedger) ? snapshot.tradeLedger : []), assets),
-    autoDividends: pruneRecordsToAssets(mergeUniqueDividends(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []), assets),
+    trades,
+    memos: mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []),
+    tradeLedger,
+    autoDividends: mergeUniqueDividends(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []),
     dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], assets),
     targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
     portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
@@ -714,6 +728,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     ].join('|')
   ), [assets, tradeLedger]);
   const lastDividendAssetSnapshotKeyRef = useRef('');
+  const initialLedgerMigrationDoneRef = useRef(false);
 
   const portfolioSnapshot = useMemo(() => ({
     portfolioName,
@@ -826,10 +841,18 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   }, [userId, userEmail, isCloudPortfolioLoaded, cloudPortfolioUserId, portfolioSnapshot]);
 
   useEffect(() => {
+    if (!isCloudPortfolioLoaded) return;
+    if (initialLedgerMigrationDoneRef.current) return;
+    initialLedgerMigrationDoneRef.current = true;
     if (tradeLedger.length > 0) return;
     const initialLedger = buildInitialTradeLedger({ assets, trades, memos });
     if (initialLedger.length > 0) setTradeLedger(initialLedger);
-  }, [assets, trades, memos, tradeLedger.length]);
+  }, [isCloudPortfolioLoaded, assets, trades, memos, tradeLedger.length]);
+
+  useEffect(() => {
+    if (!isCloudPortfolioLoaded || tradeLedger.length === 0) return;
+    setAssets(prevAssets => reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), tradeLedger));
+  }, [isCloudPortfolioLoaded, tradeLedger]);
 
   useEffect(() => {
     if (!isCloudPortfolioLoaded || !dividendAssetSnapshotKey) return;
@@ -1597,20 +1620,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   }, [targetTickerSnapshotKey, enhancedAssets, exchangeRate, jpyKrwRate, currencyRates, refreshTrigger]);
 
   const tradeRecords = useMemo(() => {
-    if (tradeLedger.length > 0) {
-      return tradeLedger.map((entry) => ({
-        ...entry,
-        sourceType: 'ledger',
-      }));
-    }
-
-    return trades.map((trade) => ({
-      ...trade,
-      side: 'sell',
-      action: '매도',
-      date: trade.sellDate,
-      price: trade.sellPrice,
-      sourceType: 'trade',
+    const canonicalRows = buildCanonicalTradeRows({ tradeLedger, trades });
+    return canonicalRows.map((entry) => ({
+      ...entry,
+      sourceType: tradeLedger.length > 0 ? 'ledger' : 'trade',
     }));
   }, [tradeLedger, trades]);
   const tradeStockOptions = useMemo(() => (
@@ -1707,11 +1720,30 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const removeTrade = (record, e) => {
     if (e) e.stopPropagation();
     if (record.sourceType === 'ledger') {
-      setTradeLedger(prevLedger => prevLedger.filter(entry => entry.id !== record.id));
-      if (record.sourceId?.startsWith('trade-')) {
-        const tradeId = record.sourceId.replace('trade-', '');
-        setTrades(prevTrades => prevTrades.filter(trade => String(trade.id) !== tradeId));
-      }
+      const nextLedger = tradeLedger.filter(entry => entry.id !== record.id);
+      setTradeLedger(nextLedger);
+      setAssets(prevAssets => {
+        const reconciledAssets = reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), nextLedger);
+        return reconciledAssets.filter((asset) => {
+          if (!isRecordForAsset(record, asset)) return true;
+          return nextLedger.some(entry => isRecordForAsset(entry, asset) && getTradeSide(entry) === 'buy');
+        });
+      });
+      setTrades(prevTrades => prevTrades.filter((trade) => {
+        if (record.sourceId?.startsWith('trade-')) {
+          const tradeId = record.sourceId.replace('trade-', '');
+          if (String(trade.id) === tradeId) return false;
+        }
+
+        const isSameSellRecord =
+          record.side === 'sell'
+          && trade.name === record.name
+          && trade.sellDate === record.date
+          && numbersMatch(trade.quantity, record.quantity)
+          && numbersMatch(trade.sellPrice, record.price);
+
+        return !isSameSellRecord;
+      }));
     } else {
       setTrades(prevTrades => prevTrades.filter(t => t.id !== record.id));
     }
@@ -1778,8 +1810,9 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     addLog('메모가 수정되었습니다.', 'success');
   };
 
-  const addLedgerEntry = ({ asset, side, quantity, price, date, pnl = 0 }) => {
+  const addLedgerEntry = ({ asset, side, quantity, price, date, pnl = 0, sourceId }) => {
     const entry = buildLedgerEntry({
+      sourceId,
       asset,
       side,
       quantity,
@@ -2170,6 +2203,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const trade = {
     id: Date.now(),
     name: selectedAssetToSell.name,
+    ticker: selectedAssetToSell.ticker,
     category: selectedAssetToSell.category,
     currency: selectedAssetToSell.currency,
     buyDate: selectedAssetToSell.buyDate,
@@ -2208,6 +2242,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     realizedPnl: pnlNative
   });
   addLedgerEntry({
+    sourceId: `trade-${trade.id}`,
     asset: selectedAssetToSell,
     side: 'sell',
     quantity: sellQty,
