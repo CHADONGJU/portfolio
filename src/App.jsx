@@ -198,14 +198,31 @@ const buildInitialTradeLedger = ({ assets, trades, memos }) => {
 
 const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}`;
 
+const getAssetUpdatedAtTime = (asset = {}) => {
+  const timestamp = new Date(asset.updatedAt || asset.createdAt || 0).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const compareAssetVersions = (left = {}, right = {}) => {
+  const leftTime = getAssetUpdatedAtTime(left);
+  const rightTime = getAssetUpdatedAtTime(right);
+  if (leftTime !== rightTime) return leftTime - rightTime;
+
+  return parseNumber(left.quantity) - parseNumber(right.quantity);
+};
+
 const mergeUniqueAssets = (primary = [], secondary = []) => {
-  const seen = new Set();
-  return [...primary, ...secondary].filter((asset) => {
+  const assetByKey = new Map();
+
+  [...primary, ...secondary].forEach((asset) => {
     const key = getAssetIdentity(asset);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
+    const existing = assetByKey.get(key);
+    if (!existing || compareAssetVersions(existing, asset) <= 0) {
+      assetByKey.set(key, asset);
+    }
   });
+
+  return [...assetByKey.values()];
 };
 
 const mergeUniqueRecords = (primary = [], secondary = []) => {
@@ -517,7 +534,7 @@ const mergeLiveAssetUpdates = (currentAssets = [], refreshedAssets = []) => {
     refreshedAssets.map((asset) => [getAssetIdentityKey(asset), asset])
   );
 
-  return currentAssets.map((asset) => {
+  return mergeUniqueAssets(currentAssets.map((asset) => {
     const refreshed = refreshedByKey.get(getAssetIdentityKey(asset));
     if (!refreshed || isSuspiciousLivePriceUpdate(asset, refreshed)) return asset;
 
@@ -528,7 +545,7 @@ const mergeLiveAssetUpdates = (currentAssets = [], refreshedAssets = []) => {
       currentPrice: refreshed.currentPrice,
       originalCurrentPrice: refreshed.originalCurrentPrice,
     };
-  });
+  }));
 };
 
 const getAssetCategoryOrder = (category = '') => {
@@ -2009,10 +2026,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   const previousBuyDate = selectedAssetToEditDate.buyDate || '';
   const nextBuyDate = buyDateForm.buyDate;
+  const updatedAt = new Date().toISOString();
 
   setAssets(prevAssets => prevAssets.map(asset => (
     asset.id === selectedAssetToEditDate.id
-      ? { ...asset, buyDate: nextBuyDate }
+      ? { ...asset, buyDate: nextBuyDate, updatedAt }
       : asset
   )));
 
@@ -2056,6 +2074,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   const addedQty = parseNumber(addBuyForm.quantity);
   const addedAvgNative = parseNumber(addBuyForm.averagePrice);
+  const selectedAssetIdentity = getAssetIdentity(selectedAssetToUpdate);
+  const updatedAt = new Date().toISOString();
 
   if (isNaN(addedQty) || addedQty <= 0) {
     addLog("추가 매수 수량을 올바르게 입력해주세요.", "error");
@@ -2068,8 +2088,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   }
 
   setAssets(prevAssets =>
-    prevAssets.map(asset => {
-      if (asset.id !== selectedAssetToUpdate.id) return asset;
+    mergeUniqueAssets(prevAssets.map(asset => {
+      if (asset.id !== selectedAssetToUpdate.id && getAssetIdentity(asset) !== selectedAssetIdentity) return asset;
 
       const oldQty = parseNumber(asset.quantity);
       const oldAvgNative = parseNumber(asset.originalAveragePrice || asset.averagePrice);
@@ -2088,9 +2108,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         quantity: totalQty,
         averagePrice: nextOriginalAveragePrice,
         originalAveragePrice: nextOriginalAveragePrice,
-        buyDate: nextBuyDate
+        buyDate: nextBuyDate,
+        updatedAt,
       };
-    })
+    }))
   );
 
   addTradeMemo({
@@ -2143,6 +2164,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   const avgBuyNative = parseNumber(selectedAssetToSell.originalAveragePrice || selectedAssetToSell.averagePrice);
   const pnlNative = (sellPriceNative - avgBuyNative) * sellQty;
+  const selectedAssetIdentity = getAssetIdentity(selectedAssetToSell);
+  const updatedAt = new Date().toISOString();
 
   const trade = {
     id: Date.now(),
@@ -2162,14 +2185,16 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   setTrades(prev => [trade, ...prev]);
 
   if (remainingQty === 0) {
-    setAssets(prev => prev.filter(asset => asset.id !== selectedAssetToSell.id));
+    setAssets(prev => prev.filter(asset => (
+      asset.id !== selectedAssetToSell.id && getAssetIdentity(asset) !== selectedAssetIdentity
+    )));
   } else {
     setAssets(prev =>
-      prev.map(asset =>
-        asset.id === selectedAssetToSell.id
-          ? { ...asset, quantity: remainingQty }
+      mergeUniqueAssets(prev.map(asset =>
+        asset.id === selectedAssetToSell.id || getAssetIdentity(asset) === selectedAssetIdentity
+          ? { ...asset, quantity: remainingQty, updatedAt }
           : asset
-      )
+      ))
     );
   }
 
@@ -2228,10 +2253,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       originalAveragePrice: parsedAvgPrice, 
       originalCurrentPrice: parsedAvgPrice, 
       buyDate: newAsset.buyDate,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       color: getCategoryDetailColor(newAsset.category, assets.filter(asset => asset.category === newAsset.category).length)
     };
 
-    setAssets(prevAssets => [...prevAssets, asset]);
+    setAssets(prevAssets => mergeUniqueAssets([...prevAssets, asset]));
     addTradeMemo({
       asset,
       action: '매수',

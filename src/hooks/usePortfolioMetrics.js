@@ -139,8 +139,12 @@ export const usePortfolioMetrics = ({
   const avgBuyExchangeRate = 0;
   const fxProfitPercent = totalUsdPurchase > 0 ? ((currentUsdValueForUsd - totalUsdPurchase) / totalUsdPurchase) * 100 : 0;
 
-  const sellLedger = tradeLedger.filter(entry => entry.side === 'sell');
-  const realizedRecords = sellLedger.length > 0 ? sellLedger : trades;
+  const realizedRecords = trades.map(trade => ({
+    ...trade,
+    side: 'sell',
+    price: trade.sellPrice,
+    date: trade.sellDate,
+  }));
   const realizedKrwRate = (currency) => {
     if (currency === 'USD') return exchangeRate || 1350;
     if (currency === 'JPY') return jpyKrwRate || 9.5;
@@ -164,12 +168,16 @@ export const usePortfolioMetrics = ({
       if (currency && currency !== 'KRW') return currencyRates[currency] || 1;
       return 1;
     };
-    const ledgerRows = tradeLedger.length > 0 ? tradeLedger : trades.map(trade => ({
+    const sellRowsFromTrades = trades.map(trade => ({
       ...trade,
       side: 'sell',
       price: trade.sellPrice,
       date: trade.sellDate,
     }));
+    const ledgerRows = [
+      ...tradeLedger.filter(entry => entry.side === 'buy'),
+      ...sellRowsFromTrades,
+    ];
     const names = [...new Set([
       ...enhancedAssets.map(asset => asset.name),
       ...ledgerRows.map(record => record.name),
