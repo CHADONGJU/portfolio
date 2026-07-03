@@ -187,19 +187,14 @@ const getUsTickerAliases = (ticker) => {
 const pickMarketAwarePrice = (quote) => {
   if (!quote) return null;
 
-  const marketState = quote.marketState;
   const candidates = [];
-
-  if (marketState?.includes('PRE')) candidates.push(quote.preMarketPrice);
-  if (marketState?.includes('POST')) candidates.push(quote.postMarketPrice);
-  if (marketState === 'REGULAR') candidates.push(quote.regularMarketPrice);
 
   candidates.push(
     quote.regularMarketPrice,
-    quote.postMarketPrice,
-    quote.preMarketPrice,
     quote.currentPrice,
     quote.previousClose,
+    quote.postMarketPrice,
+    quote.preMarketPrice,
   );
 
   const price = candidates.find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
@@ -256,6 +251,9 @@ const readNaverPrice = (data) => {
   const item = data?.result?.areas?.[0]?.datas?.[0];
   if (!item) return null;
 
+  const currentPrice = Number(item.nv);
+  if (Number.isFinite(currentPrice) && currentPrice > 0) return currentPrice;
+
   const overMarketInfo = item.nxtOverMarketPriceInfo;
   const overPrice = Number(String(overMarketInfo?.overPrice ?? '').replace(/,/g, ''));
 
@@ -267,8 +265,7 @@ const readNaverPrice = (data) => {
     return overPrice;
   }
 
-  const currentPrice = Number(item.nv);
-  return Number.isFinite(currentPrice) && currentPrice > 0 ? currentPrice : null;
+  return null;
 };
 
 const toStooqSymbol = (ticker) => {
@@ -333,8 +330,8 @@ const getYahooTickers = (asset, ticker) => {
 
 const fetchYahooChartQuote = async (yfTicker) => {
   const urls = [
-    `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=false`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=false`,
     `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1d&range=5d`,
   ];
 
@@ -400,11 +397,11 @@ export const fetchStockQuote = async (asset) => {
 
   const yahooUrls = yahooTickers.flatMap((yfTicker) => [
     {
-      url: `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
+      url: `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=false`,
       reader: readYahooPrice,
     },
     {
-      url: `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
+      url: `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=false`,
       reader: readYahooPrice,
     },
     {

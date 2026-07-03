@@ -490,6 +490,47 @@ const buildAutoDividendRows = ({ asset, ledger = [], dividends = {}, dividendSta
   return rows;
 };
 
+const getAssetIdentityKey = (asset = {}) => {
+  if (asset.id !== undefined && asset.id !== null) return `id:${asset.id}`;
+  return [
+    normalizeInputTicker(asset.ticker || ''),
+    asset.name || '',
+    asset.category || '',
+  ].join('::');
+};
+
+const getNativePriceValue = (asset = {}) => (
+  parseNumber(asset.originalCurrentPrice) || parseNumber(asset.currentPrice)
+);
+
+const isSuspiciousLivePriceUpdate = (currentAsset = {}, updatedAsset = {}) => {
+  const currentPrice = getNativePriceValue(currentAsset);
+  const nextPrice = getNativePriceValue(updatedAsset);
+  if (currentPrice <= 0 || nextPrice <= 0) return false;
+
+  const ratio = Math.max(currentPrice / nextPrice, nextPrice / currentPrice);
+  return ratio >= 8;
+};
+
+const mergeLiveAssetUpdates = (currentAssets = [], refreshedAssets = []) => {
+  const refreshedByKey = new Map(
+    refreshedAssets.map((asset) => [getAssetIdentityKey(asset), asset])
+  );
+
+  return currentAssets.map((asset) => {
+    const refreshed = refreshedByKey.get(getAssetIdentityKey(asset));
+    if (!refreshed || isSuspiciousLivePriceUpdate(asset, refreshed)) return asset;
+
+    return {
+      ...asset,
+      currency: refreshed.currency,
+      originalCurrency: refreshed.originalCurrency,
+      currentPrice: refreshed.currentPrice,
+      originalCurrentPrice: refreshed.originalCurrentPrice,
+    };
+  });
+};
+
 const getAssetCategoryOrder = (category = '') => {
   const normalizedCategory = String(category || '').trim();
   if (normalizedCategory === '국내주식') return 10;
@@ -1032,7 +1073,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
           const changed = Object.entries(nextCurrencyRates).some(([currency, rate]) => prev[currency] !== rate);
           return changed ? nextCurrencyRates : prev;
         });
-        setAssets(updatedAssets);
+        setAssets(prevAssets => mergeLiveAssetUpdates(prevAssets, updatedAssets));
         setLastUpdated(new Date().toLocaleTimeString());
 
         if (successCount > 0 && failCount === 0) addLog("모든 주식 및 환율 최신화 완료!", "success");
@@ -3243,7 +3284,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       {/* 자산 추가 모달 */}
 {isAdding && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-100 flex items-center justify-center p-4 animate-in fade-in duration-200">
+  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
     <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
       <div className="flex justify-between items-center mb-6 md:mb-8 sticky top-0 bg-white z-10 pt-2 pb-2">
         <h3 className="text-lg md:text-xl font-black text-slate-900">새 자산 등록</h3>
@@ -3399,7 +3440,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
 {/* 매수일 변경 모달 */}
 {selectedAssetToEditDate && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-105 flex items-center justify-center p-4 animate-in fade-in duration-200">
+  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[105] flex items-center justify-center p-4 animate-in fade-in duration-200">
     <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
       <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-black text-slate-900">
@@ -3446,7 +3487,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
 {/* 추가 매수 모달 */}
 {isUpdatingAsset && selectedAssetToUpdate && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-110 flex items-center justify-center p-4 animate-in fade-in duration-200">
+  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
     <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
       <div className="flex justify-between items-center mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-black text-slate-900">
@@ -3548,7 +3589,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
 {/* 매도 모달 */}
 {isSellingAsset && selectedAssetToSell && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-120 flex items-center justify-center p-4 animate-in fade-in duration-200">
+  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120] flex items-center justify-center p-4 animate-in fade-in duration-200">
     <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
       <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-black text-slate-900 whitespace-nowrap">
