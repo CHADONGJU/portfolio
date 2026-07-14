@@ -507,6 +507,14 @@ const getDividendStartDate = (asset, ledger = []) => {
   return candidates[0]?.date || firstBuy || asset.buyDate || '';
 };
 
+const getAssetBuyLedgerRows = (asset, ledger = []) => getAssetLedgerRows(asset, ledger)
+  .filter((entry) => getTradeSide(entry) === 'buy')
+  .sort((a, b) => {
+    const dateDelta = getDateTimestampSeconds(getRecordDate(a)) - getDateTimestampSeconds(getRecordDate(b));
+    if (dateDelta !== 0) return dateDelta;
+    return String(a.id || a.sourceId || '').localeCompare(String(b.id || b.sourceId || ''));
+  });
+
 const getDateTimestampSeconds = (date = '') => {
   const rawDate = String(date || '').trim();
   const dateParts = rawDate.match(/\d+/g);
@@ -743,8 +751,8 @@ const [addBuyForm, setAddBuyForm] = useState(initialAddBuyState);
 
 const [isSellingAsset, setIsSellingAsset] = useState(false);
 const [selectedAssetToSell, setSelectedAssetToSell] = useState(null);
-const [selectedAssetToEditDate, setSelectedAssetToEditDate] = useState(null);
-const [buyDateForm, setBuyDateForm] = useState({ buyDate: defaultBuyDate });
+const [selectedAssetToManageBuys, setSelectedAssetToManageBuys] = useState(null);
+const [buyLotDrafts, setBuyLotDrafts] = useState([]);
 
 const initialSellFormState = {
   sellPrice: '',
@@ -754,6 +762,17 @@ const initialSellFormState = {
 };
 
 const [sellForm, setSellForm] = useState(initialSellFormState);
+const buyLotDraftSummary = useMemo(() => {
+  const totalQuantity = buyLotDrafts.reduce((sum, lot) => sum + parseNumber(lot.quantity), 0);
+  const totalCost = buyLotDrafts.reduce((sum, lot) => (
+    sum + parseNumber(lot.quantity) * parseNumber(lot.price)
+  ), 0);
+
+  return {
+    totalQuantity,
+    averagePrice: totalQuantity > 0 ? totalCost / totalQuantity : 0,
+  };
+}, [buyLotDrafts]);
 
   useEffect(() => {
     const nextCurrency = getAssetInputCurrency(newAsset.category, newAsset.ticker);
@@ -2092,53 +2111,171 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   setIsSellingAsset(true);
 };
 
-  const openBuyDateModal = (asset) => {
-  setSelectedAssetToEditDate(asset);
-  setBuyDateForm({ buyDate: getDividendStartDate(asset, tradeLedger) || asset.buyDate || defaultBuyDate });
+  const buildBuyLotDrafts = (asset) => {
+  const buyRows = getAssetBuyLedgerRows(asset, tradeLedger);
+  const sourceRows = buyRows.length > 0
+    ? buyRows
+    : [{
+      id: '',
+      sourceId: '',
+      date: asset.buyDate || defaultBuyDate,
+      quantity: asset.quantity,
+      price: asset.originalAveragePrice || asset.averagePrice,
+    }];
+
+  return sourceRows.map((row, index) => ({
+    draftId: String(row.id || row.sourceId || `fallback-${asset.id}-${index}`),
+    ledgerId: row.id ? String(row.id) : '',
+    sourceId: row.sourceId || '',
+    date: getRecordDate(row) || asset.buyDate || defaultBuyDate,
+    quantity: String(row.quantity ?? ''),
+    price: String(row.price ?? ''),
+  }));
 };
 
-  const handleUpdateBuyDate = () => {
-  if (!selectedAssetToEditDate || !buyDateForm.buyDate) return;
+  const openBuyLotsModal = (asset) => {
+  setSelectedAssetToManageBuys(asset);
+  setBuyLotDrafts(buildBuyLotDrafts(asset));
+};
 
-  const previousBuyDate = getDividendStartDate(selectedAssetToEditDate, tradeLedger) || selectedAssetToEditDate.buyDate || '';
-  const nextBuyDate = buyDateForm.buyDate;
-  const updatedAt = new Date().toISOString();
+  const closeBuyLotsModal = () => {
+  setSelectedAssetToManageBuys(null);
+  setBuyLotDrafts([]);
+};
 
-  setAssets(prevAssets => prevAssets.map(asset => (
-    asset.id === selectedAssetToEditDate.id
-      ? { ...asset, buyDate: nextBuyDate, updatedAt }
-      : asset
+  const updateBuyLotDraft = (draftId, field, value) => {
+  setBuyLotDrafts(prevDrafts => prevDrafts.map(lot => (
+    lot.draftId === draftId ? { ...lot, [field]: value } : lot
   )));
+};
 
-  setMemos(prevMemos => prevMemos.map((memo) => {
-    const isMatchingInitialBuy =
-      memo.side === 'buy'
-      && memo.assetId === selectedAssetToEditDate.id
-      && (!previousBuyDate || memo.date === previousBuyDate);
+  const addBuyLotDraft = () => {
+  setBuyLotDrafts(prevDrafts => [
+    ...prevDrafts,
+    {
+      draftId: `new-${Date.now()}-${prevDrafts.length}`,
+      ledgerId: '',
+      sourceId: '',
+      date: defaultBuyDate,
+      quantity: '',
+      price: '',
+    },
+  ]);
+};
 
-    return isMatchingInitialBuy ? { ...memo, date: nextBuyDate, updatedAt: new Date().toISOString() } : memo;
+  const removeBuyLotDraft = (draftId) => {
+  setBuyLotDrafts(prevDrafts => prevDrafts.filter(lot => lot.draftId !== draftId));
+};
+
+  const handleSaveBuyLots = () => {
+  if (!selectedAssetToManageBuys) return;
+  if (buyLotDrafts.length === 0) {
+    addLog('매수 기록은 최소 1개 이상 필요합니다.', 'error');
+    return;
+  }
+
+  const normalizedDrafts = buyLotDrafts.map((lot) => ({
+    ...lot,
+    quantity: parseNumber(lot.quantity),
+    price: parseNumber(lot.price),
   }));
 
-  setTradeLedger(prevLedger => prevLedger.map((entry) => {
-    const entryDate = getRecordDate(entry);
-    const isSameAsset =
-      entry.assetId === selectedAssetToEditDate.id
-      || entry.sourceId === `asset-${selectedAssetToEditDate.id}`
-      || (
-        !entry.assetId
-        && entry.name === selectedAssetToEditDate.name
-        && entry.ticker === selectedAssetToEditDate.ticker
-      );
-    const isInitialBuyDate = !previousBuyDate || entryDate === previousBuyDate || entry.sourceId === `asset-${selectedAssetToEditDate.id}`;
-    const isMatchingInitialBuy = entry.side === 'buy' && isSameAsset && isInitialBuyDate;
+  const hasInvalidLot = normalizedDrafts.some(lot => (
+    !lot.date
+    || getDateTimestampSeconds(lot.date) <= 0
+    || lot.quantity <= 0
+    || lot.price <= 0
+  ));
 
-    return isMatchingInitialBuy ? { ...entry, date: nextBuyDate } : entry;
-  }));
+  if (hasInvalidLot) {
+    addLog('매수일, 수량, 단가를 모두 올바르게 입력해주세요.', 'error');
+    return;
+  }
 
-  addLog(`'${selectedAssetToEditDate.name}' 매수일을 변경했습니다.`, 'success');
-  setSelectedAssetToEditDate(null);
-  setBuyDateForm({ buyDate: defaultBuyDate });
+  const totalBuyQuantity = normalizedDrafts.reduce((sum, lot) => sum + lot.quantity, 0);
+  const totalSellQuantity = getAssetLedgerRows(selectedAssetToManageBuys, tradeLedger)
+    .filter((entry) => getTradeSide(entry) === 'sell')
+    .reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0);
 
+  if (totalBuyQuantity + 0.000001 < totalSellQuantity) {
+    addLog('총 매수 수량이 이미 기록된 매도 수량보다 적을 수 없습니다.', 'error');
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const existingBuyRows = getAssetBuyLedgerRows(selectedAssetToManageBuys, tradeLedger);
+  const existingBuyRowsById = new Map(existingBuyRows.map(row => [String(row.id), row]));
+  const sortedDrafts = [...normalizedDrafts].sort((a, b) => (
+    getDateTimestampSeconds(a.date) - getDateTimestampSeconds(b.date)
+  ));
+  const nextBuyRows = sortedDrafts.map((lot, index) => {
+    const existingRow = lot.ledgerId ? existingBuyRowsById.get(String(lot.ledgerId)) : null;
+
+    return {
+      ...(existingRow || {}),
+      id: existingRow?.id || `buy-${selectedAssetToManageBuys.id}-${Date.now()}-${index}`,
+      sourceId: existingRow?.sourceId || lot.sourceId || undefined,
+      assetId: selectedAssetToManageBuys.id,
+      name: selectedAssetToManageBuys.name,
+      ticker: selectedAssetToManageBuys.ticker || '',
+      category: selectedAssetToManageBuys.category || '',
+      currency: selectedAssetToManageBuys.currency || 'KRW',
+      side: 'buy',
+      action: '매수',
+      quantity: lot.quantity,
+      price: lot.price,
+      date: lot.date,
+      pnl: 0,
+      createdAt: existingRow?.createdAt || now,
+      updatedAt: now,
+    };
+  });
+
+  const nextLedger = [
+    ...tradeLedger.filter(entry => !(
+      isSameAssetRecord(selectedAssetToManageBuys, entry)
+      && getTradeSide(entry) === 'buy'
+    )),
+    ...nextBuyRows,
+  ].sort((a, b) => new Date(getRecordDate(b)) - new Date(getRecordDate(a)));
+
+  setTradeLedger(nextLedger);
+  setAssets(prevAssets => reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), nextLedger));
+  setMemos(prevMemos => {
+    const matchedBuyMemos = existingBuyRows
+      .map(row => findMatchingMemoForLedger(row, prevMemos))
+      .filter(Boolean);
+    const matchedMemoIds = new Set(matchedBuyMemos.map(memo => memo.id));
+    const nextBuyMemos = nextBuyRows.map((row, index) => {
+      const existingMemo = matchedBuyMemos[index];
+      return {
+        ...(existingMemo || {}),
+        id: existingMemo?.id || Date.now() + Math.random() + index,
+        assetId: selectedAssetToManageBuys.id,
+        name: selectedAssetToManageBuys.name,
+        ticker: selectedAssetToManageBuys.ticker || '',
+        category: selectedAssetToManageBuys.category || '',
+        currency: selectedAssetToManageBuys.currency || 'KRW',
+        side: 'buy',
+        action: '매수',
+        quantity: row.quantity,
+        price: row.price,
+        date: row.date,
+        pnl: 0,
+        memo: existingMemo?.memo || '',
+        createdAt: existingMemo?.createdAt || now,
+        updatedAt: now,
+      };
+    });
+
+    return [
+      ...nextBuyMemos,
+      ...prevMemos.filter(memo => !matchedMemoIds.has(memo.id)),
+    ];
+  });
+
+  addLog(`'${selectedAssetToManageBuys.name}' 매수 기록을 저장했습니다.`, 'success');
+  closeBuyLotsModal();
 };
 
   const handleAddBuyToAsset = () => {
@@ -2626,13 +2763,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    openBuyDateModal(asset);
+                                    openBuyLotsModal(asset);
                                   }}
                                   className="inline-flex items-center justify-center gap-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
-                                  title="매수일 변경"
+                                  title="매수 기록 관리"
                                 >
                                   <CalendarDays size={16} className="md:w-4.5 md:h-4.5" />
-                                  <span className="md:hidden">매수일</span>
+                                  <span className="md:hidden">매수 기록</span>
                                 </button>
                               </>
                             )}
@@ -3647,49 +3784,127 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   </div>
 )}
 
-{/* 매수일 변경 모달 */}
-{selectedAssetToEditDate && (
+{/* 매수 기록 관리 모달 */}
+{selectedAssetToManageBuys && (
   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[105] flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
-      <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
-        <h3 className="text-lg md:text-xl font-black text-slate-900">
-          {selectedAssetToEditDate.name} 매수일 변경
-        </h3>
+    <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl p-5 md:p-7 shadow-xl animate-in zoom-in-95 duration-300 flex flex-col">
+      <div className="flex justify-between items-start gap-4 mb-5 md:mb-6">
+        <div className="min-w-0">
+          <h3 className="text-lg md:text-xl font-black text-slate-900 truncate">
+            {selectedAssetToManageBuys.name} 매수 기록
+          </h3>
+          <p className="text-[10px] md:text-xs text-slate-400 font-black mt-1 uppercase tracking-[0.14em] truncate">
+            {selectedAssetToManageBuys.ticker || '-'} · {buyLotDrafts.length.toLocaleString()}개 기록
+          </p>
+        </div>
         <button
-          onClick={() => {
-            setSelectedAssetToEditDate(null);
-            setBuyDateForm({ buyDate: defaultBuyDate });
-          }}
+          onClick={closeBuyLotsModal}
           className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors shrink-0"
         >
           <X size={18} />
         </button>
       </div>
 
-      <div className="space-y-4">
-        <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3">
-          <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">현재 최초 매수일</p>
-          <p className="mt-1 text-sm font-black text-slate-800">{getDividendStartDate(selectedAssetToEditDate, tradeLedger) || selectedAssetToEditDate.buyDate || '-'}</p>
+      <div className="grid grid-cols-3 gap-2 md:gap-3 mb-4 md:mb-5">
+        <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 md:px-4 md:py-3">
+          <p className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">총 매수수량</p>
+          <p className="mt-1 text-sm md:text-base font-black text-slate-900">
+            {buyLotDraftSummary.totalQuantity.toLocaleString()}{selectedAssetToManageBuys.category === '원자재' ? '단위' : '주'}
+          </p>
         </div>
-        <div>
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-            변경할 최초 매수일
-          </label>
-          <input
-            type="date"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-200 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-800"
-            value={buyDateForm.buyDate}
-            onChange={(e) => setBuyDateForm({ buyDate: e.target.value })}
-          />
+        <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 md:px-4 md:py-3">
+          <p className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">평단</p>
+          <p className="mt-1 text-sm md:text-base font-black text-slate-900">
+            {formatMoney(buyLotDraftSummary.averagePrice, selectedAssetToManageBuys.currency)}
+          </p>
+        </div>
+        <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 md:px-4 md:py-3">
+          <p className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">최초 매수일</p>
+          <p className="mt-1 text-sm md:text-base font-black text-slate-900">
+            {buyLotDrafts.map(lot => lot.date).filter(Boolean).sort()[0] || '-'}
+          </p>
         </div>
       </div>
 
-      <button
-        onClick={handleUpdateBuyDate}
-        className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm hover:scale-[1.02] transition-all uppercase tracking-widest"
-      >
-        매수일 저장하기
-      </button>
+      <div className="min-h-0 overflow-y-auto pr-1">
+        <div className="hidden md:grid grid-cols-[1.05fr_1fr_1fr_1fr_44px] gap-3 px-2 pb-2 text-[9px] font-black text-slate-400 uppercase tracking-widest">
+          <span>매수일</span>
+          <span className="text-right">단가</span>
+          <span className="text-right">수량</span>
+          <span className="text-right">매수금액</span>
+          <span></span>
+        </div>
+        <div className="space-y-3">
+          {buyLotDrafts.map((lot, index) => {
+            const lotQuantity = parseNumber(lot.quantity);
+            const lotPrice = parseNumber(lot.price);
+            const lotAmount = lotQuantity * lotPrice;
+
+            return (
+              <div key={lot.draftId} className="grid grid-cols-1 md:grid-cols-[1.05fr_1fr_1fr_1fr_44px] gap-2 md:gap-3 items-end rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+                <div>
+                  <label className="md:hidden block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">매수일</label>
+                  <input
+                    type="date"
+                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-800"
+                    value={lot.date}
+                    onChange={(e) => updateBuyLotDraft(lot.draftId, 'date', e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="md:hidden block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">단가</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm text-right"
+                    value={formatInputNumber(lot.price)}
+                    onChange={(e) => updateBuyLotDraft(lot.draftId, 'price', sanitizeNumericInput(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label className="md:hidden block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">수량</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm text-right"
+                    value={formatInputNumber(lot.quantity)}
+                    onChange={(e) => updateBuyLotDraft(lot.draftId, 'quantity', sanitizeNumericInput(e.target.value))}
+                  />
+                </div>
+                <div className="px-3 py-2.5 rounded-xl bg-white border border-slate-100 text-right">
+                  <p className="md:hidden text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">매수금액</p>
+                  <p className="font-black text-slate-800 text-xs md:text-sm">
+                    {formatMoney(lotAmount, selectedAssetToManageBuys.currency)}
+                  </p>
+                </div>
+                <button
+                  onClick={() => removeBuyLotDraft(lot.draftId)}
+                  disabled={buyLotDrafts.length <= 1}
+                  className="h-10 md:h-11 inline-flex items-center justify-center rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  title={`${index + 1}번째 매수 기록 삭제`}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex flex-col md:flex-row gap-2 md:gap-3 mt-5 md:mt-6">
+        <button
+          onClick={addBuyLotDraft}
+          className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-black text-xs md:text-sm transition-colors"
+        >
+          <Plus size={16} /> 매수 기록 추가
+        </button>
+        <button
+          onClick={handleSaveBuyLots}
+          className="flex-1 px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-xs md:text-sm shadow-sm hover:scale-[1.01] transition-all uppercase tracking-widest"
+        >
+          매수 기록 저장하기
+        </button>
+      </div>
     </div>
   </div>
 )}
