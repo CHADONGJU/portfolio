@@ -1221,6 +1221,11 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     const dividendKRW = autoDividends.reduce((sum, dividend) => (
       sum + (Number(dividend.amount) || 0) * getCachedKrwRate(dividend.currency, currencyRates, exchangeRate || 1350, jpyKrwRate || 9.5)
     ), 0);
+    const dividendByCurrency = autoDividends.reduce((summary, dividend) => {
+      const currency = dividend.currency || 'KRW';
+      summary[currency] = (summary[currency] || 0) + (Number(dividend.amount) || 0);
+      return summary;
+    }, {});
     const totalReturnPercent = purchaseKRW > 0 ? (evaluationProfitKRW / purchaseKRW) * 100 : 0;
 
     return {
@@ -1228,8 +1233,18 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       evaluationProfitKRW,
       totalReturnPercent,
       dividendKRW,
+      dividendByCurrency,
     };
   }, [enhancedAssets, autoDividends, exchangeRate, jpyKrwRate, currencyRates]);
+  const dividendCurrencyParts = useMemo(() => (
+    Object.entries(dashboardSummary.dividendByCurrency || {})
+      .filter(([, amount]) => Math.abs(Number(amount) || 0) > 0.000001)
+      .sort(([leftCurrency], [rightCurrency]) => {
+        const order = { KRW: 0, USD: 1, JPY: 2 };
+        return (order[leftCurrency] ?? 9) - (order[rightCurrency] ?? 9);
+      })
+      .map(([currency, amount]) => formatMoney(amount, currency))
+  ), [dashboardSummary.dividendByCurrency]);
   const filteredPerformanceSummary = useMemo(() => {
     const keyword = performanceSearchTerm.trim().toLowerCase();
     if (!keyword) return stockPerformanceSummary;
@@ -1279,7 +1294,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         };
       })
       .filter(Boolean)
-      .sort((a, b) => a.date.localeCompare(b.date) || a.ticker.localeCompare(b.ticker));
+      .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
   }, [calendarMonth, dividendSummary, enhancedAssets]);
   const dividendCalendarEventsByDate = useMemo(() => (
     dividendCalendarEvents.reduce((acc, event) => {
@@ -2383,10 +2398,10 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                 },
                 {
                   label: '배당 수익',
-                  value: `${dashboardSummary.dividendKRW > 0 ? '+' : ''}${formatMoney(dashboardSummary.dividendKRW, 'KRW')}`,
+                  value: dividendCurrencyParts.length > 0 ? dividendCurrencyParts.join(' / ') : formatMoney(0, 'KRW'),
                   icon: Receipt,
                   tone: dashboardSummary.dividendKRW >= 0 ? 'text-slate-900' : 'text-rose-600',
-                  helper: '세후 자동 추출 누적',
+                  helper: '세후 누적 · 통화별 표시',
                 },
               ].map((item) => {
                 const Icon = item.icon;
@@ -3425,7 +3440,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                             title={`${event.name} 세전 ${formatMoney(event.grossAmount, event.currency)} / 세후 ${formatMoney(event.netAmount, event.currency)}`}
                             className={`w-full truncate rounded-lg px-2 py-1 text-[10px] md:text-xs font-black text-left transition-colors ${selectedCalendarEvent?.id === event.id ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
                           >
-                            {event.ticker}
+                            {event.name}
                           </button>
                         ))}
                         {events.length > 3 && (
