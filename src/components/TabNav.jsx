@@ -3,6 +3,7 @@ const TABS = [
   { id: 'history', label: '수익 및 배당 기록' },
   { id: 'target', label: '목표 포트폴리오' },
   { id: 'notes', label: '메모장' },
+  { id: 'calendar', label: '캘린더' },
 ];
 
 const TabNav = ({ activeTab, onChange }) => (

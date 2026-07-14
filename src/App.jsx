@@ -40,8 +40,70 @@ const TRADE_SORT_OPTIONS = [
   { value: 'profit-asc', label: '실현 손익(손해 큰 순)' },
 ];
 const TRADE_PAGE_SIZE = 10;
+const AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const CALENDAR_WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
 const parseNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
+const formatDateKey = (date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+const getMonthKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+const addMonths = (date, months) => {
+  const next = new Date(date);
+  next.setMonth(next.getMonth() + months);
+  return next;
+};
+const buildCalendarCells = (monthKey) => {
+  const [year, month] = monthKey.split('-').map(Number);
+  const firstDay = new Date(year, month - 1, 1);
+  const start = new Date(firstDay);
+  start.setDate(start.getDate() - firstDay.getDay());
+
+  return Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    return {
+      date,
+      dateKey: formatDateKey(date),
+      day: date.getDate(),
+      isCurrentMonth: date.getMonth() === month - 1,
+    };
+  });
+};
+const getEstimatedDividendIntervalMonths = (history = []) => {
+  const sortedDates = history
+    .map((dividend) => new Date(`${dividend.date}T00:00:00`))
+    .filter((date) => Number.isFinite(date.getTime()))
+    .sort((a, b) => b - a);
+  if (sortedDates.length < 2) return 3;
+
+  const daysDiff = (sortedDates[0] - sortedDates[1]) / (1000 * 60 * 60 * 24);
+  if (daysDiff >= 20 && daysDiff <= 45) return 1;
+  if (daysDiff >= 80 && daysDiff <= 110) return 3;
+  if (daysDiff >= 150 && daysDiff <= 200) return 6;
+  if (daysDiff >= 330) return 12;
+  return 3;
+};
+const getNextDividendDate = (history = [], today = new Date()) => {
+  const sortedDates = history
+    .map((dividend) => new Date(`${dividend.date}T00:00:00`))
+    .filter((date) => Number.isFinite(date.getTime()))
+    .sort((a, b) => b - a);
+  if (sortedDates.length === 0) return null;
+
+  const intervalMonths = getEstimatedDividendIntervalMonths(history);
+  let nextDate = addMonths(sortedDates[0], intervalMonths);
+  const safeLimit = addMonths(today, 24);
+
+  while (nextDate < today && nextDate < safeLimit) {
+    nextDate = addMonths(nextDate, intervalMonths);
+  }
+
+  return Number.isFinite(nextDate.getTime()) ? nextDate : null;
+};
 const getRecordDate = (record) => record.sellDate || record.date || record.buyDate || '';
 const getRecordPnl = (record) => Number(record.pnl ?? record.realizedPnl ?? 0);
 const getTradeSide = (record) => {
@@ -629,6 +691,8 @@ const App = () => {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedDividendAsset, setSelectedDividendAsset] = useState(null);
   const [dividendFilter, setDividendFilter] = useState('전체');
+  const [calendarMonth, setCalendarMonth] = useState(() => getMonthKey(new Date()));
+  const [selectedCalendarEventId, setSelectedCalendarEventId] = useState('');
 
   const [isAdding, setIsAdding] = useState(false);
   const defaultBuyDate = new Date().toISOString().split('T')[0];
@@ -717,17 +781,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   ), [targetPortfolio]);
 
   const [autoDividends, setAutoDividends] = useState(() => loadJson(AUTO_DIVIDENDS_STORAGE_KEY, []));
-  const dividendAssetSnapshotKey = useMemo(() => (
-    [
-      ...assets
-        .filter((asset) => asset.category !== '현금' && asset.ticker && asset.buyDate)
-        .map((asset) => `${asset.id}:${asset.ticker}:${asset.quantity}:${asset.buyDate}:${asset.category}`),
-      ...tradeLedger
-        .filter((entry) => entry.ticker || entry.name)
-        .map((entry) => `${entry.assetId || ''}:${entry.ticker || ''}:${entry.name || ''}:${entry.side || entry.action || ''}:${entry.date || ''}:${entry.quantity || ''}`),
-    ].join('|')
-  ), [assets, tradeLedger]);
-  const lastDividendAssetSnapshotKeyRef = useRef('');
   const initialLedgerMigrationDoneRef = useRef(false);
 
   const portfolioSnapshot = useMemo(() => ({
@@ -854,21 +907,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     setAssets(prevAssets => reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), tradeLedger));
   }, [isCloudPortfolioLoaded, tradeLedger]);
 
-  useEffect(() => {
-    if (!isCloudPortfolioLoaded || !dividendAssetSnapshotKey) return;
-    if (lastDividendAssetSnapshotKeyRef.current === dividendAssetSnapshotKey) return;
-
-    lastDividendAssetSnapshotKeyRef.current = dividendAssetSnapshotKey;
-    setRefreshTrigger(t => t + 1);
-  }, [isCloudPortfolioLoaded, dividendAssetSnapshotKey]);
-
   // 2. 완벽한 데이터 연동 로직
   const assetsRef = useRef(assets);
   const tradeLedgerRef = useRef(tradeLedger);
   const exchangeRateRef = useRef(exchangeRate);
   const jpyKrwRateRef = useRef(jpyKrwRate);
   const currencyRatesRef = useRef(currencyRates);
-  const initialFetchDoneRef = useRef(false);
+  const liveFetchInFlightRef = useRef(false);
   const liveFetchRunIdRef = useRef(0);
   useEffect(() => { assetsRef.current = assets; }, [assets]);
   useEffect(() => { tradeLedgerRef.current = tradeLedger; }, [tradeLedger]);
@@ -877,100 +922,15 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   useEffect(() => { currencyRatesRef.current = currencyRates; }, [currencyRates]);
 
   useEffect(() => {
-    if (!isCloudPortfolioLoaded || !dividendAssetSnapshotKey) return undefined;
+    if (!isCloudPortfolioLoaded) return undefined;
     let cancelled = false;
 
-    const refreshDividendsOnly = async () => {
-      const currentAssets = assetsRef.current;
-      const currentTradeLedger = tradeLedgerRef.current;
-      const dividendAssets = currentAssets.filter(asset => (
-        asset.ticker
-        && asset.buyDate
-        && !isCommodityCategory(asset.category)
-        && parseNumber(asset.quantity) > 0
-      ));
-
-      if (dividendAssets.length === 0) return;
-
-      const dividendResults = await Promise.all(dividendAssets.map(async (asset) => {
-        let yfTicker = asset.ticker.toUpperCase().trim();
-        if (isDomesticStockCategory(asset.category) && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
-        const dividendStartDate = getDividendStartDate(asset, currentTradeLedger);
-
-        try {
-          const divs = await fetchDividends({ ...asset, ticker: yfTicker });
-          const sourceDividendCount = divs ? Object.keys(divs).length : 0;
-          const rows = divs
-            ? buildAutoDividendRows({
-              asset,
-              ledger: currentTradeLedger,
-              dividends: divs,
-              dividendStartDate,
-            })
-            : [];
-
-          return {
-            asset,
-            error: false,
-            hasDividends: sourceDividendCount > 0,
-            sourceDividendCount,
-            rows,
-          };
-        } catch {
-          return {
-            asset,
-            error: true,
-            hasDividends: false,
-            sourceDividendCount: 0,
-            rows: [],
-          };
-        }
-      }));
-
-      if (cancelled) return;
-
-      const successfulResults = dividendResults.filter((result) => !result.error);
-      if (successfulResults.length === 0) return;
-
-      const refreshedAssetNames = successfulResults.map((result) => result.asset.name).filter(Boolean);
-      const nextAutoDividends = successfulResults
-        .flatMap((result) => result.rows)
-        .sort((a, b) => new Date(b.date) - new Date(a.date));
-
-      const nextRegistry = successfulResults.map((result) => ({
-        assetId: result.asset.id,
-        name: result.asset.name,
-        ticker: result.asset.ticker,
-        category: result.asset.category,
-        currency: result.asset.currency,
-        hasDividends: result.hasDividends,
-        sourceDividendCount: result.sourceDividendCount,
-        earnedDividendCount: result.rows.length,
-        checkedAt: new Date().toISOString(),
-      }));
-
-      setDividendAssetRegistry(prevRegistry => (
-        mergeDividendAssetRegistry(prevRegistry, nextRegistry, currentAssets)
-      ));
-
-      setAutoDividends(prevDividends => (
-        mergeDividendResultsByAsset(prevDividends, nextAutoDividends, currentAssets, refreshedAssetNames)
-      ));
-    };
-
-    refreshDividendsOnly();
-    return () => { cancelled = true; };
-  }, [isCloudPortfolioLoaded, dividendAssetSnapshotKey]);
-  
-
-  useEffect(() => {
-    if (!isCloudPortfolioLoaded) return undefined;
-    if (refreshTrigger === 0 && initialFetchDoneRef.current) return;
-    if (refreshTrigger === 0) initialFetchDoneRef.current = true;
     const fetchLiveData = async () => {
+      if (liveFetchInFlightRef.current) return;
+      liveFetchInFlightRef.current = true;
       const runId = liveFetchRunIdRef.current + 1;
       liveFetchRunIdRef.current = runId;
-      const isLatestRun = () => runId === liveFetchRunIdRef.current;
+      const isLatestRun = () => !cancelled && runId === liveFetchRunIdRef.current;
 
       setIsFetching(true);
       const currentAssets = assetsRef.current;
@@ -1169,14 +1129,20 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
         if (isLatestRun() && assetsRef.current.length > 0) addLog("네트워크 오류로 갱신 실패", "error");
       }
       finally {
-        if (isLatestRun()) setIsFetching(false);
+        if (runId === liveFetchRunIdRef.current) {
+          liveFetchInFlightRef.current = false;
+          setIsFetching(false);
+        }
       }
     };
     
     fetchLiveData();
     let interval;
-    if (isLiveMode) interval = setInterval(fetchLiveData, 300000); 
-    return () => { if (interval) clearInterval(interval); };
+    if (isLiveMode) interval = setInterval(fetchLiveData, AUTO_SYNC_INTERVAL_MS); 
+    return () => {
+      cancelled = true;
+      if (interval) clearInterval(interval);
+    };
   }, [isLiveMode, refreshTrigger, isCloudPortfolioLoaded]);
 
   const {
@@ -1274,6 +1240,63 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       || summary.category?.toLowerCase().includes(keyword)
     ));
   }, [stockPerformanceSummary, performanceSearchTerm]);
+  const dividendCalendarCells = useMemo(() => buildCalendarCells(calendarMonth), [calendarMonth]);
+  const dividendCalendarEvents = useMemo(() => {
+    const monthPrefix = calendarMonth;
+    const today = new Date();
+
+    return dividendSummary
+      .map((summary) => {
+        const history = Array.isArray(summary.history) ? summary.history : [];
+        const nextDate = getNextDividendDate(history, today);
+        if (!nextDate) return null;
+
+        const dateKey = formatDateKey(nextDate);
+        if (!dateKey.startsWith(monthPrefix)) return null;
+
+        const asset = enhancedAssets.find(candidate => candidate.name === summary.name);
+        const latestDividend = history[0] || {};
+        const quantity = parseNumber(asset?.quantity || latestDividend.quantity);
+        const perShareGrossAmount = Number(latestDividend.perShareGrossAmount) || 0;
+        const perShareNetAmount = Number(latestDividend.perShareNetAmount)
+          || (Number(latestDividend.quantity) > 0 ? Number(latestDividend.amount) / Number(latestDividend.quantity) : 0);
+        const grossAmount = perShareGrossAmount * quantity;
+        const netAmount = perShareNetAmount * quantity || Number(summary.expectedAmount) || 0;
+        const currency = asset?.currency || summary.currency || latestDividend.currency || 'KRW';
+        const ticker = asset?.ticker || summary.ticker || summary.name;
+
+        if (quantity <= 0 || (grossAmount <= 0 && netAmount <= 0)) return null;
+
+        return {
+          id: `${summary.name}-${dateKey}`,
+          date: dateKey,
+          name: summary.name,
+          ticker,
+          currency,
+          grossAmount,
+          netAmount,
+          quantity,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.ticker.localeCompare(b.ticker));
+  }, [calendarMonth, dividendSummary, enhancedAssets]);
+  const dividendCalendarEventsByDate = useMemo(() => (
+    dividendCalendarEvents.reduce((acc, event) => {
+      if (!acc[event.date]) acc[event.date] = [];
+      acc[event.date].push(event);
+      return acc;
+    }, {})
+  ), [dividendCalendarEvents]);
+  const selectedCalendarEvent = useMemo(() => (
+    dividendCalendarEvents.find(event => event.id === selectedCalendarEventId) || dividendCalendarEvents[0] || null
+  ), [dividendCalendarEvents, selectedCalendarEventId]);
+  useEffect(() => {
+    if (!selectedCalendarEventId) return;
+    if (!dividendCalendarEvents.some(event => event.id === selectedCalendarEventId)) {
+      setSelectedCalendarEventId('');
+    }
+  }, [dividendCalendarEvents, selectedCalendarEventId]);
   const targetBudgetKRW = parseNumber(targetPortfolio.budget) || totalConvertedKRW;
   const targetCategoryTotalPercent = targetPortfolio.categories.reduce((sum, category) => sum + (Number(category.percent) || 0), 0);
   const targetPortfolioGuide = useMemo(() => {
@@ -2097,9 +2120,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   setSelectedAssetToEditDate(null);
   setBuyDateForm({ buyDate: defaultBuyDate });
 
-  setTimeout(() => {
-    setRefreshTrigger(t => t + 1);
-  }, 300);
 };
 
   const handleAddBuyToAsset = () => {
@@ -2168,9 +2188,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   setSelectedAssetToUpdate(null);
   setAddBuyForm(initialAddBuyState);
 
-  setTimeout(() => {
-    setRefreshTrigger(t => t + 1);
-  }, 300);
 };
 
   const handleSellAsset = () => {
@@ -2256,9 +2273,6 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   setSelectedAssetToSell(null);
   setSellForm(initialSellFormState);
 
-  setTimeout(() => {
-    setRefreshTrigger(t => t + 1);
-  }, 300);
 };
 
   // 자산 추가 처리
@@ -2311,11 +2325,8 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
     });
     setNewAsset(initialAssetState);
     setIsAdding(false);
-    addLog(`'${asset.name}' 자산 추가됨. 최신 주가로 연동합니다...`, "info");
+    addLog(`'${asset.name}' 자산 추가됨. 다음 동기화 때 최신가가 반영됩니다.`, "info");
     
-    setTimeout(() => {
-      setRefreshTrigger(t => t + 1);
-    }, 500); 
   };
 
 
@@ -2871,7 +2882,19 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                     ))}
                   </select>
                 </div>
-                <div className="grid grid-cols-1 gap-3">
+                <div className={`grid grid-cols-1 gap-3 ${tradeStockFilter !== 'all' ? 'md:grid-cols-3' : ''}`}>
+                  {tradeStockFilter !== 'all' && (
+                    <>
+                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매수 수량</p>
+                        <p className="text-lg font-black text-slate-800">{tradeSummary.totalBuyQuantity.toLocaleString()}</p>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매도 수량</p>
+                        <p className="text-lg font-black text-slate-800">{tradeSummary.totalSellQuantity.toLocaleString()}</p>
+                      </div>
+                    </>
+                  )}
                   <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">실현 손익</p>
                     <p className={`text-lg font-black ${tradeSummary.totalProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
@@ -3344,6 +3367,101 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
             onUpdateMemo={updateMemoText}
             formatMoney={formatMoney}
           />
+        )}
+
+        {activeTab === 'calendar' && (
+          <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden animate-in fade-in duration-500">
+            <div className="p-5 md:p-7 border-b border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
+                  <CalendarDays size={18} className="text-slate-500" />
+                  배당 캘린더
+                </h3>
+                <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">보유 수량 기준 세전/세후 예상 배당금</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCalendarMonth(getMonthKey(addMonths(new Date(`${calendarMonth}-01T00:00:00`), -1)))}
+                  className="px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[10px] md:text-xs font-black text-slate-600 hover:bg-slate-100 transition-colors"
+                >
+                  이전
+                </button>
+                <div className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs md:text-sm font-black min-w-28 text-center">
+                  {calendarMonth}
+                </div>
+                <button
+                  onClick={() => setCalendarMonth(getMonthKey(addMonths(new Date(`${calendarMonth}-01T00:00:00`), 1)))}
+                  className="px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[10px] md:text-xs font-black text-slate-600 hover:bg-slate-100 transition-colors"
+                >
+                  다음
+                </button>
+              </div>
+            </div>
+
+            <div className="p-4 md:p-7">
+              <div className="grid grid-cols-7 gap-1.5 md:gap-2 mb-2">
+                {CALENDAR_WEEKDAYS.map((weekday) => (
+                  <div key={weekday} className="text-center text-[10px] md:text-xs font-black text-slate-400 py-2">
+                    {weekday}
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7 gap-1.5 md:gap-2">
+                {dividendCalendarCells.map((cell) => {
+                  const events = dividendCalendarEventsByDate[cell.dateKey] || [];
+                  return (
+                    <div
+                      key={cell.dateKey}
+                      className={`min-h-20 md:min-h-28 rounded-xl border p-2 transition-colors ${cell.isCurrentMonth ? 'bg-white border-slate-100' : 'bg-slate-50/60 border-slate-50 text-slate-300'}`}
+                    >
+                      <div className={`text-[10px] md:text-xs font-black mb-1.5 ${cell.isCurrentMonth ? 'text-slate-500' : 'text-slate-300'}`}>
+                        {cell.day}
+                      </div>
+                      <div className="space-y-1">
+                        {events.slice(0, 3).map((event) => (
+                          <button
+                            key={event.id}
+                            onClick={() => setSelectedCalendarEventId(event.id)}
+                            title={`${event.name} 세전 ${formatMoney(event.grossAmount, event.currency)} / 세후 ${formatMoney(event.netAmount, event.currency)}`}
+                            className={`w-full truncate rounded-lg px-2 py-1 text-[10px] md:text-xs font-black text-left transition-colors ${selectedCalendarEvent?.id === event.id ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
+                          >
+                            {event.ticker}
+                          </button>
+                        ))}
+                        {events.length > 3 && (
+                          <span className="block text-[9px] font-black text-slate-400 px-1">+{events.length - 3}</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="mt-5 md:mt-6 bg-slate-50 border border-slate-100 rounded-2xl p-5 md:p-6">
+                {selectedCalendarEvent ? (
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                      <p className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest mb-1">{selectedCalendarEvent.date}</p>
+                      <h4 className="text-lg md:text-xl font-black text-slate-900">{selectedCalendarEvent.name}</h4>
+                      <p className="text-xs md:text-sm font-bold text-slate-500 mt-1">{selectedCalendarEvent.ticker} · {selectedCalendarEvent.quantity.toLocaleString()}주 기준</p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 min-w-full md:min-w-80">
+                      <div className="bg-white border border-slate-100 rounded-xl p-4">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">세전 예상</p>
+                        <p className="text-base md:text-lg font-black text-slate-900">{formatMoney(selectedCalendarEvent.grossAmount, selectedCalendarEvent.currency)}</p>
+                      </div>
+                      <div className="bg-white border border-slate-100 rounded-xl p-4">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">세후 예상</p>
+                        <p className="text-base md:text-lg font-black text-blue-600">{formatMoney(selectedCalendarEvent.netAmount, selectedCalendarEvent.currency)}</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-center text-xs md:text-sm font-bold text-slate-400">이번 달에 표시할 배당 예정 종목이 없습니다.</p>
+                )}
+              </div>
+            </div>
+          </div>
         )}
       </div>
 

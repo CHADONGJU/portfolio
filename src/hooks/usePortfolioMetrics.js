@@ -260,6 +260,7 @@ export const usePortfolioMetrics = ({
       if (assetDivs.length === 0) {
         summary[asset.name] = {
           name: asset.name,
+          ticker: asset.ticker || registry?.ticker || '',
           category: asset.category || registry?.category || '',
           currency: asset.currency || registry?.currency || 'KRW',
           totalAmount: 0,
@@ -307,6 +308,7 @@ export const usePortfolioMetrics = ({
 
       summary[asset.name] = {
         name: asset.name,
+        ticker: asset.ticker || registry?.ticker || '',
         category: asset.category || '',
         currency: lastDiv.currency,
         totalAmount,

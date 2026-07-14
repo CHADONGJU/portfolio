@@ -53,11 +53,16 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = 7000) => {
 
 export const fetchWithSafeProxy = async (url) => {
   const encodedUrl = encodeURIComponent(url);
+  const bareUrl = url.replace(/^https?:\/\//, '');
   const proxies = [
     url,
     `https://api.allorigins.win/raw?url=${encodedUrl}`,
     `https://api.allorigins.win/get?url=${encodedUrl}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`,
+    `https://corsproxy.io/?${encodedUrl}`,
+    `https://corsproxy.io/?url=${encodedUrl}`,
+    `https://thingproxy.freeboard.io/fetch/${url}`,
+    `https://r.jina.ai/http://${bareUrl}`,
   ];
 
   for (const proxy of proxies) {
@@ -93,13 +98,17 @@ export const fetchWithSafeProxy = async (url) => {
 
 export const fetchTextWithSafeProxy = async (url) => {
   const encodedUrl = encodeURIComponent(url);
-  const jinaUrl = `https://r.jina.ai/http://r.jina.ai/http://${url.replace(/^https?:\/\//, '')}`;
+  const bareUrl = url.replace(/^https?:\/\//, '');
+  const jinaUrl = `https://r.jina.ai/http://${bareUrl}`;
   const proxies = [
     url,
     jinaUrl,
     `https://api.allorigins.win/raw?url=${encodedUrl}`,
     `https://api.allorigins.win/get?url=${encodedUrl}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`,
+    `https://corsproxy.io/?${encodedUrl}`,
+    `https://corsproxy.io/?url=${encodedUrl}`,
+    `https://thingproxy.freeboard.io/fetch/${url}`,
   ];
 
   for (const proxy of proxies) {
