@@ -1180,12 +1180,17 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   const profitTone = currentCategoryProfitKRW >= 0 ? 'text-emerald-600' : 'text-rose-600';
   const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
   const visibleDetailAssets = useMemo(() => (
-    [...(selectedCategory ? subChartData : enhancedAssets)].sort((a, b) => {
-      const categoryDelta = getAssetCategoryOrder(a.category) - getAssetCategoryOrder(b.category);
-      if (categoryDelta !== 0) return categoryDelta;
-      return b.currentKRW - a.currentKRW;
-    })
-  ), [enhancedAssets, selectedCategory, subChartData]);
+    [...(selectedCategory ? subChartData : enhancedAssets)]
+      .map((asset) => ({
+        ...asset,
+        displayBuyDate: asset.category === '현금' ? '' : getDividendStartDate(asset, tradeLedger),
+      }))
+      .sort((a, b) => {
+        const categoryDelta = getAssetCategoryOrder(a.category) - getAssetCategoryOrder(b.category);
+        if (categoryDelta !== 0) return categoryDelta;
+        return b.currentKRW - a.currentKRW;
+      })
+  ), [enhancedAssets, selectedCategory, subChartData, tradeLedger]);
   const currentChartGradient = useMemo(() => {
     if (currentChartData.length === 0) return 'conic-gradient(#e2e8f0 0% 100%)';
 
@@ -2089,13 +2094,13 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
   const openBuyDateModal = (asset) => {
   setSelectedAssetToEditDate(asset);
-  setBuyDateForm({ buyDate: asset.buyDate || defaultBuyDate });
+  setBuyDateForm({ buyDate: getDividendStartDate(asset, tradeLedger) || asset.buyDate || defaultBuyDate });
 };
 
   const handleUpdateBuyDate = () => {
   if (!selectedAssetToEditDate || !buyDateForm.buyDate) return;
 
-  const previousBuyDate = selectedAssetToEditDate.buyDate || '';
+  const previousBuyDate = getDividendStartDate(selectedAssetToEditDate, tradeLedger) || selectedAssetToEditDate.buyDate || '';
   const nextBuyDate = buyDateForm.buyDate;
   const updatedAt = new Date().toISOString();
 
@@ -2115,18 +2120,17 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
   }));
 
   setTradeLedger(prevLedger => prevLedger.map((entry) => {
-    const isMatchingInitialBuy =
-      entry.side === 'buy'
-      && (
-        entry.assetId === selectedAssetToEditDate.id
-        || entry.sourceId === `asset-${selectedAssetToEditDate.id}`
-        || (
-          !entry.assetId
-          && entry.name === selectedAssetToEditDate.name
-          && entry.ticker === selectedAssetToEditDate.ticker
-          && (!previousBuyDate || entry.date === previousBuyDate)
-        )
+    const entryDate = getRecordDate(entry);
+    const isSameAsset =
+      entry.assetId === selectedAssetToEditDate.id
+      || entry.sourceId === `asset-${selectedAssetToEditDate.id}`
+      || (
+        !entry.assetId
+        && entry.name === selectedAssetToEditDate.name
+        && entry.ticker === selectedAssetToEditDate.ticker
       );
+    const isInitialBuyDate = !previousBuyDate || entryDate === previousBuyDate || entry.sourceId === `asset-${selectedAssetToEditDate.id}`;
+    const isMatchingInitialBuy = entry.side === 'buy' && isSameAsset && isInitialBuyDate;
 
     return isMatchingInitialBuy ? { ...entry, date: nextBuyDate } : entry;
   }));
@@ -2166,10 +2170,17 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
       const totalCostNative = oldQty * oldAvgNative + addedQty * addedAvgNative;
       const nextOriginalAveragePrice = totalQty > 0 ? totalCostNative / totalQty : 0;
 
+      const currentFirstBuyDate = getDividendStartDate(asset, tradeLedger) || asset.buyDate;
+      const currentFirstBuyTimestamp = getDateTimestampSeconds(currentFirstBuyDate);
+      const addedBuyTimestamp = getDateTimestampSeconds(addBuyForm.buyDate);
       const nextBuyDate =
-        new Date(addBuyForm.buyDate) < new Date(asset.buyDate)
+        addedBuyTimestamp > 0
+        && (
+          currentFirstBuyTimestamp <= 0
+          || addedBuyTimestamp < currentFirstBuyTimestamp
+        )
           ? addBuyForm.buyDate
-          : asset.buyDate;
+          : currentFirstBuyDate;
 
       return {
         ...asset,
@@ -2544,7 +2555,7 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
                                 </p>
                                 {asset.category !== '현금' && (
                                   <p className="text-[10px] md:text-[11px] text-slate-400 font-bold mt-1 truncate">
-                                    매수일 {asset.buyDate || '-'}
+                                    최초 매수일 {asset.displayBuyDate || asset.buyDate || '-'}
                                   </p>
                                 )}
                               </div>
@@ -3657,12 +3668,12 @@ const [sellForm, setSellForm] = useState(initialSellFormState);
 
       <div className="space-y-4">
         <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-3">
-          <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">현재 매수일</p>
-          <p className="mt-1 text-sm font-black text-slate-800">{selectedAssetToEditDate.buyDate || '-'}</p>
+          <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">현재 최초 매수일</p>
+          <p className="mt-1 text-sm font-black text-slate-800">{getDividendStartDate(selectedAssetToEditDate, tradeLedger) || selectedAssetToEditDate.buyDate || '-'}</p>
         </div>
         <div>
           <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-            변경할 매수일
+            변경할 최초 매수일
           </label>
           <input
             type="date"
