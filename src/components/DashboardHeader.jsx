@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Briefcase, Check, LogOut, Pencil, Plus, RefreshCw, UserCircle, X } from 'lucide-react';
+import { Briefcase, Check, Eye, EyeOff, LogOut, Pencil, Plus, RefreshCw, UserCircle, X } from 'lucide-react';
 import { DEFAULT_PORTFOLIO_NAME } from '../constants';
 
 const DashboardHeader = ({
@@ -10,7 +10,9 @@ const DashboardHeader = ({
   onPortfolioNameChange,
   onRefresh,
   onSignOut,
+  onTogglePrivacy,
   portfolioName,
+  privacyMode,
   userEmail,
 }) => {
   const resolvedPortfolioName = portfolioName?.trim() || DEFAULT_PORTFOLIO_NAME;
@@ -109,6 +111,17 @@ const DashboardHeader = ({
         </div>
       )}
       <button
+        type="button"
+        onClick={onTogglePrivacy}
+        aria-pressed={privacyMode}
+        aria-label={privacyMode ? '금액 가리기 해제' : '금액 가리기'}
+        className="p-3 md:p-3.5 bg-slate-50 rounded-xl hover:bg-slate-100 transition-all border border-slate-200/70 text-slate-600"
+        title={privacyMode ? '금액 가리기 해제' : '금액 가리기'}
+      >
+        {privacyMode ? <EyeOff size={18} /> : <Eye size={18} />}
+      </button>
+      <button
+        type="button"
         onClick={onRefresh}
         disabled={isFetching}
         className="p-3 md:p-3.5 bg-slate-50 rounded-xl hover:bg-slate-100 transition-all border border-slate-200/70 disabled:opacity-50 text-slate-600"
@@ -117,6 +130,7 @@ const DashboardHeader = ({
         <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
       </button>
       <button
+        type="button"
         onClick={onAddAsset}
         className="flex-1 md:flex-none justify-center bg-slate-900 text-white px-5 md:px-6 py-3 md:py-3.5 rounded-xl font-bold text-xs shadow-sm hover:bg-slate-800 transition-colors flex items-center gap-2"
       >
@@ -124,6 +138,7 @@ const DashboardHeader = ({
       </button>
       {onSignOut && (
         <button
+          type="button"
           onClick={onSignOut}
           className="p-3 md:p-3.5 bg-white rounded-xl hover:bg-rose-50 transition-all border border-slate-200/70 text-slate-400 hover:text-rose-600"
           title="로그아웃"

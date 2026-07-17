@@ -7,6 +7,7 @@ export const TRADE_LEDGER_STORAGE_KEY = 'portfolio_trade_ledger_v1';
 export const AUTO_DIVIDENDS_STORAGE_KEY = 'portfolio_auto_dividends_v1';
 export const DIVIDEND_ASSET_REGISTRY_STORAGE_KEY = 'portfolio_dividend_asset_registry_v1';
 export const TARGET_PORTFOLIO_STORAGE_KEY = 'portfolio_target_plan_v1';
+export const PRIVACY_MODE_STORAGE_KEY = 'portfolio_privacy_mode_v1';
 
 export const ASSET_COLORS = [
   '#334155',

@@ -1,12 +1,10 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
   Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, ArrowRightLeft, Search, Folder, Target, CalendarDays
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
-import MemoTab from './components/MemoTab';
 import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
 import { useAuth } from './context/useAuth';
@@ -19,19 +17,59 @@ import {
   getCategoryDetailColor,
   MEMOS_STORAGE_KEY,
   PORTFOLIO_NAME_STORAGE_KEY,
+  PRIVACY_MODE_STORAGE_KEY,
   TARGET_PORTFOLIO_STORAGE_KEY,
   TRADE_LEDGER_STORAGE_KEY,
   TRADES_STORAGE_KEY,
 } from './constants';
-import { fetchBitcoinPrices, fetchDividends, fetchKrwRate, fetchStockQuote, fetchUsdKrwRate } from './services/marketData';
+import {
+  fetchBitcoinPrices,
+  fetchDividends,
+  fetchKrwRate,
+  fetchStockQuote,
+  fetchTradingViewQuotes,
+  fetchUsdKrwRate,
+} from './services/marketData';
+import {
+  loadPortfolioState,
+  migratePortfolioState,
+  savePortfolioStateDiff,
+} from './services/portfolioStore';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { loadJson, saveJson } from './utils/storage';
-import { buildCanonicalTradeRows, reconcileAssetsWithTradeLedger } from './utils/tradeReconciliation';
+import {
+  buildCanonicalTradeRows,
+  buildPositionFromTradeRows,
+  reconcileAssetsWithTradeLedger,
+} from './utils/tradeReconciliation';
+import {
+  buildAutoDividendRows,
+  getAssetBuyLedgerRows,
+  getAssetDividendProfile,
+  getAssetLedgerRows,
+  getDateTimestampSeconds,
+  getDividendStartDate,
+  recalculateEstimatedDividendRow,
+} from './utils/dividendCalculations';
+import {
+  mergeDividendAssetRegistry,
+  mergeDividendResultsByAsset,
+  mergeUniqueDividends,
+} from './utils/dividendSync';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { db } from './firebase';
 
+const MemoTab = React.lazy(() => import('./components/MemoTab'));
+
 const isDomesticStockCategory = (category) => category?.includes('국내') && category?.includes('주식');
 const isCommodityCategory = (category) => category?.includes('원자재');
+const isDomesticQuoteAsset = (asset = {}) => (
+  isDomesticStockCategory(asset.category)
+  || (
+    asset.currency === 'KRW'
+    && /^\d{5,6}(\.(KS|KQ))?$/i.test(String(asset.ticker || '').trim())
+  )
+);
 
 const TRADE_SORT_OPTIONS = [
   { value: 'newest', label: '최신 날짜 우선' },
@@ -188,22 +226,49 @@ const DEFAULT_TARGET_PORTFOLIO = {
   },
 };
 
-const buildLedgerEntry = ({ sourceId, asset, side, quantity, price, date, pnl = 0 }) => ({
-  id: sourceId || `${Date.now()}-${Math.random()}`,
+const buildLedgerEntry = ({
   sourceId,
-  assetId: asset.id ?? asset.assetId ?? null,
-  name: asset.name,
-  ticker: asset.ticker || '',
-  category: asset.category || '',
-  currency: asset.currency || 'KRW',
+  asset,
   side,
-  action: side === 'sell' ? '매도' : '매수',
-  quantity: Number(quantity) || 0,
-  price: Number(price) || 0,
+  quantity,
+  price,
   date,
-  pnl: Number(pnl) || 0,
-  createdAt: new Date().toISOString(),
-});
+  pnl = 0,
+  pnlKRW = 0,
+  exchangeRate,
+  fee,
+  tax,
+}) => {
+  const dividendProfile = getAssetDividendProfile(asset);
+
+  return {
+    id: sourceId || `${Date.now()}-${Math.random()}`,
+    sourceId,
+    assetId: asset.id ?? asset.assetId ?? null,
+    name: asset.name,
+    ticker: asset.ticker || '',
+    category: asset.category || '',
+    currency: asset.currency || 'KRW',
+    accountName: asset.accountName || '',
+    accountType: asset.accountType || dividendProfile.accountType,
+    sourceCountry: asset.sourceCountry || dividendProfile.sourceCountry,
+    securityType: asset.securityType || dividendProfile.securityType,
+    dividendTaxRate: Number(asset.dividendTaxRate ?? dividendProfile.dividendTaxRate) || 0,
+    dividendTaxRateExplicit: asset.dividendTaxRateExplicit === true,
+    adrFeePerShare: Number(asset.adrFeePerShare ?? dividendProfile.adrFeePerShare) || 0,
+    side,
+    action: side === 'sell' ? '매도' : '매수',
+    quantity: Number(quantity) || 0,
+    price: Number(price) || 0,
+    exchangeRate: Number(exchangeRate ?? asset.exchangeRate) || 0,
+    fee: Number(fee ?? asset.fee) || 0,
+    tax: Number(tax ?? asset.tax) || 0,
+    date,
+    pnl: Number(pnl) || 0,
+    pnlKRW: Number(pnlKRW) || 0,
+    createdAt: new Date().toISOString(),
+  };
+};
 
 const buildInitialTradeLedger = ({ assets, trades, memos }) => {
   const entries = [];
@@ -307,69 +372,26 @@ const mergeUniqueRecords = (primary = [], secondary = []) => {
   });
 };
 
-const mergeUniqueDividends = (primary = [], secondary = []) => {
-  const seen = new Set();
-  return [...primary, ...secondary].filter((dividend) => {
-    const key = [
-      dividend.id || '',
-      dividend.name || '',
-      dividend.ticker || '',
-      dividend.date || '',
-      dividend.currency || '',
-      dividend.quantity || '',
-      dividend.perShareGrossAmount || '',
-      dividend.grossAmount || '',
-      dividend.amount || '',
-    ].join('::');
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-};
-
-const mergeDividendResultsByAsset = (previousDividends = [], nextDividends = [], assets = [], refreshedAssetNames = null) => {
-  const nextAssetNames = new Set(nextDividends.map((dividend) => dividend.name).filter(Boolean));
-  const replaceNames = refreshedAssetNames
-    ? refreshedAssetNames.filter((name) => nextAssetNames.has(name))
-    : [...nextAssetNames];
-  const refreshedNames = new Set(replaceNames.filter(Boolean));
-  const activeAssetNames = new Set(assets.map((asset) => asset.name).filter(Boolean));
-  const preserved = previousDividends.filter((dividend) => (
-    activeAssetNames.has(dividend.name) && !refreshedNames.has(dividend.name)
+const recalculateDividendRowsForAssets = (dividends = [], assets = []) => dividends.map((dividend) => {
+  const dividendTicker = String(dividend.ticker || '').toUpperCase().trim();
+  const asset = assets.find((candidate) => (
+    (
+      dividend.assetId !== undefined
+      && dividend.assetId !== null
+      && String(candidate.id) === String(dividend.assetId)
+    )
+    || (
+      dividendTicker
+      && String(candidate.ticker || '').toUpperCase().trim() === dividendTicker
+    )
+    || (
+      dividend.name
+      && candidate.name === dividend.name
+    )
   ));
 
-  return mergeUniqueDividends(nextDividends, preserved)
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
-};
-
-const mergeDividendAssetRegistry = (previousRegistry = [], nextRegistry = [], assets = []) => {
-  const activeAssetNames = new Set(assets.map((asset) => asset.name).filter(Boolean));
-  const registryByName = new Map(
-    previousRegistry
-      .filter((entry) => activeAssetNames.has(entry.name))
-      .map((entry) => [entry.name, entry])
-  );
-
-  nextRegistry.forEach((entry) => {
-    if (!entry.name) return;
-    const previous = registryByName.get(entry.name);
-    registryByName.set(entry.name, {
-      ...previous,
-      ...entry,
-      hasDividends: Boolean(previous?.hasDividends || entry.hasDividends),
-      sourceDividendCount: Math.max(
-        Number(previous?.sourceDividendCount) || 0,
-        Number(entry.sourceDividendCount) || 0,
-      ),
-      earnedDividendCount: Math.max(
-        Number(previous?.earnedDividendCount) || 0,
-        Number(entry.earnedDividendCount) || 0,
-      ),
-    });
-  });
-
-  return [...registryByName.values()].sort((a, b) => a.name.localeCompare(b.name));
-};
+  return asset ? recalculateEstimatedDividendRow(dividend, asset) : dividend;
+});
 
 const isRecordForAsset = (record, asset) => {
   if (!record || !asset) return false;
@@ -402,13 +424,17 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []),
     tradeLedger,
   );
+  const autoDividends = recalculateDividendRowsForAssets(
+    mergeUniqueDividends(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []),
+    assets,
+  );
   return {
     ...snapshot,
     assets,
     trades,
     memos: mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []),
     tradeLedger,
-    autoDividends: mergeUniqueDividends(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []),
+    autoDividends,
     dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], assets),
     targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
     portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
@@ -452,12 +478,6 @@ const normalizeInputTicker = (ticker = '') => String(ticker)
 
 const getCurrencySymbol = (currency) => ({ USD: '$', JPY: '¥', KRW: '₩' }[currency] || currency);
 
-const getDividendWithholdingRate = (currency, category = '') => {
-  if (currency === 'USD') return 0.15;
-  if (currency === 'KRW' || isDomesticStockCategory(category)) return 0.154;
-  return 0.154;
-};
-
 const isJapaneseTicker = (ticker = '') => /^\d{4}(\.T)?$/.test(normalizeInputTicker(ticker));
 
 const getTargetItemCurrency = (categoryId, ticker = '', savedCurrency = '') => {
@@ -485,112 +505,6 @@ const isSameAssetRecord = (asset, record) => {
   );
 };
 
-const getAssetLedgerRows = (asset, ledger = []) => ledger
-  .filter((entry) => entry.date && isSameAssetRecord(asset, entry))
-  .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-const getDividendStartDate = (asset, ledger = []) => {
-  const firstBuy = getAssetLedgerRows(asset, ledger)
-    .filter((entry) => getTradeSide(entry) === 'buy')
-    .map((entry) => entry.date)
-    .sort()[0];
-
-  const candidates = [firstBuy, asset.buyDate]
-    .filter(Boolean)
-    .map((date) => ({
-      date,
-      timestamp: getDateTimestampSeconds(date),
-    }))
-    .filter((entry) => entry.timestamp > 0)
-    .sort((a, b) => a.timestamp - b.timestamp);
-
-  return candidates[0]?.date || firstBuy || asset.buyDate || '';
-};
-
-const getAssetBuyLedgerRows = (asset, ledger = []) => getAssetLedgerRows(asset, ledger)
-  .filter((entry) => getTradeSide(entry) === 'buy')
-  .sort((a, b) => {
-    const dateDelta = getDateTimestampSeconds(getRecordDate(a)) - getDateTimestampSeconds(getRecordDate(b));
-    if (dateDelta !== 0) return dateDelta;
-    return String(a.id || a.sourceId || '').localeCompare(String(b.id || b.sourceId || ''));
-  });
-
-const getDateTimestampSeconds = (date = '') => {
-  const rawDate = String(date || '').trim();
-  const dateParts = rawDate.match(/\d+/g);
-  const normalizedDate = dateParts?.length >= 3
-    ? `${dateParts[0].padStart(4, '0')}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`
-    : rawDate.replace(/\s*\/\s*/g, '-').replace(/\s+/g, '');
-  const timestamp = new Date(`${normalizedDate}T00:00:00`).getTime();
-  return Number.isFinite(timestamp) ? timestamp / 1000 : 0;
-};
-
-const getHeldQuantityOnDate = (asset, ledger = [], date = '') => {
-  const targetTimestamp = getDateTimestampSeconds(date);
-  const relatedLedger = getAssetLedgerRows(asset, ledger).filter((entry) => {
-    const entryTimestamp = getDateTimestampSeconds(entry.date);
-    return entryTimestamp > 0 && targetTimestamp > 0 && entryTimestamp <= targetTimestamp;
-  });
-  const currentAssetQuantity = parseNumber(asset.quantity);
-  if (relatedLedger.length === 0) return currentAssetQuantity;
-
-  const ledgerQuantity = relatedLedger.reduce((sum, entry) => {
-    const quantity = Number(entry.quantity) || 0;
-    return getTradeSide(entry) === 'sell' ? sum - quantity : sum + quantity;
-  }, 0);
-
-  if (ledgerQuantity > 0) return ledgerQuantity;
-  if (
-    currentAssetQuantity > 0
-    && getDateTimestampSeconds(asset.buyDate) > 0
-    && targetTimestamp >= getDateTimestampSeconds(asset.buyDate)
-  ) return currentAssetQuantity;
-  return 0;
-};
-
-const buildAutoDividendRows = ({ asset, ledger = [], dividends = {}, dividendStartDate = '' }) => {
-  const buyTimestamp = getDateTimestampSeconds(dividendStartDate || asset.buyDate);
-  const dividendEvents = Object.values(dividends || {});
-  const currentQuantity = parseNumber(asset.quantity);
-  const buildRows = (startTimestamp, useCurrentQuantityFallback = false) => dividendEvents
-    .filter(d => d.date >= startTimestamp)
-    .map((d) => {
-      const currency = asset.originalCurrency || asset.currency;
-      const dividendDate = new Date(d.date * 1000).toISOString().split('T')[0];
-      const heldQuantity = useCurrentQuantityFallback
-        ? currentQuantity
-        : getHeldQuantityOnDate(asset, ledger, dividendDate);
-      if (heldQuantity <= 0) return null;
-
-      const grossAmount = d.amount * heldQuantity;
-      const taxRate = getDividendWithholdingRate(currency, asset.category);
-      const perShareNetAmount = d.amount * (1 - taxRate);
-
-      return {
-        id: `${asset.id}-${d.date}`,
-        date: dividendDate,
-        name: asset.name,
-        quantity: heldQuantity,
-        perShareGrossAmount: d.amount,
-        perShareNetAmount,
-        grossAmount,
-        taxAmount: grossAmount * taxRate,
-        taxRate,
-        amount: perShareNetAmount * heldQuantity,
-        currency,
-      };
-    })
-    .filter(Boolean);
-
-  let rows = buildRows(buyTimestamp);
-  if (rows.length === 0 && currentQuantity > 0) {
-    const assetBuyTimestamp = getDateTimestampSeconds(asset.buyDate);
-    rows = buildRows(assetBuyTimestamp || buyTimestamp, true);
-  }
-
-  return rows;
-};
-
 const getAssetIdentityKey = (asset = {}) => {
   if (asset.id !== undefined && asset.id !== null) return `id:${asset.id}`;
   return [
@@ -604,7 +518,58 @@ const getNativePriceValue = (asset = {}) => (
   parseNumber(asset.originalCurrentPrice) || parseNumber(asset.currentPrice)
 );
 
+const getQuoteSourceLabel = (source = '') => ({
+  naver: 'NAVER',
+  tradingview: 'TradingView',
+  yahoo: 'Yahoo',
+  stooq: 'Stooq',
+  coingecko: 'CoinGecko',
+  cash: '고정값',
+}[source] || source || '시세');
+
+const getQuoteStatusMeta = (asset = {}) => {
+  if (asset.quoteSyncState === 'error') {
+    return { label: '갱신 실패', className: 'text-rose-500', dotClassName: 'bg-rose-500' };
+  }
+  if (asset.quoteSyncState === 'cached') {
+    return { label: '직전 가격', className: 'text-amber-600', dotClassName: 'bg-amber-500' };
+  }
+  if (asset.quoteSyncState !== 'success') {
+    return { label: '갱신 대기', className: 'text-slate-400', dotClassName: 'bg-slate-300' };
+  }
+  const session = String(asset.quoteSession || '').toUpperCase();
+  const delayMinutes = session.match(/DELAYED_(\d+)_MIN/)?.[1];
+  const sessionLabel = session.includes('POST_MARKET') || session.includes('AFTER_MARKET')
+    ? '시간외'
+    : session.includes('PRE_MARKET')
+      ? '장전'
+      : '';
+
+  if (sessionLabel || delayMinutes) {
+    return {
+      label: [sessionLabel, delayMinutes ? `${delayMinutes}분 지연` : ''].filter(Boolean).join(' · '),
+      className: 'text-amber-600',
+      dotClassName: 'bg-amber-500',
+    };
+  }
+  return { label: '최신 시세', className: 'text-emerald-600', dotClassName: 'bg-emerald-500' };
+};
+
+const formatQuoteTime = (value) => {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return date.toLocaleString('ko-KR', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
 const isSuspiciousLivePriceUpdate = (currentAsset = {}, updatedAsset = {}) => {
+  if (['naver', 'tradingview', 'yahoo', 'stooq', 'coingecko'].includes(updatedAsset.quoteSource)) return false;
+
   const currentPrice = getNativePriceValue(currentAsset);
   const nextPrice = getNativePriceValue(updatedAsset);
   if (currentPrice <= 0 || nextPrice <= 0) return false;
@@ -628,6 +593,11 @@ const mergeLiveAssetUpdates = (currentAssets = [], refreshedAssets = []) => {
       originalCurrency: refreshed.originalCurrency,
       currentPrice: refreshed.currentPrice,
       originalCurrentPrice: refreshed.originalCurrentPrice,
+      quoteSource: refreshed.quoteSource,
+      quoteSession: refreshed.quoteSession,
+      quoteUpdatedAt: refreshed.quoteUpdatedAt,
+      quoteSyncState: refreshed.quoteSyncState,
+      quoteSyncMessage: refreshed.quoteSyncMessage,
     };
   }));
 };
@@ -655,7 +625,6 @@ const getTargetItemSnapshotKey = (targetPortfolio) => targetPortfolio.categories
   )))
   .join('|');
 
-const cleanForFirestore = (value) => JSON.parse(JSON.stringify(value));
 const emptyPortfolioSnapshot = () => ({
   portfolioName: DEFAULT_PORTFOLIO_NAME,
   assets: [],
@@ -678,6 +647,7 @@ const App = () => {
   const [isLiveMode] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [activeTab, setActiveTab] = useState('portfolio');
+  const [privacyMode, setPrivacyMode] = useState(() => loadJson(PRIVACY_MODE_STORAGE_KEY, false));
   const [isFetching, setIsFetching] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isCloudPortfolioLoaded, setIsCloudPortfolioLoaded] = useState(!user || !db);
@@ -730,20 +700,32 @@ const App = () => {
   const [selectedAssetToUpdate, setSelectedAssetToUpdate] = useState(null);
 
   const initialAssetState = {
-  name: '',
-  ticker: '',
-  category: '국내주식',
-  currency: 'KRW',
-  averagePrice: '',
-  quantity: '',
-  buyDate: defaultBuyDate,
-  memo: ''
-};
+    name: '',
+    ticker: '',
+    category: '국내주식',
+    currency: 'KRW',
+    averagePrice: '',
+    quantity: '',
+    buyDate: defaultBuyDate,
+    exchangeRate: '',
+    fee: '',
+    tax: '',
+    accountName: '',
+    accountType: 'GENERAL',
+    sourceCountry: '',
+    securityType: '',
+    dividendTaxRate: '',
+    adrFeePerShare: '',
+    memo: '',
+  };
   const [newAsset, setNewAsset] = useState(initialAssetState);
 const initialAddBuyState = {
   quantity: '',
   averagePrice: '',
   buyDate: defaultBuyDate,
+  exchangeRate: '',
+  fee: '',
+  tax: '',
   memo: ''
 };
 
@@ -758,6 +740,9 @@ const initialSellFormState = {
   sellPrice: '',
   quantity: '',
   sellDate: defaultBuyDate,
+  exchangeRate: '',
+  fee: '',
+  tax: '',
   memo: ''
 };
 
@@ -773,6 +758,34 @@ const buyLotDraftSummary = useMemo(() => {
     averagePrice: totalQuantity > 0 ? totalCost / totalQuantity : 0,
   };
 }, [buyLotDrafts]);
+
+  useEffect(() => {
+    const handleEscape = (event) => {
+      if (event.key !== 'Escape') return;
+      setIsAdding(false);
+      setIsUpdatingAsset(false);
+      setSelectedAssetToUpdate(null);
+      setIsSellingAsset(false);
+      setSelectedAssetToSell(null);
+      setSelectedAssetToManageBuys(null);
+      setBuyLotDrafts([]);
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, []);
+
+  useEffect(() => {
+    const hasOpenDialog = Boolean(
+      isAdding || isUpdatingAsset || isSellingAsset || selectedAssetToManageBuys,
+    );
+    const previousOverflow = document.body.style.overflow;
+    if (hasOpenDialog) document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [isAdding, isUpdatingAsset, isSellingAsset, selectedAssetToManageBuys]);
 
   useEffect(() => {
     const nextCurrency = getAssetInputCurrency(newAsset.category, newAsset.ticker);
@@ -812,7 +825,7 @@ const buyLotDraftSummary = useMemo(() => {
     dividendAssetRegistry,
     targetPortfolio,
   }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, dividendAssetRegistry, targetPortfolio]);
-  const portfolioSnapshotRef = useRef(portfolioSnapshot);
+  const cloudSnapshotRef = useRef(null);
 
   useEffect(() => { saveJson(ASSETS_STORAGE_KEY, assets); }, [assets]);
   useEffect(() => { saveJson(TRADES_STORAGE_KEY, trades); }, [trades]);
@@ -822,9 +835,16 @@ const buyLotDraftSummary = useMemo(() => {
   useEffect(() => { saveJson(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY, dividendAssetRegistry); }, [dividendAssetRegistry]);
   useEffect(() => { saveJson(PORTFOLIO_NAME_STORAGE_KEY, portfolioName); }, [portfolioName]);
   useEffect(() => { saveJson(TARGET_PORTFOLIO_STORAGE_KEY, targetPortfolio); }, [targetPortfolio]);
+  useEffect(() => { saveJson(PRIVACY_MODE_STORAGE_KEY, privacyMode); }, [privacyMode]);
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
-  useEffect(() => { portfolioSnapshotRef.current = portfolioSnapshot; }, [portfolioSnapshot]);
-
+  useEffect(() => {
+    setAutoDividends((previousDividends) => {
+      const recalculated = recalculateDividendRowsForAssets(previousDividends, assets);
+      return JSON.stringify(recalculated) === JSON.stringify(previousDividends)
+        ? previousDividends
+        : recalculated;
+    });
+  }, [assets]);
   useEffect(() => {
     if (!userId || !db) {
       setIsCloudPortfolioLoaded(true);
@@ -837,14 +857,18 @@ const buyLotDraftSummary = useMemo(() => {
     const loadCloudPortfolio = async () => {
       setIsCloudPortfolioLoaded(false);
       try {
-        const portfolioRef = doc(db, 'portfolioStates', userId);
-        const snapshot = await getDoc(portfolioRef);
+        const cloudState = await loadPortfolioState(db, userId);
 
         if (cancelled) return;
 
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          const compactedData = compactPortfolioSnapshot(data);
+        if (cloudState.exists) {
+          const compactedData = compactPortfolioSnapshot(cloudState.data);
+          if (cloudState.needsMigration) {
+            await migratePortfolioState(db, userId, compactedData, userEmail);
+            if (cancelled) return;
+            addLog('클라우드 저장 구조를 안전하게 최신 버전으로 이전했습니다.', 'success');
+          }
+          cloudSnapshotRef.current = compactedData;
           setAssets(compactedData.assets);
           setTrades(compactedData.trades);
           setMemos(compactedData.memos);
@@ -856,6 +880,9 @@ const buyLotDraftSummary = useMemo(() => {
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
         } else {
           const emptySnapshot = emptyPortfolioSnapshot();
+          await migratePortfolioState(db, userId, emptySnapshot, userEmail);
+          if (cancelled) return;
+          cloudSnapshotRef.current = emptySnapshot;
           setAssets([]);
           setTrades([]);
           setMemos([]);
@@ -864,12 +891,6 @@ const buyLotDraftSummary = useMemo(() => {
           setDividendAssetRegistry([]);
           setPortfolioName(DEFAULT_PORTFOLIO_NAME);
           setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
-          await setDoc(portfolioRef, {
-            ...cleanForFirestore(emptySnapshot),
-            userEmail,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
           if (!cancelled) addLog('새 포트폴리오를 빈 상태로 시작합니다.', 'success');
         }
       } catch (error) {
@@ -895,11 +916,14 @@ const buyLotDraftSummary = useMemo(() => {
     const saveTimer = setTimeout(async () => {
       try {
         const compactedSnapshot = compactPortfolioSnapshot(portfolioSnapshot);
-        await setDoc(doc(db, 'portfolioStates', userId), {
-          ...cleanForFirestore(compactedSnapshot),
+        await savePortfolioStateDiff(
+          db,
+          userId,
+          compactedSnapshot,
+          cloudSnapshotRef.current,
           userEmail,
-          updatedAt: serverTimestamp(),
-        });
+        );
+        cloudSnapshotRef.current = compactedSnapshot;
       } catch (error) {
         console.error('Cloud portfolio save failed:', error);
         const message = error?.code === 'permission-denied'
@@ -994,23 +1018,52 @@ const buyLotDraftSummary = useMemo(() => {
         const dividendTasks = [];
         let successCount = 0;
         let failCount = 0;
+        const tradingViewAssets = currentAssets.map((asset) => (
+          isDomesticQuoteAsset(asset) ? { ...asset, ticker: '' } : asset
+        ));
+        const tradingViewQuotes = await fetchTradingViewQuotes(tradingViewAssets);
 
-        const updatedAssets = await Promise.all(currentAssets.map(async (asset) => {
+        const updatedAssets = await Promise.all(currentAssets.map(async (asset, assetIndex) => {
           let newCurrentPrice = asset.currentPrice;
           let newOriginalCurrentPrice = asset.originalCurrentPrice || asset.originalAveragePrice;
           let nextAssetCurrency = asset.currency;
+          let quoteSource = asset.quoteSource || '';
+          let quoteSession = asset.quoteSession || '';
+          let quoteUpdatedAt = asset.quoteUpdatedAt || '';
+          let quoteSyncState = asset.quoteSyncState || 'idle';
+          let quoteSyncMessage = asset.quoteSyncMessage || '';
           
           if (asset.category === '현금') {
             newCurrentPrice = 1; newOriginalCurrentPrice = 1;
+            quoteSource = 'cash';
+            quoteUpdatedAt = new Date().toISOString();
+            quoteSyncState = 'success';
+            quoteSyncMessage = '';
             successCount++;
           } else if (asset.category === '가상화폐') {
-            if (asset.currency === 'KRW' && bitcoinPrices.krw) { newCurrentPrice = bitcoinPrices.krw; successCount++; }
-            else if (asset.currency === 'USD' && bitcoinPrices.usd) { newCurrentPrice = bitcoinPrices.usd; successCount++; }
-            else failCount++;
+            if (asset.currency === 'KRW' && bitcoinPrices.krw) {
+              newCurrentPrice = bitcoinPrices.krw;
+              quoteSource = 'coingecko';
+              quoteUpdatedAt = new Date().toISOString();
+              quoteSyncState = 'success';
+              quoteSyncMessage = '';
+              successCount++;
+            } else if (asset.currency === 'USD' && bitcoinPrices.usd) {
+              newCurrentPrice = bitcoinPrices.usd;
+              quoteSource = 'coingecko';
+              quoteUpdatedAt = new Date().toISOString();
+              quoteSyncState = 'success';
+              quoteSyncMessage = '';
+              successCount++;
+            } else {
+              quoteSyncState = 'error';
+              quoteSyncMessage = '시세 제공처에서 최신 가격을 받지 못했습니다.';
+              failCount++;
+            }
           } else if (asset.ticker) {
             
             // 현재가 연동
-            const stockQuote = await fetchStockQuote(asset);
+            const stockQuote = tradingViewQuotes[assetIndex] || await fetchStockQuote(asset);
             const fetchedPrice = stockQuote?.price ?? null;
             
             if (fetchedPrice !== null) {
@@ -1019,6 +1072,20 @@ const buyLotDraftSummary = useMemo(() => {
               newOriginalCurrentPrice = fetchedPrice;
               newCurrentPrice = Math.round(newOriginalCurrentPrice * quoteRate);
               nextAssetCurrency = quoteCurrency;
+              quoteSource = stockQuote?.source || 'market';
+              quoteSession = stockQuote?.session || '';
+              quoteUpdatedAt = stockQuote?.asOf || '';
+              quoteSyncState = 'success';
+              const normalizedSession = String(stockQuote?.session || '').toUpperCase();
+              const marketSessionLabel = normalizedSession.includes('POST_MARKET')
+                ? '시간외 시세'
+                : normalizedSession.includes('PRE_MARKET')
+                  ? '장전 시세'
+                  : '';
+              const delayLabel = stockQuote?.delaySeconds
+                ? `${Math.round(stockQuote.delaySeconds / 60)}분 지연`
+                : '';
+              quoteSyncMessage = [marketSessionLabel, delayLabel].filter(Boolean).join(' · ');
               successCount++;
             } else if (Number(asset.originalCurrentPrice) > 0 || Number(asset.currentPrice) > 0) {
               const cachedCurrency = asset.currency || asset.originalCurrency || 'KRW';
@@ -1030,8 +1097,12 @@ const buyLotDraftSummary = useMemo(() => {
               newCurrentPrice = Number(asset.currentPrice) > 0
                 ? Number(asset.currentPrice)
                 : Math.round(newOriginalCurrentPrice * cachedRate);
-              successCount++;
+              quoteSyncState = 'cached';
+              quoteSyncMessage = '최신 시세를 받지 못해 직전 가격을 표시합니다.';
+              failCount++;
             } else {
+              quoteSyncState = 'error';
+              quoteSyncMessage = '시세를 가져오지 못했습니다. 종목 코드를 확인해 주세요.';
               failCount++;
               addLog(`[${asset.name}] 주가 연동 실패 (티커 재확인)`, "error");
             }
@@ -1046,24 +1117,35 @@ const buyLotDraftSummary = useMemo(() => {
                 currency: nextAssetCurrency,
                 originalCurrency: nextAssetCurrency,
                 currentPrice: newCurrentPrice,
-                originalCurrentPrice: newOriginalCurrentPrice
+                originalCurrentPrice: newOriginalCurrentPrice,
+                quoteSource,
+                quoteSession,
+                quoteUpdatedAt,
+                quoteSyncState,
+                quoteSyncMessage,
               };
 
               dividendTasks.push(
-                fetchDividends({ ...asset, ticker: yfTicker }).then((divs) => {
-                  const sourceDividendCount = divs ? Object.keys(divs).length : 0;
-                  if (!divs) return {
+                fetchDividends({
+                  ...asset,
+                  ticker: yfTicker,
+                  securityType: asset.securityType || stockQuote?.securityType || '',
+                }).then((result) => {
+                  if (!result || result.status === 'error') return {
                     asset,
-                    error: false,
+                    error: true,
                     hasDividends: false,
                     sourceDividendCount: 0,
                     rows: [],
+                    errorMessage: '공개 배당 데이터 소스에 연결하지 못했습니다.',
                   };
 
+                  const dividends = result.dividends || {};
+                  const sourceDividendCount = Object.keys(dividends).length;
                   const rows = buildAutoDividendRows({
                     asset,
                     ledger: currentTradeLedger,
-                    dividends: divs,
+                    dividends,
                     dividendStartDate,
                   });
 
@@ -1073,13 +1155,16 @@ const buyLotDraftSummary = useMemo(() => {
                     hasDividends: sourceDividendCount > 0,
                     sourceDividendCount,
                     rows,
+                    source: result.source,
+                    checkedAt: result.fetchedAt,
                   };
-                }).catch(() => ({
+                }).catch((error) => ({
                   asset,
                   error: true,
                   hasDividends: false,
                   sourceDividendCount: 0,
                   rows: [],
+                  errorMessage: error?.message || '배당 데이터 갱신 중 오류가 발생했습니다.',
                 }))
               );
             }
@@ -1089,7 +1174,12 @@ const buyLotDraftSummary = useMemo(() => {
             currency: nextAssetCurrency,
             originalCurrency: nextAssetCurrency,
             currentPrice: newCurrentPrice,
-            originalCurrentPrice: newOriginalCurrentPrice
+            originalCurrentPrice: newOriginalCurrentPrice,
+            quoteSource,
+            quoteSession,
+            quoteUpdatedAt,
+            quoteSyncState,
+            quoteSyncMessage,
           };
         }));
 
@@ -1115,17 +1205,37 @@ const buyLotDraftSummary = useMemo(() => {
               .flatMap((result) => result.rows)
               .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-            const nextRegistry = successfulResults.map((result) => ({
-              assetId: result.asset.id,
-              name: result.asset.name,
-              ticker: result.asset.ticker,
-              category: result.asset.category,
-              currency: result.asset.currency,
-              hasDividends: result.hasDividends,
-              sourceDividendCount: result.sourceDividendCount,
-              earnedDividendCount: result.rows.length,
-              checkedAt: new Date().toISOString(),
-            }));
+            const nextRegistry = dividendResults.map((result) => (
+              result.error
+                ? {
+                  assetId: result.asset.id,
+                  name: result.asset.name,
+                  ticker: result.asset.ticker,
+                  category: result.asset.category,
+                  currency: result.asset.currency,
+                  syncState: 'error',
+                  errorMessage: result.errorMessage,
+                  lastErrorAt: new Date().toISOString(),
+                }
+                : {
+                  assetId: result.asset.id,
+                  name: result.asset.name,
+                  ticker: result.asset.ticker,
+                  category: result.asset.category,
+                  currency: result.asset.currency,
+                  hasDividends: result.hasDividends,
+                  sourceDividendCount: result.sourceDividendCount,
+                  earnedDividendCount: result.rows.length,
+                  source: result.source,
+                  syncState: result.hasDividends ? 'success' : 'empty',
+                  checkedAt: result.checkedAt || new Date().toISOString(),
+                }
+            ));
+
+            const dividendFailureCount = dividendResults.length - successfulResults.length;
+            if (dividendFailureCount > 0) {
+              addLog(`일부 배당 데이터 갱신 실패 (${dividendFailureCount}건). 기존 기록을 유지합니다.`, 'error');
+            }
 
             setDividendAssetRegistry(prevRegistry => (
               mergeDividendAssetRegistry(prevRegistry, nextRegistry, currentAssets)
@@ -1176,6 +1286,7 @@ const buyLotDraftSummary = useMemo(() => {
     currentCategoryProfitUSD,
     krwNetProfit,
     usdNetProfit,
+    realizedProfitByCurrency,
     totalConvertedNetProfit,
     stockPerformanceSummary,
     dividendSummary,
@@ -1242,6 +1353,11 @@ const buyLotDraftSummary = useMemo(() => {
   const dashboardSummary = useMemo(() => {
     const purchaseKRW = enhancedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
     const evaluationProfitKRW = enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
+    const evaluationProfitByCurrency = enhancedAssets.reduce((summary, asset) => {
+      const currency = asset.currency || 'KRW';
+      summary[currency] = (summary[currency] || 0) + (Number(asset.profitNative) || 0);
+      return summary;
+    }, {});
     const dividendKRW = autoDividends.reduce((sum, dividend) => (
       sum + (Number(dividend.amount) || 0) * getCachedKrwRate(dividend.currency, currencyRates, exchangeRate || 1350, jpyKrwRate || 9.5)
     ), 0);
@@ -1255,11 +1371,30 @@ const buyLotDraftSummary = useMemo(() => {
     return {
       purchaseKRW,
       evaluationProfitKRW,
+      evaluationProfitByCurrency,
       totalReturnPercent,
       dividendKRW,
       dividendByCurrency,
     };
   }, [enhancedAssets, autoDividends, exchangeRate, jpyKrwRate, currencyRates]);
+  const evaluationProfitCurrencyParts = useMemo(() => (
+    Object.entries(dashboardSummary.evaluationProfitByCurrency || {})
+      .filter(([, amount]) => Math.abs(Number(amount) || 0) > 0.000001)
+      .sort(([leftCurrency], [rightCurrency]) => {
+        const order = { KRW: 0, USD: 1, JPY: 2 };
+        return (order[leftCurrency] ?? 9) - (order[rightCurrency] ?? 9);
+      })
+      .map(([currency, amount]) => `${amount > 0 ? '+' : ''}${formatMoney(amount, currency)}`)
+  ), [dashboardSummary.evaluationProfitByCurrency]);
+  const realizedProfitCurrencyParts = useMemo(() => (
+    Object.entries(realizedProfitByCurrency || {})
+      .filter(([, amount]) => Math.abs(Number(amount) || 0) > 0.000001)
+      .sort(([leftCurrency], [rightCurrency]) => {
+        const order = { KRW: 0, USD: 1, JPY: 2 };
+        return (order[leftCurrency] ?? 9) - (order[rightCurrency] ?? 9);
+      })
+      .map(([currency, amount]) => `${amount > 0 ? '+' : ''}${formatMoney(amount, currency)}`)
+  ), [realizedProfitByCurrency]);
   const dividendCurrencyParts = useMemo(() => (
     Object.entries(dashboardSummary.dividendByCurrency || {})
       .filter(([, amount]) => Math.abs(Number(amount) || 0) > 0.000001)
@@ -1872,7 +2007,19 @@ const buyLotDraftSummary = useMemo(() => {
     addLog('메모가 수정되었습니다.', 'success');
   };
 
-  const addLedgerEntry = ({ asset, side, quantity, price, date, pnl = 0, sourceId }) => {
+  const addLedgerEntry = ({
+    asset,
+    side,
+    quantity,
+    price,
+    date,
+    pnl = 0,
+    pnlKRW = 0,
+    sourceId,
+    exchangeRate,
+    fee,
+    tax,
+  }) => {
     const entry = buildLedgerEntry({
       sourceId,
       asset,
@@ -1881,6 +2028,10 @@ const buyLotDraftSummary = useMemo(() => {
       price,
       date,
       pnl,
+      pnlKRW,
+      exchangeRate,
+      fee,
+      tax,
     });
     setTradeLedger(prevLedger => [entry, ...prevLedger]);
   };
@@ -2017,7 +2168,19 @@ const buyLotDraftSummary = useMemo(() => {
     }));
   };
 
-  const addTradeMemo = ({ asset, action, quantity, price, date, memo, realizedPnl = 0 }) => {
+  const addTradeMemo = ({
+    asset,
+    action,
+    quantity,
+    price,
+    date,
+    memo,
+    realizedPnl = 0,
+    pnlKRW = 0,
+    exchangeRate = 0,
+    fee = 0,
+    tax = 0,
+  }) => {
     setMemos(prevMemos => [{
       id: Date.now() + Math.random(),
       assetId: asset.id,
@@ -2029,8 +2192,12 @@ const buyLotDraftSummary = useMemo(() => {
       action,
       quantity,
       price,
+      exchangeRate,
+      fee,
+      tax,
       date,
       pnl: realizedPnl,
+      pnlKRW,
       memo: memo?.trim() || '',
       createdAt: new Date().toISOString()
     }, ...prevMemos]);
@@ -2095,6 +2262,9 @@ const buyLotDraftSummary = useMemo(() => {
     quantity: '',
     averagePrice: '',
     buyDate: new Date().toISOString().split('T')[0],
+    exchangeRate: '',
+    fee: '',
+    tax: '',
     memo: ''
   });
   setIsUpdatingAsset(true);
@@ -2106,6 +2276,9 @@ const buyLotDraftSummary = useMemo(() => {
     sellPrice: '',
     quantity: '',
     sellDate: new Date().toISOString().split('T')[0],
+    exchangeRate: '',
+    fee: '',
+    tax: '',
     memo: ''
   });
   setIsSellingAsset(true);
@@ -2128,8 +2301,11 @@ const buyLotDraftSummary = useMemo(() => {
     ledgerId: row.id ? String(row.id) : '',
     sourceId: row.sourceId || '',
     date: getRecordDate(row) || asset.buyDate || defaultBuyDate,
-    quantity: String(row.quantity ?? ''),
-    price: String(row.price ?? ''),
+      quantity: String(row.quantity ?? ''),
+      price: String(row.price ?? ''),
+      exchangeRate: String(row.exchangeRate ?? ''),
+      fee: String(row.fee ?? ''),
+      tax: String(row.tax ?? ''),
   }));
 };
 
@@ -2159,6 +2335,9 @@ const buyLotDraftSummary = useMemo(() => {
       date: defaultBuyDate,
       quantity: '',
       price: '',
+      exchangeRate: '',
+      fee: '',
+      tax: '',
     },
   ]);
 };
@@ -2178,6 +2357,9 @@ const buyLotDraftSummary = useMemo(() => {
     ...lot,
     quantity: parseNumber(lot.quantity),
     price: parseNumber(lot.price),
+    exchangeRate: parseNumber(lot.exchangeRate),
+    fee: parseNumber(lot.fee),
+    tax: parseNumber(lot.tax),
   }));
 
   const hasInvalidLot = normalizedDrafts.some(lot => (
@@ -2220,10 +2402,20 @@ const buyLotDraftSummary = useMemo(() => {
       ticker: selectedAssetToManageBuys.ticker || '',
       category: selectedAssetToManageBuys.category || '',
       currency: selectedAssetToManageBuys.currency || 'KRW',
+      accountName: selectedAssetToManageBuys.accountName || '',
+      accountType: selectedAssetToManageBuys.accountType || 'GENERAL',
+      sourceCountry: selectedAssetToManageBuys.sourceCountry || '',
+      securityType: selectedAssetToManageBuys.securityType || '',
+      dividendTaxRate: Number(selectedAssetToManageBuys.dividendTaxRate) || 0,
+      dividendTaxRateExplicit: selectedAssetToManageBuys.dividendTaxRateExplicit === true,
+      adrFeePerShare: Number(selectedAssetToManageBuys.adrFeePerShare) || 0,
       side: 'buy',
       action: '매수',
       quantity: lot.quantity,
       price: lot.price,
+      exchangeRate: lot.exchangeRate,
+      fee: lot.fee,
+      tax: lot.tax,
       date: lot.date,
       pnl: 0,
       createdAt: existingRow?.createdAt || now,
@@ -2260,6 +2452,9 @@ const buyLotDraftSummary = useMemo(() => {
         action: '매수',
         quantity: row.quantity,
         price: row.price,
+        exchangeRate: row.exchangeRate,
+        fee: row.fee,
+        tax: row.tax,
         date: row.date,
         pnl: 0,
         memo: existingMemo?.memo || '',
@@ -2336,7 +2531,10 @@ const buyLotDraftSummary = useMemo(() => {
     quantity: addedQty,
     price: addedAvgNative,
     date: addBuyForm.buyDate,
-    memo: addBuyForm.memo
+    memo: addBuyForm.memo,
+    exchangeRate: parseNumber(addBuyForm.exchangeRate),
+    fee: parseNumber(addBuyForm.fee),
+    tax: parseNumber(addBuyForm.tax),
   });
   addLedgerEntry({
     asset: selectedAssetToUpdate,
@@ -2344,6 +2542,9 @@ const buyLotDraftSummary = useMemo(() => {
     quantity: addedQty,
     price: addedAvgNative,
     date: addBuyForm.buyDate,
+    exchangeRate: parseNumber(addBuyForm.exchangeRate),
+    fee: parseNumber(addBuyForm.fee),
+    tax: parseNumber(addBuyForm.tax),
   });
 
   addLog(`'${selectedAssetToUpdate.name}' 추가 매수 반영 완료`, "success");
@@ -2376,7 +2577,32 @@ const buyLotDraftSummary = useMemo(() => {
   }
 
   const avgBuyNative = parseNumber(selectedAssetToSell.originalAveragePrice || selectedAssetToSell.averagePrice);
-  const pnlNative = (sellPriceNative - avgBuyNative) * sellQty;
+  const sellFee = parseNumber(sellForm.fee);
+  const sellTax = parseNumber(sellForm.tax);
+  const sellExchangeRate = parseNumber(sellForm.exchangeRate);
+  const previewSellId = `preview-sell-${Date.now()}`;
+  const previewPosition = buildPositionFromTradeRows([
+    ...getAssetLedgerRows(selectedAssetToSell, tradeLedger),
+    {
+      id: previewSellId,
+      assetId: selectedAssetToSell.id,
+      name: selectedAssetToSell.name,
+      ticker: selectedAssetToSell.ticker,
+      category: selectedAssetToSell.category,
+      currency: selectedAssetToSell.currency,
+      side: 'sell',
+      quantity: sellQty,
+      price: sellPriceNative,
+      exchangeRate: sellExchangeRate,
+      fee: sellFee,
+      tax: sellTax,
+      date: sellForm.sellDate,
+    },
+  ]);
+  const previewSell = previewPosition.rows.find((row) => row.id === previewSellId);
+  const pnlNative = previewSell?.pnl
+    ?? ((sellPriceNative - avgBuyNative) * sellQty - sellFee - sellTax);
+  const pnlKRW = previewSell?.pnlKRW || 0;
   const selectedAssetIdentity = getAssetIdentity(selectedAssetToSell);
   const updatedAt = new Date().toISOString();
 
@@ -2391,7 +2617,11 @@ const buyLotDraftSummary = useMemo(() => {
     buyPrice: avgBuyNative,
     sellPrice: sellPriceNative,
     quantity: sellQty,
-    pnl: pnlNative
+    exchangeRate: sellExchangeRate,
+    fee: sellFee,
+    tax: sellTax,
+    pnl: pnlNative,
+    pnlKRW,
   };
 
   const remainingQty = currentQty - sellQty;
@@ -2419,7 +2649,11 @@ const buyLotDraftSummary = useMemo(() => {
     price: sellPriceNative,
     date: sellForm.sellDate,
     memo: sellForm.memo,
-    realizedPnl: pnlNative
+    realizedPnl: pnlNative,
+    pnlKRW,
+    exchangeRate: sellExchangeRate,
+    fee: sellFee,
+    tax: sellTax,
   });
   addLedgerEntry({
     sourceId: `trade-${trade.id}`,
@@ -2429,6 +2663,10 @@ const buyLotDraftSummary = useMemo(() => {
     price: sellPriceNative,
     date: sellForm.sellDate,
     pnl: pnlNative,
+    pnlKRW,
+    exchangeRate: sellExchangeRate,
+    fee: sellFee,
+    tax: sellTax,
   });
 
   addLog(`'${selectedAssetToSell.name}' 매도 반영 완료`, "success");
@@ -2446,11 +2684,21 @@ const buyLotDraftSummary = useMemo(() => {
     const ticker = normalizeInputTicker(newAsset.ticker);
     const assetCurrency = getAssetInputCurrency(newAsset.category, ticker, newAsset.currency);
     const parsedQty = parseNumber(newAsset.quantity);
-  const parsedAvgPrice = newAsset.category === '현금'
-    ? 1
-    : parseNumber(newAsset.averagePrice);
+    const parsedAvgPrice = newAsset.category === '현금'
+      ? 1
+      : parseNumber(newAsset.averagePrice);
     let krwAveragePrice = parsedAvgPrice;
     if (assetCurrency === 'USD' || assetCurrency === 'JPY') krwAveragePrice = parsedAvgPrice;
+    const dividendProfile = getAssetDividendProfile({
+      ...newAsset,
+      ticker,
+      currency: assetCurrency,
+    });
+    const dividendTaxRateInput = parseNumber(newAsset.dividendTaxRate);
+    const dividendTaxRate = dividendTaxRateInput > 1
+      ? dividendTaxRateInput / 100
+      : dividendTaxRateInput;
+    const hasExplicitDividendTaxRate = String(newAsset.dividendTaxRate).trim() !== '';
 
     const asset = {
       id: Date.now(), 
@@ -2465,6 +2713,13 @@ const buyLotDraftSummary = useMemo(() => {
       originalAveragePrice: parsedAvgPrice, 
       originalCurrentPrice: parsedAvgPrice, 
       buyDate: newAsset.buyDate,
+      accountName: newAsset.accountName.trim(),
+      accountType: newAsset.accountType || 'GENERAL',
+      sourceCountry: newAsset.sourceCountry || dividendProfile.sourceCountry,
+      securityType: newAsset.securityType || dividendProfile.securityType,
+      dividendTaxRate: hasExplicitDividendTaxRate ? dividendTaxRate : dividendProfile.dividendTaxRate,
+      dividendTaxRateExplicit: hasExplicitDividendTaxRate,
+      adrFeePerShare: parseNumber(newAsset.adrFeePerShare) || dividendProfile.adrFeePerShare,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       color: getCategoryDetailColor(newAsset.category, assets.filter(asset => asset.category === newAsset.category).length)
@@ -2477,7 +2732,10 @@ const buyLotDraftSummary = useMemo(() => {
       quantity: parsedQty,
       price: parsedAvgPrice,
       date: newAsset.buyDate,
-      memo: newAsset.memo
+      memo: newAsset.memo,
+      exchangeRate: parseNumber(newAsset.exchangeRate),
+      fee: parseNumber(newAsset.fee),
+      tax: parseNumber(newAsset.tax),
     });
     addLedgerEntry({
       asset,
@@ -2485,6 +2743,9 @@ const buyLotDraftSummary = useMemo(() => {
       quantity: parsedQty,
       price: parsedAvgPrice,
       date: newAsset.buyDate,
+      exchangeRate: parseNumber(newAsset.exchangeRate),
+      fee: parseNumber(newAsset.fee),
+      tax: parseNumber(newAsset.tax),
     });
     setNewAsset(initialAssetState);
     setIsAdding(false);
@@ -2512,6 +2773,8 @@ const buyLotDraftSummary = useMemo(() => {
           }}
           onPortfolioNameChange={setPortfolioName}
           onRefresh={() => setRefreshTrigger(t => t + 1)}
+          onTogglePrivacy={() => setPrivacyMode(value => !value)}
+          privacyMode={privacyMode}
           userEmail={userEmail}
           onSignOut={signOutUser}
         />
@@ -2519,6 +2782,16 @@ const buyLotDraftSummary = useMemo(() => {
         {/* 탭 */}
         <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
+        <main
+          id={`panel-${activeTab}`}
+          role="tabpanel"
+          aria-labelledby={`tab-${activeTab}`}
+          className="relative"
+        >
+          <div
+            className={`transition-[filter,opacity] duration-200 ${privacyMode ? 'pointer-events-none select-none blur-md opacity-35' : ''}`}
+            aria-hidden={privacyMode}
+          >
         {activeTab === 'portfolio' && (
           <div className="space-y-5 animate-in fade-in duration-500">
             <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-3">
@@ -2535,21 +2808,25 @@ const buyLotDraftSummary = useMemo(() => {
                   value: `${dashboardSummary.totalReturnPercent > 0 ? '+' : ''}${dashboardSummary.totalReturnPercent.toFixed(2)}%`,
                   icon: dashboardSummary.totalReturnPercent >= 0 ? TrendingUp : TrendingDown,
                   tone: dashboardSummary.totalReturnPercent >= 0 ? 'text-emerald-600' : 'text-rose-600',
-                  helper: formatMoney(dashboardSummary.evaluationProfitKRW, 'KRW'),
+                  helper: evaluationProfitCurrencyParts.length > 0
+                    ? evaluationProfitCurrencyParts.join(' / ')
+                    : formatMoney(0, 'KRW'),
                 },
                 {
                   label: '실현손익',
-                  value: `${totalConvertedNetProfit > 0 ? '+' : ''}${formatMoney(totalConvertedNetProfit, 'KRW')}`,
+                  value: realizedProfitCurrencyParts.length > 0
+                    ? realizedProfitCurrencyParts.join(' / ')
+                    : formatMoney(0, 'KRW'),
                   icon: ArrowRightLeft,
                   tone: totalConvertedNetProfit >= 0 ? 'text-emerald-600' : 'text-rose-600',
-                  helper: '매도 기록 기준',
+                  helper: `원화 환산 ${totalConvertedNetProfit > 0 ? '+' : ''}${formatMoney(totalConvertedNetProfit, 'KRW')}`,
                 },
                 {
-                  label: '배당 수익',
+                  label: '배당 추정',
                   value: dividendCurrencyParts.length > 0 ? dividendCurrencyParts.join(' / ') : formatMoney(0, 'KRW'),
                   icon: Receipt,
                   tone: dashboardSummary.dividendKRW >= 0 ? 'text-slate-900' : 'text-rose-600',
-                  helper: '세후 누적 · 통화별 표시',
+                  helper: '공시 주당 분배금 × 배당락일 보유수량',
                 },
               ].map((item) => {
                 const Icon = item.icon;
@@ -2603,6 +2880,12 @@ const buyLotDraftSummary = useMemo(() => {
                     onClick={handleChartRingClick}
                     role={!selectedCategory ? 'button' : undefined}
                     tabIndex={!selectedCategory ? 0 : undefined}
+                    aria-label={!selectedCategory ? '가장 큰 자산 분류 상세 보기' : undefined}
+                    onKeyDown={(event) => {
+                      if (selectedCategory || !['Enter', ' '].includes(event.key)) return;
+                      event.preventDefault();
+                      if (currentChartData[0]) setSelectedCategory(currentChartData[0].name);
+                    }}
                   />
                   <div className="absolute inset-[12%] rounded-full bg-white shadow-inner shadow-slate-100/80" />
 	                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none p-4 lg:p-6">
@@ -2693,6 +2976,19 @@ const buyLotDraftSummary = useMemo(() => {
                                 {asset.category !== '현금' && (
                                   <p className="text-[10px] md:text-[11px] text-slate-400 font-bold mt-1 truncate">
                                     최초 매수일 {asset.displayBuyDate || asset.buyDate || '-'}
+                                  </p>
+                                )}
+                                {asset.category !== '현금' && (
+                                  <p
+                                    className={`mt-1 flex items-center gap-1.5 text-[9px] md:text-[10px] font-black ${getQuoteStatusMeta(asset).className}`}
+                                    title={asset.quoteSyncMessage || '시장 시세 동기화 상태'}
+                                  >
+                                    <span className={`h-1.5 w-1.5 rounded-full ${getQuoteStatusMeta(asset).dotClassName}`} />
+                                    <span>{getQuoteStatusMeta(asset).label}</span>
+                                    <span className="font-bold text-slate-400">
+                                      {getQuoteSourceLabel(asset.quoteSource)}
+                                      {formatQuoteTime(asset.quoteUpdatedAt) ? ` · ${formatQuoteTime(asset.quoteUpdatedAt)}` : ''}
+                                    </span>
                                   </p>
                                 )}
                               </div>
@@ -2836,7 +3132,7 @@ const buyLotDraftSummary = useMemo(() => {
               <div className="p-5 md:p-7 border-b border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white">
                 <div>
                   <h3 className="text-base md:text-lg font-black text-slate-900">종목별 총 손익</h3>
-                  <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">평가손익, 실현손익, 세후 배당을 합산합니다.</p>
+                  <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">평가손익, 실현손익, 자동 추정 배당을 합산합니다.</p>
                 </div>
                 <div className="relative w-full md:w-72">
                   <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
@@ -2856,7 +3152,7 @@ const buyLotDraftSummary = useMemo(() => {
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">누적 매수/매도</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">평가 손익</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">실현 손익</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">세후 배당</th>
+                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">배당 추정</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">총 손익</th>
                     </tr>
                   </thead>
@@ -2939,7 +3235,7 @@ const buyLotDraftSummary = useMemo(() => {
                   </div>
                 ) : (
                   <span className="text-[9px] md:text-[10px] bg-slate-100 text-slate-600 px-2 py-1 md:px-3 md:py-1.5 rounded-full font-black tracking-widest uppercase">
-                    매수일 기준 세후 자동 추출
+                    매수일 기준 자동 추정
                   </span>
                 )}
               </div>
@@ -2959,13 +3255,13 @@ const buyLotDraftSummary = useMemo(() => {
                           <p className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">상세 보기</p>
                         </div>
                         <div className="text-right whitespace-nowrap shrink-0">
-                          <p className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest mb-0.5 md:mb-1">세후 누적 배당금</p>
+                          <p className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest mb-0.5 md:mb-1">누적 배당 추정액</p>
                           <p className="text-lg md:text-xl font-black text-slate-900">{formatMoney(summary.totalAmount, summary.currency)}</p>
                         </div>
                       </div>
                       
-                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[10px] md:text-[11px] font-black tracking-widest ${summary.status.includes('완료') ? 'bg-emerald-50 text-emerald-600' : summary.status.includes('이번 달') ? 'bg-slate-100 text-slate-700' : 'bg-slate-200/50 text-slate-500'}`}>
-                        {summary.status} {summary.status.includes('예정') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
+                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[10px] md:text-[11px] font-black tracking-widest ${summary.status.includes('실패') ? 'bg-rose-50 text-rose-600' : summary.status.includes('확인') ? 'bg-emerald-50 text-emerald-600' : summary.status.includes('이번 달') ? 'bg-slate-100 text-slate-700' : 'bg-slate-200/50 text-slate-500'}`}>
+                        {summary.status} {summary.status.includes('예상') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
                       </div>
                     </div>
                   )) : (
@@ -2983,10 +3279,11 @@ const buyLotDraftSummary = useMemo(() => {
                         <tr>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">기준 수량</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">주당 세후</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5">지급 일자</th>
+                          <th className="px-4 py-4 md:px-8 md:py-5">배당락일</th>
                           <th className="px-4 py-4 md:px-8 md:py-5">종목명</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">세전</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">세금</th>
+                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">수수료</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">세후</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-center">상태</th>
                         </tr>
@@ -2996,18 +3293,41 @@ const buyLotDraftSummary = useMemo(() => {
                           <tr key={div.id} className="hover:bg-white transition-colors group">
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{Number(div.quantity || 0).toLocaleString()}주</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{formatMoney(div.perShareNetAmount ?? 0, div.currency)}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-slate-500 whitespace-nowrap">{div.date}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-slate-500 whitespace-nowrap">
+                              {div.exDate || div.date}
+                              {(div.actualPaymentDate || div.paymentDate) && (
+                                <span className="block mt-1 text-[9px] text-slate-400">
+                                  지급 {div.actualPaymentDate || div.paymentDate}
+                                </span>
+                              )}
+                            </td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-black text-slate-800 whitespace-nowrap">{div.name}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{formatMoney(div.grossAmount ?? div.amount, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-rose-500 whitespace-nowrap">-{formatMoney(div.taxAmount ?? 0, div.currency)}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-amber-600 whitespace-nowrap">-{formatMoney(div.feeAmount ?? 0, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-black text-slate-900 whitespace-nowrap">{formatMoney(div.amount, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-center whitespace-nowrap">
-                              <span className="text-[9px] md:text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-black tracking-widest uppercase">지급 완료</span>
+                              <span
+                                title={div.taxNote || ''}
+                                className={`text-[9px] md:text-[10px] px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-black tracking-widest uppercase ${
+                                  div.taxCalculationMode === 'tax-basis'
+                                    ? 'bg-amber-50 text-amber-700'
+                                    : div.status === 'estimated'
+                                      ? 'bg-blue-50 text-blue-600'
+                                      : 'bg-emerald-50 text-emerald-600'
+                                }`}
+                              >
+                                {div.taxCalculationMode === 'tax-basis'
+                                  ? '과표 확인'
+                                  : div.status === 'estimated'
+                                    ? '자동 추정'
+                                    : '지급 완료'}
+                              </span>
                             </td>
                           </tr>
                         )) : (
                           <tr>
-                            <td colSpan="8" className="px-4 py-12 md:px-8 md:py-16 text-center">
+                            <td colSpan="9" className="px-4 py-12 md:px-8 md:py-16 text-center">
                               <p className="text-slate-400 font-bold mb-2 text-xs md:text-sm">해당하는 배당 지급 내역이 없습니다.</p>
                             </td>
                           </tr>
@@ -3514,22 +3834,30 @@ const buyLotDraftSummary = useMemo(() => {
         )}
 
         {activeTab === 'notes' && (
-          <MemoTab
-            memos={visibleMemos}
-            stockOptions={memoStockOptions}
-            stockFilter={memoStockFilter}
-            onStockFilterChange={setMemoStockFilter}
-            sortMode={memoSortMode}
-            onSortModeChange={setMemoSortMode}
-            sortOptions={TRADE_SORT_OPTIONS}
-            summary={memoSummary}
-            manualMemo={manualMemo}
-            onManualMemoChange={setManualMemo}
-            onAddManualMemo={handleAddManualMemo}
-            onRemoveMemo={removeMemo}
-            onUpdateMemo={updateMemoText}
-            formatMoney={formatMoney}
-          />
+          <React.Suspense
+            fallback={(
+              <div className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm font-bold text-slate-400">
+                메모장을 불러오는 중입니다...
+              </div>
+            )}
+          >
+            <MemoTab
+              memos={visibleMemos}
+              stockOptions={memoStockOptions}
+              stockFilter={memoStockFilter}
+              onStockFilterChange={setMemoStockFilter}
+              sortMode={memoSortMode}
+              onSortModeChange={setMemoSortMode}
+              sortOptions={TRADE_SORT_OPTIONS}
+              summary={memoSummary}
+              manualMemo={manualMemo}
+              onManualMemoChange={setManualMemo}
+              onAddManualMemo={handleAddManualMemo}
+              onRemoveMemo={removeMemo}
+              onUpdateMemo={updateMemoText}
+              formatMoney={formatMoney}
+            />
+          </React.Suspense>
         )}
 
         {activeTab === 'calendar' && (
@@ -3626,15 +3954,30 @@ const buyLotDraftSummary = useMemo(() => {
             </div>
           </div>
         )}
+          </div>
+          {privacyMode && (
+            <div className="absolute inset-x-0 top-10 z-10 flex justify-center px-4">
+              <button
+                type="button"
+                onClick={() => setPrivacyMode(false)}
+                className="rounded-2xl border border-slate-200 bg-white/95 px-5 py-3 text-xs md:text-sm font-black text-slate-700 shadow-lg backdrop-blur hover:bg-white"
+              >
+                금액이 가려져 있습니다 · 눌러서 보기
+              </button>
+            </div>
+          )}
+        </main>
       </div>
 
       {/* 자산 추가 모달 */}
 {isAdding && (
   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
+    <div role="dialog" aria-modal="true" aria-label="새 자산 등록" className="bg-white w-full max-w-2xl rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
       <div className="flex justify-between items-center mb-6 md:mb-8 sticky top-0 bg-white z-10 pt-2 pb-2">
         <h3 className="text-lg md:text-xl font-black text-slate-900">새 자산 등록</h3>
         <button
+          type="button"
+          aria-label="새 자산 등록 닫기"
           onClick={() => {
             setIsAdding(false);
           }}
@@ -3760,6 +4103,124 @@ const buyLotDraftSummary = useMemo(() => {
 
         </div>
 
+        <details className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+          <summary className="cursor-pointer text-xs md:text-sm font-black text-slate-700">
+            계좌·세금·환율 세부 정보
+          </summary>
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              계좌명
+              <input
+                type="text"
+                className="mt-1.5 w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-800 normal-case tracking-normal"
+                value={newAsset.accountName}
+                onChange={(e) => setNewAsset({ ...newAsset, accountName: e.target.value })}
+                placeholder="예: KB 해외주식"
+              />
+            </label>
+            <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              계좌 유형
+              <select
+                className="mt-1.5 w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-800 normal-case tracking-normal"
+                value={newAsset.accountType}
+                onChange={(e) => setNewAsset({ ...newAsset, accountType: e.target.value })}
+              >
+                <option value="GENERAL">일반 계좌</option>
+                <option value="ISA">ISA</option>
+                <option value="PENSION">연금 계좌</option>
+                <option value="IRP">IRP</option>
+              </select>
+            </label>
+
+            {newAsset.category !== '현금' && (
+              <>
+                <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  원천징수 국가
+                  <select
+                    className="mt-1.5 w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-800 normal-case tracking-normal"
+                    value={newAsset.sourceCountry}
+                    onChange={(e) => setNewAsset({ ...newAsset, sourceCountry: e.target.value })}
+                  >
+                    <option value="">종목 기준 자동</option>
+                    <option value="KR">대한민국</option>
+                    <option value="US">미국</option>
+                    <option value="DK">덴마크</option>
+                    <option value="JP">일본</option>
+                  </select>
+                </label>
+                <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  증권 유형
+                  <select
+                    className="mt-1.5 w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-800 normal-case tracking-normal"
+                    value={newAsset.securityType}
+                    onChange={(e) => setNewAsset({ ...newAsset, securityType: e.target.value })}
+                  >
+                    <option value="">종목 기준 자동</option>
+                    <option value="STOCK">주식</option>
+                    <option value="ETF">ETF</option>
+                    <option value="ADR">ADR</option>
+                  </select>
+                </label>
+                <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  배당 원천세율 (%)
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="mt-1.5 w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-800 normal-case tracking-normal"
+                    value={formatInputNumber(newAsset.dividendTaxRate)}
+                    onChange={(e) => setNewAsset({ ...newAsset, dividendTaxRate: sanitizeNumericInput(e.target.value) })}
+                    placeholder="비우면 자동"
+                  />
+                </label>
+                <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  ADR 수수료 / 주
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="mt-1.5 w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-800 normal-case tracking-normal"
+                    value={formatInputNumber(newAsset.adrFeePerShare)}
+                    onChange={(e) => setNewAsset({ ...newAsset, adrFeePerShare: sanitizeNumericInput(e.target.value) })}
+                    placeholder="비우면 자동"
+                  />
+                </label>
+              </>
+            )}
+
+            <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              거래 환율
+              <input
+                type="text"
+                inputMode="decimal"
+                className="mt-1.5 w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-800 normal-case tracking-normal"
+                value={formatInputNumber(newAsset.exchangeRate)}
+                onChange={(e) => setNewAsset({ ...newAsset, exchangeRate: sanitizeNumericInput(e.target.value) })}
+                placeholder={newAsset.currency === 'KRW' ? '원화는 생략 가능' : '매수 당시 원/외화'}
+              />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                수수료
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  className="mt-1.5 w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-800 normal-case tracking-normal"
+                  value={formatInputNumber(newAsset.fee)}
+                  onChange={(e) => setNewAsset({ ...newAsset, fee: sanitizeNumericInput(e.target.value) })}
+                />
+              </label>
+              <label className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                거래세
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  className="mt-1.5 w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-800 normal-case tracking-normal"
+                  value={formatInputNumber(newAsset.tax)}
+                  onChange={(e) => setNewAsset({ ...newAsset, tax: sanitizeNumericInput(e.target.value) })}
+                />
+              </label>
+            </div>
+          </div>
+        </details>
 
         <div>
           <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
@@ -3787,7 +4248,7 @@ const buyLotDraftSummary = useMemo(() => {
 {/* 매수 기록 관리 모달 */}
 {selectedAssetToManageBuys && (
   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[105] flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl p-5 md:p-7 shadow-xl animate-in zoom-in-95 duration-300 flex flex-col">
+    <div role="dialog" aria-modal="true" aria-label={`${selectedAssetToManageBuys.name} 매수 기록 관리`} className="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl p-5 md:p-7 shadow-xl animate-in zoom-in-95 duration-300 flex flex-col">
       <div className="flex justify-between items-start gap-4 mb-5 md:mb-6">
         <div className="min-w-0">
           <h3 className="text-lg md:text-xl font-black text-slate-900 truncate">
@@ -3798,6 +4259,8 @@ const buyLotDraftSummary = useMemo(() => {
           </p>
         </div>
         <button
+          type="button"
+          aria-label="매수 기록 관리 닫기"
           onClick={closeBuyLotsModal}
           className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors shrink-0"
         >
@@ -3885,6 +4348,39 @@ const buyLotDraftSummary = useMemo(() => {
                 >
                   <Trash2 size={16} />
                 </button>
+                <div className="md:col-span-5 grid grid-cols-3 gap-2 border-t border-slate-200/70 pt-3">
+                  <label className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                    거래 환율
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="mt-1.5 w-full px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs font-bold text-slate-800 normal-case tracking-normal"
+                      value={formatInputNumber(lot.exchangeRate)}
+                      onChange={(e) => updateBuyLotDraft(lot.draftId, 'exchangeRate', sanitizeNumericInput(e.target.value))}
+                      placeholder="선택"
+                    />
+                  </label>
+                  <label className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                    수수료
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="mt-1.5 w-full px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs font-bold text-slate-800 normal-case tracking-normal"
+                      value={formatInputNumber(lot.fee)}
+                      onChange={(e) => updateBuyLotDraft(lot.draftId, 'fee', sanitizeNumericInput(e.target.value))}
+                    />
+                  </label>
+                  <label className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                    거래세
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="mt-1.5 w-full px-3 py-2 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs font-bold text-slate-800 normal-case tracking-normal"
+                      value={formatInputNumber(lot.tax)}
+                      onChange={(e) => updateBuyLotDraft(lot.draftId, 'tax', sanitizeNumericInput(e.target.value))}
+                    />
+                  </label>
+                </div>
               </div>
             );
           })}
@@ -3912,12 +4408,14 @@ const buyLotDraftSummary = useMemo(() => {
 {/* 추가 매수 모달 */}
 {isUpdatingAsset && selectedAssetToUpdate && (
   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
+    <div role="dialog" aria-modal="true" aria-label={`${selectedAssetToUpdate.name} 추가 매수`} className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
       <div className="flex justify-between items-center mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-black text-slate-900">
           {selectedAssetToUpdate.name} 추가 매수
         </h3>
         <button
+          type="button"
+          aria-label="추가 매수 닫기"
           onClick={() => {
             setIsUpdatingAsset(false);
             setSelectedAssetToUpdate(null);
@@ -3981,6 +4479,40 @@ const buyLotDraftSummary = useMemo(() => {
             }
           />
         </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+            거래 환율
+            <input
+              type="text"
+              inputMode="decimal"
+              className="mt-1.5 w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs font-bold text-slate-800 normal-case tracking-normal"
+              value={formatInputNumber(addBuyForm.exchangeRate)}
+              onChange={(e) => setAddBuyForm((prev) => ({ ...prev, exchangeRate: sanitizeNumericInput(e.target.value) }))}
+              placeholder="선택"
+            />
+          </label>
+          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+            수수료
+            <input
+              type="text"
+              inputMode="decimal"
+              className="mt-1.5 w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs font-bold text-slate-800 normal-case tracking-normal"
+              value={formatInputNumber(addBuyForm.fee)}
+              onChange={(e) => setAddBuyForm((prev) => ({ ...prev, fee: sanitizeNumericInput(e.target.value) }))}
+            />
+          </label>
+          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+            거래세
+            <input
+              type="text"
+              inputMode="decimal"
+              className="mt-1.5 w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs font-bold text-slate-800 normal-case tracking-normal"
+              value={formatInputNumber(addBuyForm.tax)}
+              onChange={(e) => setAddBuyForm((prev) => ({ ...prev, tax: sanitizeNumericInput(e.target.value) }))}
+            />
+          </label>
+        </div>
       </div>
 
 
@@ -4014,12 +4546,14 @@ const buyLotDraftSummary = useMemo(() => {
 {/* 매도 모달 */}
 {isSellingAsset && selectedAssetToSell && (
   <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120] flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
+    <div role="dialog" aria-modal="true" aria-label={`${selectedAssetToSell.name} 매도`} className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
       <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-black text-slate-900 whitespace-nowrap">
           {selectedAssetToSell.name} 매도
         </h3>
         <button
+          type="button"
+          aria-label="매도 닫기"
           onClick={() => {
             setIsSellingAsset(false);
             setSelectedAssetToSell(null);
@@ -4082,6 +4616,40 @@ const buyLotDraftSummary = useMemo(() => {
               }))
             }
           />
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+            거래 환율
+            <input
+              type="text"
+              inputMode="decimal"
+              className="mt-1.5 w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs font-bold text-slate-800 normal-case tracking-normal"
+              value={formatInputNumber(sellForm.exchangeRate)}
+              onChange={(e) => setSellForm((prev) => ({ ...prev, exchangeRate: sanitizeNumericInput(e.target.value) }))}
+              placeholder="선택"
+            />
+          </label>
+          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+            수수료
+            <input
+              type="text"
+              inputMode="decimal"
+              className="mt-1.5 w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs font-bold text-slate-800 normal-case tracking-normal"
+              value={formatInputNumber(sellForm.fee)}
+              onChange={(e) => setSellForm((prev) => ({ ...prev, fee: sanitizeNumericInput(e.target.value) }))}
+            />
+          </label>
+          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+            거래세
+            <input
+              type="text"
+              inputMode="decimal"
+              className="mt-1.5 w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs font-bold text-slate-800 normal-case tracking-normal"
+              value={formatInputNumber(sellForm.tax)}
+              onChange={(e) => setSellForm((prev) => ({ ...prev, tax: sanitizeNumericInput(e.target.value) }))}
+            />
+          </label>
         </div>
       </div>
 

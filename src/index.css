@@ -16,3 +16,19 @@ body {
   overflow-x: hidden;
   -webkit-text-size-adjust: 100%;
 }
+
+:where(button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.55);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

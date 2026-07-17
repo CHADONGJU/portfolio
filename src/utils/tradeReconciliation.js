@@ -63,6 +63,11 @@ export const normalizeTradeRow = (record = {}) => {
   const price = getTradeRecordPrice(record);
   const quantity = parseTradeNumber(record.quantity);
   const pnl = parseTradeNumber(record.pnl ?? record.realizedPnl);
+  const fee = parseTradeNumber(record.fee ?? record.commission);
+  const tax = parseTradeNumber(record.tax ?? record.transactionTax);
+  const exchangeRate = parseTradeNumber(
+    record.exchangeRate ?? record.tradeExchangeRate ?? record.fxRate,
+  );
 
   return {
     ...record,
@@ -71,12 +76,18 @@ export const normalizeTradeRow = (record = {}) => {
     price,
     quantity,
     pnl,
+    fee,
+    tax,
+    exchangeRate,
   };
 };
 
 export const buildPositionFromTradeRows = (rows = []) => {
   let quantity = 0;
-  let cost = 0;
+  let priceCost = 0;
+  let allInCost = 0;
+  let krwCost = 0;
+  let hasCompleteKrwCost = true;
 
   const normalizedRows = rows
     .map(normalizeTradeRow)
@@ -88,35 +99,82 @@ export const buildPositionFromTradeRows = (rows = []) => {
     })
     .map((row) => {
       if (row.side === 'buy') {
+        const priceAmount = row.quantity * row.price;
+        const charges = row.fee + row.tax;
         quantity += row.quantity;
-        cost += row.quantity * row.price;
-        return { ...row, pnl: 0 };
+        priceCost += priceAmount;
+        allInCost += priceAmount + charges;
+        if (row.currency === 'KRW') {
+          krwCost += priceAmount + charges;
+        } else if (row.exchangeRate > 0) {
+          krwCost += (priceAmount + charges) * row.exchangeRate;
+        } else {
+          hasCompleteKrwCost = false;
+        }
+        return {
+          ...row,
+          pnl: 0,
+          pnlKRW: 0,
+          grossAmount: priceAmount,
+          netAmount: priceAmount + charges,
+        };
       }
 
-      const averageCost = quantity > EPSILON ? cost / quantity : 0;
+      const averagePriceCost = quantity > EPSILON ? priceCost / quantity : 0;
+      const averageAllInCost = quantity > EPSILON ? allInCost / quantity : 0;
+      const averageKrwCost = quantity > EPSILON && hasCompleteKrwCost
+        ? krwCost / quantity
+        : 0;
       const matchedQuantity = Math.min(row.quantity, quantity);
+      const matchedRatio = row.quantity > EPSILON ? matchedQuantity / row.quantity : 0;
+      const allocatedCharges = (row.fee + row.tax) * matchedRatio;
+      const netProceeds = (row.price * matchedQuantity) - allocatedCharges;
       const computedPnl = matchedQuantity > EPSILON
-        ? (row.price - averageCost) * matchedQuantity
+        ? netProceeds - (averageAllInCost * matchedQuantity)
         : row.pnl;
+      const sellRate = row.currency === 'KRW' ? 1 : row.exchangeRate;
+      const computedPnlKRW = (
+        matchedQuantity > EPSILON
+        && averageKrwCost > 0
+        && sellRate > 0
+      )
+        ? (
+          (row.price * matchedQuantity * sellRate)
+          - (allocatedCharges * sellRate)
+          - (averageKrwCost * matchedQuantity)
+        )
+        : parseTradeNumber(row.pnlKRW);
 
       quantity = Math.max(0, quantity - matchedQuantity);
-      cost = Math.max(0, cost - (averageCost * matchedQuantity));
+      priceCost = Math.max(0, priceCost - (averagePriceCost * matchedQuantity));
+      allInCost = Math.max(0, allInCost - (averageAllInCost * matchedQuantity));
+      if (hasCompleteKrwCost) {
+        krwCost = Math.max(0, krwCost - (averageKrwCost * matchedQuantity));
+      }
       if (quantity <= EPSILON) {
         quantity = 0;
-        cost = 0;
+        priceCost = 0;
+        allInCost = 0;
+        krwCost = 0;
+        hasCompleteKrwCost = true;
       }
 
       return {
         ...row,
         pnl: computedPnl,
+        pnlKRW: computedPnlKRW,
         matchedQuantity,
+        grossAmount: row.price * matchedQuantity,
+        netAmount: netProceeds,
       };
     });
 
   return {
     rows: normalizedRows,
     quantity,
-    averagePrice: quantity > EPSILON ? cost / quantity : 0,
+    averagePrice: quantity > EPSILON ? priceCost / quantity : 0,
+    allInAveragePrice: quantity > EPSILON ? allInCost / quantity : 0,
+    averageCostKRW: quantity > EPSILON && hasCompleteKrwCost ? krwCost / quantity : 0,
     firstBuyDate: normalizedRows.find((row) => row.side === 'buy')?.date || '',
     hasBuyRows: normalizedRows.some((row) => row.side === 'buy'),
   };

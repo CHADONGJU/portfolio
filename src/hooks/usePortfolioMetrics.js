@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { getCategoryColor, getCategoryDetailColor } from '../constants';
+import { isEstimatedDividendRecord } from '../utils/dividendCalculations';
 import { buildCanonicalTradeRows, buildPositionFromTradeRows } from '../utils/tradeReconciliation';
 
 const parseMetricNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
@@ -164,8 +165,18 @@ export const usePortfolioMetrics = ({
   const usdTrades = realizedRecords.filter(t => t.currency === 'USD');
   const krwNetProfit = krwTrades.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0);
   const usdNetProfit = usdTrades.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0);
+  const realizedProfitByCurrency = realizedRecords.reduce((summary, trade) => {
+    const currency = trade.currency || 'KRW';
+    summary[currency] = (summary[currency] || 0) + (Number(trade.pnl) || 0);
+    return summary;
+  }, {});
   const totalConvertedNetProfit = realizedRecords.reduce((acc, t) => (
-    acc + ((Number(t.pnl) || 0) * realizedKrwRate(t.currency))
+    acc + (
+      Number.isFinite(Number(t.pnlKRW))
+      && (t.currency === 'KRW' || Number(t.exchangeRate) > 0)
+        ? Number(t.pnlKRW)
+        : (Number(t.pnl) || 0) * realizedKrwRate(t.currency)
+    )
   ), 0);
 
   const stockPerformanceSummary = useMemo(() => {
@@ -197,7 +208,14 @@ export const usePortfolioMetrics = ({
       const currency = firstAsset?.currency || firstTrade?.currency || firstDividend?.currency || 'KRW';
 
       const unrealizedKRW = assetRows.reduce((sum, asset) => sum + asset.profitKRW, 0);
-      const realizedKRW = sellRows.reduce((sum, trade) => sum + ((Number(trade.pnl) || 0) * getRecordRate(trade.currency)), 0);
+      const realizedKRW = sellRows.reduce((sum, trade) => (
+        sum + (
+          Number.isFinite(Number(trade.pnlKRW))
+          && (trade.currency === 'KRW' || Number(trade.exchangeRate) > 0)
+            ? Number(trade.pnlKRW)
+            : (Number(trade.pnl) || 0) * getRecordRate(trade.currency)
+        )
+      ), 0);
       const dividendKRW = dividendRows.reduce((sum, dividend) => sum + (dividend.amount * getRecordRate(dividend.currency)), 0);
       const totalKRW = unrealizedKRW + realizedKRW + dividendKRW;
 
@@ -244,7 +262,7 @@ export const usePortfolioMetrics = ({
     const activeDividendAssets = new Map();
 
     dividendAssetRegistry.forEach((entry) => {
-      if (!entry?.hasDividends || !entry.name) return;
+      if ((!entry?.hasDividends && entry?.syncState !== 'error') || !entry.name) return;
       const asset = assets.find(candidate => candidate.name === entry.name);
       if (!asset) return;
       activeDividendAssets.set(entry.name, { asset, registry: entry });
@@ -264,9 +282,11 @@ export const usePortfolioMetrics = ({
           category: asset.category || registry?.category || '',
           currency: asset.currency || registry?.currency || 'KRW',
           totalAmount: 0,
-          status: '지급 기록 대기',
+          status: registry?.syncState === 'error' ? '배당 갱신 실패' : '배당 기록 대기',
           expectedAmount: 0,
           history: [],
+          syncState: registry?.syncState || 'empty',
+          syncMessage: registry?.errorMessage || '',
         };
         return;
       }
@@ -297,14 +317,19 @@ export const usePortfolioMetrics = ({
       nextDate.setMonth(nextDate.getMonth() + monthDiff);
       const nextMonth = nextDate.getMonth() + 1;
       const nextYear = nextDate.getFullYear();
+      const isConfirmedPayment = !isEstimatedDividendRecord(lastDiv)
+        || Boolean(lastDiv.actualPaymentDate)
+        || ['paid', 'actual', 'confirmed'].includes(String(lastDiv.status || '').toLowerCase());
 
       if (lastDate.getMonth() + 1 === currentMonth && lastDate.getFullYear() === currentYear) {
-        status = '이번 달 지급 완료';
+        status = isConfirmedPayment ? '이번 달 지급 확인' : '이번 달 배당락 확인';
       } else if (nextMonth === currentMonth && nextYear === currentYear) {
-        status = '이번 달 지급 예정';
+        status = '이번 달 배당 예상';
       } else {
-        status = `${nextMonth}월 지급 예정`;
+        status = `${nextMonth}월 배당 예상`;
       }
+
+      if (registry?.syncState === 'error') status = '갱신 실패 · 기존 기록';
 
       summary[asset.name] = {
         name: asset.name,
@@ -315,6 +340,8 @@ export const usePortfolioMetrics = ({
         status,
         expectedAmount,
         history: assetDivs,
+        syncState: registry?.syncState || 'success',
+        syncMessage: registry?.errorMessage || '',
       };
     });
     
@@ -358,6 +385,7 @@ export const usePortfolioMetrics = ({
     currentUsdValueForUsd,
     krwNetProfit,
     usdNetProfit,
+    realizedProfitByCurrency,
     totalConvertedNetProfit,
     stockPerformanceSummary,
     dividendSummary,
