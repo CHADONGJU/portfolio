@@ -2,18 +2,26 @@ export const fetchKrwRate = async (currency = 'USD') => {
   const baseCurrency = String(currency || 'USD').toUpperCase();
   if (baseCurrency === 'KRW') return 1;
 
-  const primary = await fetch(`https://open.er-api.com/v6/latest/${baseCurrency}`);
-  if (primary.ok) {
-    const data = await primary.json();
-    if (data?.rates?.KRW) return data.rates.KRW;
+  try {
+    const primary = await fetch(`https://open.er-api.com/v6/latest/${baseCurrency}`);
+    if (primary.ok) {
+      const data = await primary.json();
+      if (data?.rates?.KRW) return data.rates.KRW;
+    }
+  } catch {
+    // Continue to the fallback provider.
   }
 
-  const fallback = await fetch(
-    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${baseCurrency.toLowerCase()}.json`,
-  );
-  if (fallback.ok) {
-    const data = await fallback.json();
-    if (data?.[baseCurrency.toLowerCase()]?.krw) return data[baseCurrency.toLowerCase()].krw;
+  try {
+    const fallback = await fetch(
+      `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${baseCurrency.toLowerCase()}.json`,
+    );
+    if (fallback.ok) {
+      const data = await fallback.json();
+      if (data?.[baseCurrency.toLowerCase()]?.krw) return data[baseCurrency.toLowerCase()].krw;
+    }
+  } catch {
+    // Let callers decide how to handle a missing rate.
   }
 
   return null;
