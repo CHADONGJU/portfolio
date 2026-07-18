@@ -48,6 +48,7 @@ import {
 } from './utils/tradeReconciliation';
 import {
   buildAutoDividendRows,
+  buildDividendAssetUniverse,
   getAssetBuyLedgerRows,
   getAssetDividendProfile,
   getAssetLedgerRows,
@@ -409,9 +410,10 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []),
     tradeLedger,
   );
+  const dividendAssets = buildDividendAssetUniverse(assets, tradeLedger);
   const autoDividends = recalculateDividendRowsForAssets(
     mergeUniqueDividends(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []),
-    assets,
+    dividendAssets,
     tradeLedger,
   );
   return {
@@ -424,7 +426,7 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     confirmedDividends: mergeUniqueDividends(
       Array.isArray(snapshot.confirmedDividends) ? snapshot.confirmedDividends : [],
     ),
-    dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], assets),
+    dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], dividendAssets),
     targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
     portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
       ? snapshot.portfolioName
@@ -1088,7 +1090,7 @@ const buyLotDraftSummary = useMemo(() => {
         if (currentJpyRate > 0) nextCurrencyRates.JPY = currentJpyRate;
 
         const currentTradeLedger = tradeLedgerRef.current;
-        const dividendTasks = [];
+        const dividendAssets = buildDividendAssetUniverse(currentAssets, currentTradeLedger);
         let successCount = 0;
         let failCount = 0;
         let dividendSuccessCount = 0;
@@ -1098,6 +1100,51 @@ const buyLotDraftSummary = useMemo(() => {
         ));
         setSyncProgress({ label: '종목 시세 조회 중', completed: 0, total: currentAssets.length });
         const tradingViewQuotes = await fetchTradingViewQuotes(tradingViewAssets);
+        const dividendTasks = dividendAssets
+          .filter((asset) => asset.ticker && !isCommodityCategory(asset.category))
+          .map((asset) => {
+            const dividendStartDate = getDividendStartDate(asset, currentTradeLedger);
+            return fetchDividends({
+              ...asset,
+              ticker: asset.ticker.toUpperCase().trim(),
+              forceRefresh: forceNetwork,
+            }).then((result) => {
+              if (!result || result.status === 'error') return {
+                asset,
+                error: true,
+                hasDividends: false,
+                sourceDividendCount: 0,
+                rows: [],
+                errorMessage: '공개 배당 데이터 소스에 연결하지 못했습니다.',
+              };
+
+              const dividends = result.dividends || {};
+              const sourceDividendCount = Object.keys(dividends).length;
+              const rows = buildAutoDividendRows({
+                asset,
+                ledger: currentTradeLedger,
+                dividends,
+                dividendStartDate,
+              });
+
+              return {
+                asset,
+                error: false,
+                hasDividends: sourceDividendCount > 0,
+                sourceDividendCount,
+                rows,
+                source: result.source,
+                checkedAt: result.fetchedAt,
+              };
+            }).catch((error) => ({
+              asset,
+              error: true,
+              hasDividends: false,
+              sourceDividendCount: 0,
+              rows: [],
+              errorMessage: error?.message || '배당 데이터 갱신 중 오류가 발생했습니다.',
+            }));
+          });
 
         const updatedAssets = await Promise.all(currentAssets.map(async (asset, assetIndex) => {
           let newCurrentPrice = asset.currentPrice;
@@ -1191,53 +1238,6 @@ const buyLotDraftSummary = useMemo(() => {
               addLog(`[${asset.name}] 주가 연동 실패 (티커 재확인)`, "error");
             }
 
-            // 배당 갱신 실행 
-            if (!isCommodityCategory(asset.category)) {
-              const dividendStartDate = getDividendStartDate(asset, currentTradeLedger);
-              dividendTasks.push(
-                fetchDividends({
-                  ...asset,
-                  ticker: asset.ticker.toUpperCase().trim(),
-                  securityType: asset.securityType || stockQuote?.securityType || '',
-                  forceRefresh: forceNetwork,
-                }).then((result) => {
-                  if (!result || result.status === 'error') return {
-                    asset,
-                    error: true,
-                    hasDividends: false,
-                    sourceDividendCount: 0,
-                    rows: [],
-                    errorMessage: '공개 배당 데이터 소스에 연결하지 못했습니다.',
-                  };
-
-                  const dividends = result.dividends || {};
-                  const sourceDividendCount = Object.keys(dividends).length;
-                  const rows = buildAutoDividendRows({
-                    asset,
-                    ledger: currentTradeLedger,
-                    dividends,
-                    dividendStartDate,
-                  });
-
-                  return {
-                    asset,
-                    error: false,
-                    hasDividends: sourceDividendCount > 0,
-                    sourceDividendCount,
-                    rows,
-                    source: result.source,
-                    checkedAt: result.fetchedAt,
-                  };
-                }).catch((error) => ({
-                  asset,
-                  error: true,
-                  hasDividends: false,
-                  sourceDividendCount: 0,
-                  rows: [],
-                  errorMessage: error?.message || '배당 데이터 갱신 중 오류가 발생했습니다.',
-                }))
-              );
-            }
           }
           return {
             ...asset,
@@ -1319,18 +1319,18 @@ const buyLotDraftSummary = useMemo(() => {
           }
 
           setDividendAssetRegistry(prevRegistry => (
-            mergeDividendAssetRegistry(prevRegistry, nextRegistry, currentAssets)
+            mergeDividendAssetRegistry(prevRegistry, nextRegistry, dividendAssets)
           ));
 
           setAutoDividends(prevDividends => (
             successfulResults.length > 0
-              ? mergeDividendResultsByAsset(prevDividends, nextAutoDividends, currentAssets, refreshedAssetNames)
-              : prevDividends.filter(dividend => currentAssets.some(asset => asset.name === dividend.name))
+              ? mergeDividendResultsByAsset(prevDividends, nextAutoDividends, dividendAssets, refreshedAssetNames)
+              : prevDividends.filter(dividend => dividendAssets.some(asset => asset.name === dividend.name))
           ));
 
         } else {
           setAutoDividends(prevDividends => (
-            prevDividends.filter(dividend => currentAssets.some(asset => asset.name === dividend.name))
+            prevDividends.filter(dividend => dividendAssets.some(asset => asset.name === dividend.name))
           ));
         }
 
@@ -1468,6 +1468,9 @@ const buyLotDraftSummary = useMemo(() => {
     selectedDividendAsset,
     dividendFilter,
   });
+  const selectedDividendSummary = useMemo(() => (
+    dividendSummary.find((summary) => summary.name === selectedDividendAsset) || null
+  ), [dividendSummary, selectedDividendAsset]);
 
   const isDomesticStockChart = selectedCategory?.includes('국내') && selectedCategory?.includes('주식');
   const isOverseasStockChart = selectedCategory?.includes('해외') && selectedCategory?.includes('주식');
@@ -3389,6 +3392,11 @@ const buyLotDraftSummary = useMemo(() => {
                       <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[10px] md:text-[11px] font-black tracking-widest ${summary.status.includes('실패') ? 'bg-rose-50 text-rose-600' : summary.status.includes('확인') ? 'bg-emerald-50 text-emerald-600' : summary.status.includes('이번 달') ? 'bg-slate-100 text-slate-700' : 'bg-slate-200/50 text-slate-500'}`}>
                         {summary.status}
                       </div>
+                      {summary.syncMessage && summary.history.length === 0 && (
+                        <p className="mt-3 text-[10px] md:text-xs font-bold leading-relaxed text-slate-400">
+                          {summary.syncMessage}
+                        </p>
+                      )}
                     </div>
                   )) : (
                     <div className="col-span-full py-8 md:py-12 text-center text-slate-400 font-bold text-xs md:text-sm">
@@ -3478,6 +3486,11 @@ const buyLotDraftSummary = useMemo(() => {
                           <tr>
                             <td colSpan="9" className="px-4 py-12 md:px-8 md:py-16 text-center">
                               <p className="text-slate-400 font-bold mb-2 text-xs md:text-sm">해당하는 배당 지급 내역이 없습니다.</p>
+                              {selectedDividendSummary?.syncMessage && (
+                                <p className="text-[10px] md:text-xs font-bold text-slate-300">
+                                  {selectedDividendSummary.syncMessage}
+                                </p>
+                              )}
                             </td>
                           </tr>
                         )}

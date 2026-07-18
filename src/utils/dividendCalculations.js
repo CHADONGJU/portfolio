@@ -1,4 +1,5 @@
 import {
+  buildPositionFromTradeRows,
   getTradeRecordDate,
   getTradeRecordSide,
   normalizeTradeTicker,
@@ -13,10 +14,18 @@ const COUNTRY_DIVIDEND_TAX_RATES = {
 };
 
 const KNOWN_SECURITY_PROFILES = {
+  JEPI: {
+    sourceCountry: 'US',
+    securityType: 'ETF',
+  },
   NVO: {
     sourceCountry: 'DK',
     securityType: 'ADR',
     dividendTaxRate: 0.27,
+  },
+  SPY: {
+    sourceCountry: 'US',
+    securityType: 'ETF',
   },
 };
 
@@ -216,6 +225,72 @@ export const getDividendStartDate = (asset, ledger = []) => {
   return candidates[0]?.date || '';
 };
 
+const getDividendAssetKey = (record = {}) => {
+  const ticker = normalizeTradeTicker(record.ticker || '');
+  if (ticker) return `ticker:${ticker}`;
+
+  const name = String(record.name || record.stockName || '').trim().toUpperCase();
+  return name ? `name:${name}` : '';
+};
+
+export const buildDividendAssetUniverse = (assets = [], ledger = []) => {
+  const universe = [];
+  const assetByKey = new Map();
+
+  assets.forEach((asset) => {
+    const key = getDividendAssetKey(asset);
+    if (!key || assetByKey.has(key)) return;
+    assetByKey.set(key, asset);
+    universe.push(asset);
+  });
+
+  const rowsByKey = new Map();
+  ledger.forEach((record) => {
+    const key = getDividendAssetKey(record);
+    if (!key) return;
+    if (!rowsByKey.has(key)) rowsByKey.set(key, []);
+    rowsByKey.get(key).push(record);
+  });
+
+  rowsByKey.forEach((rows, key) => {
+    if (assetByKey.has(key)) return;
+
+    const position = buildPositionFromTradeRows(rows);
+    if (!position.hasBuyRows) return;
+
+    const referenceRow = rows.find((row) => getTradeRecordSide(row) === 'buy') || rows[0];
+    const currency = String(referenceRow.currency || referenceRow.originalCurrency || 'KRW').toUpperCase();
+    const ticker = normalizeTradeTicker(referenceRow.ticker || '');
+    const name = String(referenceRow.name || referenceRow.stockName || ticker).trim();
+    if (!ticker || !name) return;
+
+    const asset = {
+      id: `ledger-dividend-${ticker}`,
+      name,
+      ticker,
+      category: referenceRow.category || (currency === 'KRW' ? '국내주식' : '해외주식'),
+      currency,
+      originalCurrency: currency,
+      quantity: position.quantity,
+      buyDate: position.firstBuyDate,
+      accountType: referenceRow.accountType || 'GENERAL',
+      sourceCountry: referenceRow.sourceCountry || '',
+      securityType: referenceRow.securityType || '',
+      dividendTaxRate: referenceRow.dividendTaxRate,
+      dividendTaxRateExplicit: referenceRow.dividendTaxRateExplicit === true,
+      dividendTaxBasisPerShare: referenceRow.dividendTaxBasisPerShare,
+      adrFeePerShare: referenceRow.adrFeePerShare,
+      adrFeePerShareExplicit: referenceRow.adrFeePerShareExplicit === true,
+      isClosedPosition: position.quantity <= 0,
+    };
+
+    assetByKey.set(key, asset);
+    universe.push(asset);
+  });
+
+  return universe;
+};
+
 export const getHeldQuantityOnExDate = (
   asset,
   ledger = [],
@@ -319,6 +394,7 @@ export const buildAutoDividendRows = ({
 
       return {
         id: `${asset.id}-${dividend.date}`,
+        assetId: asset.id,
         date: exDate,
         exDate,
         recordDate: normalizeEventDate(dividend.recordDate),
@@ -326,6 +402,7 @@ export const buildAutoDividendRows = ({
         actualPaymentDate: '',
         name: asset.name,
         ticker: asset.ticker || '',
+        category: asset.category || '',
         quantity: heldQuantity,
         quantitySource: hasBuyLedger ? 'trade-ledger' : 'asset-buy-date',
         perShareGrossAmount,
@@ -457,35 +534,16 @@ export const selectReportedDividendRecords = (
   const verifiedCalculated = calculatedDividends.filter(isVerifiableDividendRecord);
   if (verifiedConfirmed.length === 0) return verifiedCalculated;
 
-  const getAssetKey = (dividend = {}) => {
-    const ticker = normalizeTradeTicker(dividend.ticker || '');
-    return ticker || String(dividend.name || '').trim().toUpperCase();
-  };
-  const getPeriodKey = (dividend = {}) => {
-    const explicitPeriod = String(dividend.period || '').trim();
-    if (/^\d{4}-\d{2}$/.test(explicitPeriod)) return explicitPeriod;
-
-    const date = String(
-      dividend.actualPaymentDate
-      || dividend.paymentDate
-      || dividend.exDate
-      || dividend.date
-      || '',
-    ).trim();
-    return /^\d{4}-\d{2}/.test(date) ? date.slice(0, 7) : '';
-  };
-
-  const confirmedPeriods = new Set(verifiedConfirmed.map((dividend) => (
-    `${getAssetKey(dividend)}::${getPeriodKey(dividend)}`
-  )));
-  const confirmedAssets = new Set(verifiedConfirmed.map(getAssetKey));
-  const remainingCalculated = verifiedCalculated.filter((dividend) => {
-    const assetKey = getAssetKey(dividend);
-    const periodKey = getPeriodKey(dividend);
-    if (!assetKey) return true;
-    if (!periodKey) return !confirmedAssets.has(assetKey);
-    return !confirmedPeriods.has(`${assetKey}::${periodKey}`);
-  });
+  // A brokerage receipt is authoritative for the currency it covers. Mixing
+  // other estimated rows from the same currency makes the dashboard total drift
+  // away from the amount that was actually deposited. Calculated rows remain a
+  // fallback only for currencies without any confirmed receipt records.
+  const confirmedCurrencies = new Set(
+    verifiedConfirmed.map((dividend) => String(dividend.currency || 'KRW').toUpperCase()),
+  );
+  const remainingCalculated = verifiedCalculated.filter((dividend) => (
+    !confirmedCurrencies.has(String(dividend.currency || 'KRW').toUpperCase())
+  ));
 
   return [...verifiedConfirmed, ...remainingCalculated].sort((left, right) => {
     const leftDate = left.actualPaymentDate || left.paymentDate || left.exDate || left.date || left.period || '';

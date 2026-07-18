@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildAutoDividendRows,
+  buildDividendAssetUniverse,
   getAssetDividendProfile,
   getHeldQuantityOnExDate,
   isVerifiableDividendRecord,
@@ -667,6 +668,44 @@ test('사진에서 확인한 2025년 이후 배당 입금 기록을 통화별로
   assert.equal(krwTotal, 1660);
 });
 
+test('배당 종목군은 전량 매도한 종목도 거래 원장에서 복원한다', () => {
+  const universe = buildDividendAssetUniverse(
+    [{ id: 1, name: 'JEPI', ticker: 'JEPI', category: '해외주식', currency: 'USD', quantity: 10 }],
+    [
+      { id: 'qcom-buy', name: 'QCOM', ticker: 'QCOM', side: 'buy', quantity: 2, price: 150, date: '2026-01-29', currency: 'USD' },
+      { id: 'qcom-sell', name: 'QCOM', ticker: 'QCOM', side: 'sell', quantity: 2, price: 180, date: '2026-07-09', currency: 'USD' },
+    ],
+  );
+
+  assert.equal(universe.length, 2);
+  assert.equal(universe.filter((asset) => asset.ticker === 'JEPI').length, 1);
+  const closedQcom = universe.find((asset) => asset.ticker === 'QCOM');
+  assert.equal(closedQcom.quantity, 0);
+  assert.equal(closedQcom.buyDate, '2026-01-29');
+  assert.equal(closedQcom.isClosedPosition, true);
+});
+
+test('전량 매도 종목은 매도 전 배당만 계산한다', () => {
+  const ledger = [
+    { id: 'qcom-buy', name: 'QCOM', ticker: 'QCOM', side: 'buy', quantity: 2, price: 150, date: '2026-01-29', currency: 'USD' },
+    { id: 'qcom-sell', name: 'QCOM', ticker: 'QCOM', side: 'sell', quantity: 2, price: 180, date: '2026-07-09', currency: 'USD' },
+  ];
+  const [asset] = buildDividendAssetUniverse([], ledger);
+  const rows = buildAutoDividendRows({
+    asset,
+    ledger,
+    dividends: {
+      beforeSell: { date: toTimestamp('2026-06-04'), amount: 0.92 },
+      afterSell: { date: toTimestamp('2026-07-10'), amount: 0.92 },
+    },
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].quantity, 2);
+  assert.equal(rows[0].grossAmount, 1.84);
+  assert.equal(rows[0].amount, 1.564);
+});
+
 test('직접 확인한 해외 배당이 있어도 국내 ETF 자동 배당은 함께 유지한다', () => {
   const reported = selectReportedDividendRecords([
     {
@@ -697,6 +736,46 @@ test('직접 확인한 해외 배당이 있어도 국내 ETF 자동 배당은 �
 
   assert.equal(reported.length, 2);
   assert.equal(reported.find((row) => row.ticker === '477730').amount, 1120);
+});
+
+test('직접 확인 기록이 있는 통화는 다른 종목의 자동 추정치를 합산하지 않는다', () => {
+  const reported = selectReportedDividendRecords(
+    [
+      {
+        id: 'auto-spy',
+        name: 'SPY',
+        ticker: 'SPY',
+        amount: 1.62,
+        currency: 'USD',
+        quantity: 1,
+        perShareGrossAmount: 1.9,
+        calculationSource: 'market-dividend-per-share',
+        calculationValid: true,
+      },
+      {
+        id: 'auto-tata',
+        name: 'KODEX 인도타타그룹',
+        ticker: '477730',
+        amount: 1120,
+        currency: 'KRW',
+        quantity: 32,
+        perShareGrossAmount: 35,
+        calculationSource: 'market-dividend-per-share',
+        calculationValid: true,
+      },
+    ],
+    [{
+      id: 'receipt-jepi',
+      name: 'JEPI',
+      ticker: 'JEPI',
+      amount: 47.72,
+      currency: 'USD',
+      status: 'actual',
+      confirmationSource: 'user-photo-record',
+    }],
+  );
+
+  assert.deepEqual(reported.map((row) => row.id).sort(), ['auto-tata', 'receipt-jepi']);
 });
 
 test('같은 종목·월의 직접 확인 배당은 자동 계산액과 중복 합산하지 않는다', () => {

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { getCategoryColor, getCategoryDetailColor } from '../constants';
 import { isEstimatedDividendRecord } from '../utils/dividendCalculations';
+import { getEmptyDividendMessage, getEmptyDividendStatus } from '../utils/dividendSync';
 import { buildCanonicalTradeRows, buildPositionFromTradeRows } from '../utils/tradeReconciliation';
 
 const parseMetricNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
@@ -298,11 +299,11 @@ export const usePortfolioMetrics = ({
           category: asset.category || registry?.category || '',
           currency: asset.currency || registry?.currency || 'KRW',
           totalAmount: 0,
-          status: registry?.syncState === 'error' ? '배당 갱신 실패' : '배당 기록 대기',
+          status: getEmptyDividendStatus(registry),
           expectedAmount: 0,
           history: [],
           syncState: registry?.syncState || 'empty',
-          syncMessage: registry?.errorMessage || '',
+          syncMessage: getEmptyDividendMessage(registry),
         };
         return;
       }

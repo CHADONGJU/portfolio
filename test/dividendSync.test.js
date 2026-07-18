@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  getEmptyDividendMessage,
+  getEmptyDividendStatus,
   mergeDividendAssetRegistry,
   mergeDividendResultsByAsset,
 } from '../src/utils/dividendSync.js';
@@ -49,4 +51,20 @@ test('네트워크 오류는 기존 배당 기록을 지우지 않고 오류 상
   assert.equal(merged[0].checkedAt, '2026-01-01');
   assert.equal(merged[0].syncState, 'error');
   assert.equal(merged[0].errorMessage, 'timeout');
+});
+
+test('원본은 있지만 보유기간에 해당하지 않는 배당을 0건 이유로 표시한다', () => {
+  const registry = {
+    syncState: 'success',
+    sourceDividendCount: 12,
+    earnedDividendCount: 0,
+  };
+
+  assert.equal(getEmptyDividendStatus(registry), '원본 12건 · 보유기간 해당 0건');
+  assert.match(getEmptyDividendMessage(registry), /매수일 이후 배당락일/);
+});
+
+test('공개 원본이 없는 종목은 계산 전 상태와 구분한다', () => {
+  assert.equal(getEmptyDividendStatus({ syncState: 'empty' }), '공개 배당 원본 없음');
+  assert.equal(getEmptyDividendStatus(null), '배당 조회 전');
 });
