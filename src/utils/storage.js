@@ -17,6 +17,15 @@ export const loadJson = (key, fallback) => {
   }
 };
 
+export const loadLegacyJson = (key, fallback) => {
+  try {
+    const saved = localStorage.getItem(key);
+    return saved ? JSON.parse(saved) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 export const saveJson = (key, value) => {
   localStorage.setItem(getStorageKey(key), JSON.stringify(value));
 };

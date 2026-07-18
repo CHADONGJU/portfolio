@@ -948,7 +948,8 @@ export const fetchDividends = async (input) => {
     };
   }
 
-  const cachedResult = readDividendCache(primaryTicker);
+  const forceRefresh = typeof input === 'object' && input?.forceRefresh === true;
+  const cachedResult = forceRefresh ? null : readDividendCache(primaryTicker);
   if (cachedResult) return cachedResult;
 
   const stockAnalysisResult = await fetchStockAnalysisDividends(input, primaryTicker);

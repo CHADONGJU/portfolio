@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPositionFromTradeRows } from '../src/utils/tradeReconciliation.js';
 
-test('매매 수수료와 세금을 실현손익에 반영한다', () => {
+test('기존 거래 환율·수수료·세금 필드는 평단가와 실현손익에 반영하지 않는다', () => {
   const position = buildPositionFromTradeRows([
     {
       id: 'buy',
@@ -31,8 +31,8 @@ test('매매 수수료와 세금을 실현손익에 반영한다', () => {
   ]);
 
   const sell = position.rows.find((row) => row.side === 'sell');
-  assert.ok(Math.abs(sell.pnl - 76.6) < 0.000001);
-  assert.equal(sell.pnlKRW, 147280);
+  assert.equal(sell.pnl, 80);
+  assert.equal(sell.pnlKRW, 0);
   assert.equal(position.quantity, 6);
   assert.equal(position.averagePrice, 100);
 });

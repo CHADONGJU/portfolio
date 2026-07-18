@@ -14,6 +14,8 @@ dist-ssr
 *.local
 linear.config.json
 recovered-local-storage.json
+portfolio-recovery-*.json
+firestore-time-recovery/
 restore-portfolio-console-snippet.js
 recovery-localstorage-*/
 recovery-tools/

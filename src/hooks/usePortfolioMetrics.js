@@ -52,9 +52,9 @@ export const usePortfolioMetrics = ({
   // 3. 통합 가치 및 차트 계산
   const enhancedAssets = useMemo(() => {
     const toKrwRate = (currency) => {
-      if (currency === 'USD') return exchangeRate || 1350;
-      if (currency === 'JPY') return jpyKrwRate || 9.5;
-      if (currency && currency !== 'KRW') return currencyRates[currency] || 1;
+      if (currency === 'USD') return Number(exchangeRate) || Number(currencyRates.USD) || 0;
+      if (currency === 'JPY') return Number(jpyKrwRate) || Number(currencyRates.JPY) || 0;
+      if (currency && currency !== 'KRW') return Number(currencyRates[currency]) || 0;
       return 1;
     };
 
@@ -156,9 +156,9 @@ export const usePortfolioMetrics = ({
   ), [tradeLedger, trades]);
   const realizedRecords = canonicalTradeRows.filter(record => record.side === 'sell');
   const realizedKrwRate = (currency) => {
-    if (currency === 'USD') return exchangeRate || 1350;
-    if (currency === 'JPY') return jpyKrwRate || 9.5;
-    if (currency && currency !== 'KRW') return currencyRates[currency] || 1;
+    if (currency === 'USD') return Number(exchangeRate) || Number(currencyRates.USD) || 0;
+    if (currency === 'JPY') return Number(jpyKrwRate) || Number(currencyRates.JPY) || 0;
+    if (currency && currency !== 'KRW') return Number(currencyRates[currency]) || 0;
     return 1;
   };
   const krwTrades = realizedRecords.filter(t => t.currency === 'KRW');
@@ -171,21 +171,16 @@ export const usePortfolioMetrics = ({
     return summary;
   }, {});
   const totalConvertedNetProfit = realizedRecords.reduce((acc, t) => (
-    acc + (
-      Number.isFinite(Number(t.pnlKRW))
-      && (t.currency === 'KRW' || Number(t.exchangeRate) > 0)
-        ? Number(t.pnlKRW)
-        : (Number(t.pnl) || 0) * realizedKrwRate(t.currency)
-    )
+    acc + ((Number(t.pnl) || 0) * realizedKrwRate(t.currency))
   ), 0);
 
   const stockPerformanceSummary = useMemo(() => {
-    const rate = exchangeRate || 1350;
-    const jpyRate = jpyKrwRate || 9.5;
+    const rate = Number(exchangeRate) || Number(currencyRates.USD) || 0;
+    const jpyRate = Number(jpyKrwRate) || Number(currencyRates.JPY) || 0;
     const getRecordRate = (currency) => {
       if (currency === 'USD') return rate;
       if (currency === 'JPY') return jpyRate;
-      if (currency && currency !== 'KRW') return currencyRates[currency] || 1;
+      if (currency && currency !== 'KRW') return Number(currencyRates[currency]) || 0;
       return 1;
     };
     const ledgerRows = canonicalTradeRows;
@@ -209,12 +204,7 @@ export const usePortfolioMetrics = ({
 
       const unrealizedKRW = assetRows.reduce((sum, asset) => sum + asset.profitKRW, 0);
       const realizedKRW = sellRows.reduce((sum, trade) => (
-        sum + (
-          Number.isFinite(Number(trade.pnlKRW))
-          && (trade.currency === 'KRW' || Number(trade.exchangeRate) > 0)
-            ? Number(trade.pnlKRW)
-            : (Number(trade.pnl) || 0) * getRecordRate(trade.currency)
-        )
+        sum + ((Number(trade.pnl) || 0) * getRecordRate(trade.currency))
       ), 0);
       const dividendKRW = dividendRows.reduce((sum, dividend) => sum + (dividend.amount * getRecordRate(dividend.currency)), 0);
       const totalKRW = unrealizedKRW + realizedKRW + dividendKRW;
@@ -255,11 +245,13 @@ export const usePortfolioMetrics = ({
   // 5. 배당금 그룹화
   const dividendSummary = useMemo(() => {
     const summary = {};
-    const today = new Date();
-    const currentMonth = today.getMonth() + 1;
-    const currentYear = today.getFullYear();
 
     const activeDividendAssets = new Map();
+    const dividendRegistryByName = new Map(
+      dividendAssetRegistry
+        .filter((entry) => entry?.name)
+        .map((entry) => [entry.name, entry]),
+    );
 
     dividendAssetRegistry.forEach((entry) => {
       if ((!entry?.hasDividends && entry?.syncState !== 'error') || !entry.name) return;
@@ -270,7 +262,31 @@ export const usePortfolioMetrics = ({
 
     assets.forEach(asset => {
       const assetDivs = autoDividends.filter(d => d.name === asset.name);
-      if (assetDivs.length > 0) activeDividendAssets.set(asset.name, { asset, registry: null });
+      const isDividendCandidate = Boolean(
+        asset.ticker
+        && (asset.category === '국내주식' || asset.category === '해외주식'),
+      );
+      if (assetDivs.length > 0 || isDividendCandidate) {
+        activeDividendAssets.set(asset.name, {
+          asset,
+          registry: dividendRegistryByName.get(asset.name) || null,
+        });
+      }
+    });
+
+    autoDividends.forEach((dividend) => {
+      if (!dividend.name || activeDividendAssets.has(dividend.name)) return;
+      activeDividendAssets.set(dividend.name, {
+        asset: {
+          id: dividend.assetId || dividend.id,
+          name: dividend.name,
+          ticker: dividend.ticker || '',
+          category: dividend.category || (dividend.currency === 'KRW' ? '국내주식' : '해외주식'),
+          currency: dividend.currency || 'KRW',
+          quantity: 0,
+        },
+        registry: null,
+      });
     });
 
     activeDividendAssets.forEach(({ asset, registry }) => {
@@ -292,42 +308,11 @@ export const usePortfolioMetrics = ({
       }
 
       const totalAmount = assetDivs.reduce((sum, d) => sum + d.amount, 0);
-      let status = '';
-      let expectedAmount = 0;
-
       const lastDiv = assetDivs[0];
-      const lastDate = new Date(lastDiv.date);
-      const currentQuantity = parseMetricNumber(asset.quantity);
-      const lastDividendQuantity = Number(lastDiv.quantity) || 0;
-      const perShareNetAmount = Number(lastDiv.perShareNetAmount)
-        || (lastDividendQuantity > 0 ? lastDiv.amount / lastDividendQuantity : 0);
-      expectedAmount = perShareNetAmount * currentQuantity;
-
-      let monthDiff = 3; 
-      if (assetDivs.length > 1) {
-        const prevDate = new Date(assetDivs[1].date);
-        const daysDiff = (lastDate - prevDate) / (1000 * 60 * 60 * 24);
-        if (daysDiff >= 20 && daysDiff <= 45) monthDiff = 1;
-        else if (daysDiff >= 80 && daysDiff <= 110) monthDiff = 3;
-        else if (daysDiff >= 150 && daysDiff <= 200) monthDiff = 6;
-        else if (daysDiff >= 330) monthDiff = 12;
-      }
-
-      const nextDate = new Date(lastDate);
-      nextDate.setMonth(nextDate.getMonth() + monthDiff);
-      const nextMonth = nextDate.getMonth() + 1;
-      const nextYear = nextDate.getFullYear();
       const isConfirmedPayment = !isEstimatedDividendRecord(lastDiv)
         || Boolean(lastDiv.actualPaymentDate)
         || ['paid', 'actual', 'confirmed'].includes(String(lastDiv.status || '').toLowerCase());
-
-      if (lastDate.getMonth() + 1 === currentMonth && lastDate.getFullYear() === currentYear) {
-        status = isConfirmedPayment ? '이번 달 지급 확인' : '이번 달 배당락 확인';
-      } else if (nextMonth === currentMonth && nextYear === currentYear) {
-        status = '이번 달 배당 예상';
-      } else {
-        status = `${nextMonth}월 배당 예상`;
-      }
+      let status = isConfirmedPayment ? '지급 확인' : '공시·원장 계산';
 
       if (registry?.syncState === 'error') status = '갱신 실패 · 기존 기록';
 
@@ -338,7 +323,7 @@ export const usePortfolioMetrics = ({
         currency: lastDiv.currency,
         totalAmount,
         status,
-        expectedAmount,
+        expectedAmount: 0,
         history: assetDivs,
         syncState: registry?.syncState || 'success',
         syncMessage: registry?.errorMessage || '',

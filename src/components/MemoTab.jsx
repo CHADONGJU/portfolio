@@ -23,7 +23,7 @@ const MemoItem = ({ memo, onRemoveMemo, onUpdateMemo, formatMoney }) => {
   };
 
   return (
-    <article className="p-4 md:p-5 hover:bg-slate-50/60 transition-colors">
+    <article className="p-4 md:p-5 hover:bg-blue-50/35 transition-colors">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -121,11 +121,11 @@ const MemoTab = ({
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden">
-        <div className="p-5 md:p-7 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 bg-white">
+      <div className="surface-panel overflow-hidden">
+        <div className="section-header p-5 md:p-7 border-b border-slate-100 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
             <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
-              <NotebookPen className="text-slate-500" size={20} /> 메모장
+              <NotebookPen className="text-blue-600" size={20} /> 메모장
             </h3>
             <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">
               매수와 매도의 판단 근거를 종목별로 정리합니다.
@@ -133,7 +133,7 @@ const MemoTab = ({
           </div>
           <button
             onClick={() => setIsFormOpen((value) => !value)}
-            className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl font-black text-xs shadow-sm hover:bg-slate-800 transition-colors"
+            className="primary-action"
           >
             {isFormOpen ? <X size={16} /> : <Plus size={16} />}
             {isFormOpen ? '입력 닫기' : '메모 추가'}
@@ -141,15 +141,15 @@ const MemoTab = ({
         </div>
 
         <div className="p-5 md:p-6 border-b border-slate-50 grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
+          <div className="metric-card p-4">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매수 횟수</p>
             <p className="text-lg font-black text-slate-800">{summary.totalBuyCount.toLocaleString()}회</p>
           </div>
-          <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
+          <div className="metric-card metric-card--amber p-4">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매도 횟수</p>
             <p className="text-lg font-black text-slate-800">{summary.totalSellCount.toLocaleString()}회</p>
           </div>
-          <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
+          <div className="metric-card metric-card--emerald p-4">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 수익</p>
             <p className={`text-lg font-black ${summary.totalProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
               {summary.totalProfit > 0 ? '+' : ''}{formatMoney(summary.totalProfit, 'KRW')}
@@ -158,7 +158,7 @@ const MemoTab = ({
         </div>
 
         {isFormOpen && (
-          <div className="p-5 md:p-6 border-b border-slate-50 bg-white space-y-4">
+          <div className="p-5 md:p-6 border-b border-blue-100/60 bg-blue-50/25 space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
               <input
                 type="text"
@@ -190,7 +190,7 @@ const MemoTab = ({
               <textarea rows="2" className="md:col-span-2 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm resize-none" placeholder="매수/매도 근거" value={manualMemo.memo} onChange={(e) => onManualMemoChange({ ...manualMemo, memo: e.target.value })} />
             </div>
 
-            <button onClick={onAddManualMemo} className="inline-flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl font-black text-xs shadow-sm hover:bg-slate-800 transition-colors">
+            <button onClick={onAddManualMemo} className="primary-action">
               <Plus size={16} /> 저장
             </button>
           </div>

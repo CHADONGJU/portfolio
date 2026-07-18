@@ -1,20 +1,27 @@
 import { Activity, AlertCircle, CheckCircle2 } from 'lucide-react';
 
-const SyncStatusToast = ({ syncStatus }) => (
-  <div className="fixed left-3 right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] md:left-auto md:right-4 md:top-4 z-50 flex flex-col gap-2 pointer-events-none">
+const SyncStatusToast = ({ isFetching = false, syncLabel = '', syncStatus }) => (
+  <div className="fixed left-3 right-3 top-[calc(env(safe-area-inset-top)+0.75rem)] z-[100] flex flex-col gap-2 pointer-events-none md:left-auto md:right-5 md:top-5">
+    {isFetching && (
+      <div className="sync-toast sync-toast--info" role="status" aria-live="polite">
+        <span className="sync-toast__icon">
+          <Activity size={15} className="animate-spin" />
+        </span>
+        <span>{syncLabel || '시세·배당 데이터를 계산하고 있습니다.'}</span>
+      </div>
+    )}
     {syncStatus.map((log) => (
-      <div
-        key={log.id}
-        className={`w-full md:w-auto md:min-w-[18rem] px-4 py-3 rounded-2xl shadow-lg shadow-slate-200/60 border text-xs font-bold flex items-center gap-2 animate-in fade-in md:slide-in-from-right-10 duration-300 ${log.type === 'error' ? 'bg-rose-50 border-rose-100 text-rose-600' : log.type === 'success' ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-white border-slate-100 text-slate-600'}`}
-      >
-        {log.type === 'error' ? (
-          <AlertCircle size={14} />
-        ) : log.type === 'success' ? (
-          <CheckCircle2 size={14} />
-        ) : (
-          <Activity size={14} className="animate-spin" />
-        )}
-        {log.msg}
+      <div key={log.id} className={`sync-toast sync-toast--${log.type || 'info'}`}>
+        <span className="sync-toast__icon">
+          {log.type === 'error' ? (
+            <AlertCircle size={15} />
+          ) : log.type === 'success' ? (
+            <CheckCircle2 size={15} />
+          ) : (
+            <Activity size={15} className="animate-spin" />
+          )}
+        </span>
+        <span>{log.msg}</span>
       </div>
     ))}
   </div>

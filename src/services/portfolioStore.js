@@ -4,10 +4,12 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   serverTimestamp,
   setDoc,
   writeBatch,
 } from 'firebase/firestore';
+import { assertSafePortfolioWrite } from '../utils/portfolioWriteSafety';
 
 const SCHEMA_VERSION = 2;
 const BATCH_LIMIT = 400;
@@ -18,6 +20,7 @@ const COLLECTION_FIELDS = [
   'memos',
   'tradeLedger',
   'autoDividends',
+  'confirmedDividends',
   'dividendAssetRegistry',
 ];
 
@@ -83,14 +86,30 @@ const readCollectionRows = async (database, userId, field) => {
   return snapshot.docs.map((entry) => entry.data());
 };
 
+const getPortfolioRevision = (snapshotData = {}) => {
+  const updatedAt = snapshotData?.updatedAt;
+  if (typeof updatedAt?.toMillis === 'function') return String(updatedAt.toMillis());
+  if (Number.isFinite(updatedAt?.seconds)) {
+    return `${updatedAt.seconds}:${updatedAt.nanoseconds || 0}`;
+  }
+  return '';
+};
+
 export const loadPortfolioState = async (database, userId) => {
   const rootRef = doc(database, 'portfolioStates', userId);
   const rootSnapshot = await getDoc(rootRef);
-  if (!rootSnapshot.exists()) return { exists: false, data: null, needsMigration: false };
+  if (!rootSnapshot.exists()) {
+    return { exists: false, data: null, needsMigration: false, revision: '' };
+  }
 
   const rootData = rootSnapshot.data();
   if (rootData.schemaVersion !== SCHEMA_VERSION || rootData.migrationComplete !== true) {
-    return { exists: true, data: rootData, needsMigration: true };
+    return {
+      exists: true,
+      data: rootData,
+      needsMigration: true,
+      revision: getPortfolioRevision(rootData),
+    };
   }
 
   const collectionEntries = await Promise.all(
@@ -100,12 +119,28 @@ export const loadPortfolioState = async (database, userId) => {
   return {
     exists: true,
     needsMigration: false,
+    revision: getPortfolioRevision(rootData),
     data: {
       ...rootData,
       ...Object.fromEntries(collectionEntries),
     },
   };
 };
+
+export const subscribePortfolioState = (database, userId, onChange, onError) => (
+  onSnapshot(
+    doc(database, 'portfolioStates', userId),
+    { includeMetadataChanges: true },
+    (snapshot) => {
+      if (snapshot.metadata.hasPendingWrites) return;
+      onChange({
+        exists: snapshot.exists(),
+        revision: snapshot.exists() ? getPortfolioRevision(snapshot.data()) : '',
+      });
+    },
+    onError,
+  )
+);
 
 export const migratePortfolioState = async (database, userId, snapshot, userEmail = '') => {
   const rootRef = doc(database, 'portfolioStates', userId);
@@ -149,7 +184,11 @@ export const savePortfolioStateDiff = async (
   nextSnapshot,
   previousSnapshot = null,
   userEmail = '',
+  options = {},
 ) => {
+  if (options.allowDestructive !== true) {
+    assertSafePortfolioWrite(previousSnapshot, nextSnapshot);
+  }
   const operations = [];
 
   COLLECTION_FIELDS.forEach((field) => {

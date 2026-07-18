@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import { LockKeyhole, ShieldCheck } from 'lucide-react';
+import { Cloud, LineChart, LockKeyhole, ShieldCheck, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/useAuth';
 
 const getAuthErrorMessage = (code) => {
   const messages = {
     'auth/account-exists-with-different-credential': '이미 다른 로그인 방식으로 가입된 이메일입니다.',
-    'auth/popup-blocked': '팝업이 차단되었습니다. 브라우저에서 팝업을 허용해주세요.',
+    'auth/popup-blocked': '로그인 팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.',
     'auth/popup-closed-by-user': 'Google 로그인 창이 닫혔습니다.',
-    'auth/too-many-requests': '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.',
+    'auth/too-many-requests': '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.',
   };
   return messages[code] || 'Google 로그인 처리 중 오류가 발생했습니다.';
 };
@@ -17,21 +17,22 @@ const AuthGate = ({ children }) => {
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [allowLocalPreview, setAllowLocalPreview] = useState(false);
+  const allowDevelopmentPreview = import.meta.env.DEV
+    && new URLSearchParams(window.location.search).get('preview') === 'local';
 
-  if (isAuthLoading) {
+  if (isAuthLoading && !allowDevelopmentPreview) {
     return (
-      <div className="min-h-[100dvh] bg-[#f6f8fb] flex items-center justify-center p-6">
-        <div className="bg-white border border-slate-200/70 rounded-2xl p-8 shadow-[0_1px_2px_rgba(15,23,42,0.04)] text-center">
-          <div className="w-12 h-12 mx-auto rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center mb-4">
-            <ShieldCheck size={24} />
-          </div>
-          <p className="text-sm font-bold text-slate-500">로그인 상태를 확인하는 중입니다.</p>
+      <div className="auth-page">
+        <div className="auth-loading-card">
+          <div className="auth-loading-card__icon"><ShieldCheck size={25} /></div>
+          <p>안전하게 포트폴리오를 불러오는 중입니다.</p>
+          <span className="auth-loading-bar"><i /></span>
         </div>
       </div>
     );
   }
 
-  if (user || allowLocalPreview) return children;
+  if (user || allowLocalPreview || allowDevelopmentPreview) return children;
 
   const handleGoogleSignIn = async () => {
     setError('');
@@ -46,59 +47,63 @@ const AuthGate = ({ children }) => {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-[#f6f8fb] flex items-center justify-center p-4 md:p-8 text-slate-900">
-      <div className="w-full max-w-md bg-white border border-slate-200/70 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-hidden">
-        <div className="p-6 md:p-8 border-b border-slate-100 text-center">
-          <div className="w-12 h-12 mx-auto rounded-xl bg-slate-900 text-white flex items-center justify-center mb-5 shadow-sm">
-            <LockKeyhole size={22} />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-900">로그인</h1>
-        </div>
+    <div className="auth-page">
+      <div className="auth-orb auth-orb--one" aria-hidden="true" />
+      <div className="auth-orb auth-orb--two" aria-hidden="true" />
 
-        {!isFirebaseConfigured ? (
-          <div className="p-6 md:p-8 space-y-4">
-            <div className="rounded-2xl bg-amber-50 border border-amber-100 p-4">
-              <p className="text-sm font-bold text-amber-700">Firebase 설정이 필요합니다.</p>
-              <p className="mt-2 text-xs font-medium text-amber-700 leading-relaxed">
-                `.env.local`에 Firebase 웹 앱 설정값을 채우면 Google 로그인이 활성화됩니다.
-              </p>
+      <main className="auth-shell">
+        <section className="auth-story">
+          <div className="auth-brand-mark"><LineChart size={25} /></div>
+          <span className="auth-kicker"><Sparkles size={13} /> PERSONAL WEALTH OS</span>
+          <h1>흩어진 자산을<br />한 화면에서 선명하게.</h1>
+          <p>국내·해외 주식, 실현손익, 배당과 목표 비중까지 정확한 숫자와 정돈된 흐름으로 관리하세요.</p>
+
+          <div className="auth-feature-list">
+            <div><ShieldCheck size={17} /><span><strong>Private</strong> 개인 계정 기반 데이터 보호</span></div>
+            <div><Cloud size={17} /><span><strong>Synced</strong> 기기 간 포트폴리오 동기화</span></div>
+            <div><LineChart size={17} /><span><strong>Live</strong> 시장 가격과 환율 자동 반영</span></div>
+          </div>
+        </section>
+
+        <section className="auth-card">
+          <div className="auth-card__icon"><LockKeyhole size={21} /></div>
+          <span className="auth-card__eyebrow">Welcome back</span>
+          <h2>포트폴리오에 로그인</h2>
+          <p className="auth-card__description">저장된 자산과 배당 기록을 안전하게 불러옵니다.</p>
+
+          {!isFirebaseConfigured ? (
+            <div className="mt-7 space-y-4">
+              <div className="auth-notice auth-notice--warning">
+                <strong>Firebase 설정이 필요합니다.</strong>
+                <span><code>.env.local</code>에 Firebase 연결 정보를 입력하면 Google 로그인이 활성화됩니다.</span>
+              </div>
+              <button type="button" onClick={() => setAllowLocalPreview(true)} className="auth-primary-button">
+                로컬 미리보기 열기
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => setAllowLocalPreview(true)}
-              className="w-full px-5 py-3 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-slate-800 transition-colors"
-            >
-              설정 전 로컬로 보기
-            </button>
-          </div>
-        ) : (
-          <div className="p-6 md:p-8 space-y-4">
-            {error && (
-                <p className="rounded-xl bg-rose-50 border border-rose-100 px-4 py-3 text-xs font-bold text-rose-600">
-                {error}
-              </p>
-            )}
+          ) : (
+            <div className="mt-7 space-y-3">
+              {error && <p className="auth-notice auth-notice--error">{error}</p>}
 
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              disabled={isSubmitting}
-              className="w-full px-5 py-3.5 bg-white text-slate-800 rounded-xl font-bold text-sm border border-slate-200 shadow-sm hover:bg-slate-50 disabled:opacity-60 flex items-center justify-center gap-3"
-            >
-              <span className="w-5 h-5 rounded-full bg-white flex items-center justify-center text-base font-black text-slate-900">G</span>
-              {isSubmitting ? 'Google 로그인 중...' : 'Google로 계속하기'}
-            </button>
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={isSubmitting}
+                className="google-signin-button"
+              >
+                <span className="google-mark">G</span>
+                {isSubmitting ? 'Google 로그인 중…' : 'Google로 계속하기'}
+              </button>
 
-            <button
-              type="button"
-              onClick={() => setAllowLocalPreview(true)}
-              className="w-full px-5 py-3 text-xs font-bold text-slate-400"
-            >
-              로그인 없이 로컬로 보기
-            </button>
-          </div>
-        )}
-      </div>
+              <button type="button" onClick={() => setAllowLocalPreview(true)} className="auth-preview-button">
+                로그인 없이 로컬로 둘러보기
+              </button>
+            </div>
+          )}
+
+          <p className="auth-card__footer">계속하면 개인 포트폴리오 데이터 동기화에 동의하게 됩니다.</p>
+        </section>
+      </main>
     </div>
   );
 };

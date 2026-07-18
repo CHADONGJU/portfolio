@@ -1,12 +1,28 @@
-import { useState } from 'react';
-import { Briefcase, Check, Eye, EyeOff, LogOut, Pencil, Plus, RefreshCw, UserCircle, X } from 'lucide-react';
+import { useRef, useState } from 'react';
+import {
+  BriefcaseBusiness,
+  Check,
+  Download,
+  Eye,
+  EyeOff,
+  LogOut,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Upload,
+  UserCircle,
+  X,
+} from 'lucide-react';
 import { DEFAULT_PORTFOLIO_NAME } from '../constants';
 
 const DashboardHeader = ({
   exchangeRate,
   isFetching,
+  syncLabel,
   lastUpdated,
   onAddAsset,
+  onExportBackup,
+  onImportBackup,
   onPortfolioNameChange,
   onRefresh,
   onSignOut,
@@ -18,6 +34,7 @@ const DashboardHeader = ({
   const resolvedPortfolioName = portfolioName?.trim() || DEFAULT_PORTFOLIO_NAME;
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(resolvedPortfolioName);
+  const backupInputRef = useRef(null);
 
   const saveName = () => {
     const nextName = nameDraft.trim() || DEFAULT_PORTFOLIO_NAME;
@@ -32,122 +49,151 @@ const DashboardHeader = ({
   };
 
   return (
-  <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/95 p-4 md:p-6 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 relative overflow-hidden">
-    <div className="absolute top-0 left-0 w-full h-1 bg-slate-900"></div>
-    <div className="min-w-0 w-full md:w-auto">
-      <div className="flex items-center gap-3 text-slate-800">
-        <div className="p-2 md:p-2.5 bg-slate-900 rounded-xl text-white shadow-sm shrink-0">
-          <Briefcase size={20} className="md:w-6 md:h-6" />
+    <header className="dashboard-header">
+      <div className="dashboard-header__glow" aria-hidden="true" />
+
+      <div className="relative z-10 flex min-w-0 flex-1 items-start gap-3.5 md:items-center md:gap-4">
+        <div className="dashboard-header__mark">
+          <BriefcaseBusiness size={24} strokeWidth={2.1} />
         </div>
-        {isEditingName ? (
-          <form
-            className="min-w-0 flex flex-1 items-center gap-2"
-            onSubmit={(event) => {
-              event.preventDefault();
-              saveName();
-            }}
-          >
-            <input
-              value={nameDraft}
-              onChange={(event) => setNameDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  event.preventDefault();
-                  cancelNameEdit();
-                }
+
+        <div className="min-w-0 flex-1">
+          <div className="mb-1.5 flex items-center gap-2">
+            <span className="dashboard-eyebrow">Portfolio command center</span>
+            <span className="live-badge"><i /> LIVE</span>
+          </div>
+
+          {isEditingName ? (
+            <form
+              className="flex min-w-0 items-center gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                saveName();
               }}
-              className="min-w-0 w-full max-w-[24rem] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xl md:text-2xl font-bold text-slate-800 outline-none ring-2 ring-slate-100 focus:border-slate-400 focus:ring-slate-200"
-              autoFocus
-            />
-            <button
-              type="submit"
-              className="shrink-0 p-2.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition-colors"
-              title="이름 저장"
             >
-              <Check size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={cancelNameEdit}
-              className="shrink-0 p-2.5 rounded-xl bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-700 transition-colors border border-slate-100"
-              title="편집 취소"
-            >
-              <X size={16} />
-            </button>
-          </form>
-        ) : (
-          <div className="min-w-0 flex items-center gap-2">
-            <h1 className="min-w-0 text-xl md:text-2xl font-bold truncate">{resolvedPortfolioName}</h1>
-            <button
-              type="button"
-              onClick={() => {
-                setNameDraft(resolvedPortfolioName);
-                setIsEditingName(true);
-              }}
-              className="shrink-0 p-2 rounded-xl text-slate-400 hover:bg-slate-50 hover:text-slate-900 transition-colors"
-              title="이름 편집"
-            >
-              <Pencil size={15} />
-            </button>
+              <input
+                value={nameDraft}
+                onChange={(event) => setNameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    cancelNameEdit();
+                  }
+                }}
+                className="dashboard-title-input"
+                aria-label="포트폴리오 이름"
+                autoFocus
+              />
+              <button type="submit" className="icon-button icon-button--primary" title="이름 저장">
+                <Check size={16} />
+              </button>
+              <button type="button" onClick={cancelNameEdit} className="icon-button" title="편집 취소">
+                <X size={16} />
+              </button>
+            </form>
+          ) : (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <h1 className="truncate text-[1.45rem] font-black tracking-[-0.035em] text-slate-950 md:text-[1.8rem]">
+                {resolvedPortfolioName}
+              </h1>
+              <button
+                type="button"
+                onClick={() => {
+                  setNameDraft(resolvedPortfolioName);
+                  setIsEditingName(true);
+                }}
+                className="rounded-lg p-2 text-slate-400 transition hover:bg-white/80 hover:text-blue-600"
+                title="포트폴리오 이름 편집"
+              >
+                <Pencil size={14} />
+              </button>
+            </div>
+          )}
+
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-bold text-slate-500 md:text-[11px]">
+            <span className="dashboard-meta-chip">
+              <span className={`status-dot ${isFetching ? 'status-dot--syncing' : ''}`} />
+              {isFetching ? (syncLabel || '시세·배당 동기화 중') : lastUpdated ? `${lastUpdated} 기준` : '데이터 확인 중'}
+            </span>
+            <span className="dashboard-meta-chip">
+              환율&nbsp;
+              <strong className="text-slate-700">
+                {exchangeRate === 0
+                  ? '연동 중'
+                  : `$1 = ${exchangeRate.toLocaleString('ko-KR', { maximumFractionDigits: 2 })}원`}
+              </strong>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="relative z-10 flex w-full flex-wrap items-center gap-2 md:w-auto md:justify-end">
+        {userEmail && (
+          <div className="user-chip hidden xl:flex">
+            <UserCircle size={16} />
+            <span className="max-w-[170px] truncate">{userEmail}</span>
           </div>
         )}
-      </div>
-      <p className="text-slate-400 text-[10px] md:text-[11px] mt-2 font-bold uppercase tracking-[0.14em] leading-relaxed flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span>{lastUpdated ? `Sync: ${lastUpdated}` : 'Loading...'}</span>
-        <span className="hidden md:inline-block w-1 h-1 bg-slate-300 rounded-full"></span>
-        <span>
-          현재 환율:{' '}
-          {exchangeRate === 0
-            ? '연동 중...'
-            : `$1 = ${exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 2 })}원`}
-        </span>
-      </p>
-    </div>
-    <div className="flex flex-wrap gap-2 w-full md:w-auto">
-      {userEmail && (
-        <div className="w-full md:w-auto flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-slate-500">
-          <UserCircle size={16} className="text-slate-500 shrink-0" />
-          <span className="min-w-0 truncate text-[11px] font-bold max-w-[180px]">{userEmail}</span>
-        </div>
-      )}
-      <button
-        type="button"
-        onClick={onTogglePrivacy}
-        aria-pressed={privacyMode}
-        aria-label={privacyMode ? '금액 가리기 해제' : '금액 가리기'}
-        className="p-3 md:p-3.5 bg-slate-50 rounded-xl hover:bg-slate-100 transition-all border border-slate-200/70 text-slate-600"
-        title={privacyMode ? '금액 가리기 해제' : '금액 가리기'}
-      >
-        {privacyMode ? <EyeOff size={18} /> : <Eye size={18} />}
-      </button>
-      <button
-        type="button"
-        onClick={onRefresh}
-        disabled={isFetching}
-        className="p-3 md:p-3.5 bg-slate-50 rounded-xl hover:bg-slate-100 transition-all border border-slate-200/70 disabled:opacity-50 text-slate-600"
-        title="수동 갱신"
-      >
-        <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
-      </button>
-      <button
-        type="button"
-        onClick={onAddAsset}
-        className="flex-1 md:flex-none justify-center bg-slate-900 text-white px-5 md:px-6 py-3 md:py-3.5 rounded-xl font-bold text-xs shadow-sm hover:bg-slate-800 transition-colors flex items-center gap-2"
-      >
-        <Plus size={16} /> 자산 추가
-      </button>
-      {onSignOut && (
+
         <button
           type="button"
-          onClick={onSignOut}
-          className="p-3 md:p-3.5 bg-white rounded-xl hover:bg-rose-50 transition-all border border-slate-200/70 text-slate-400 hover:text-rose-600"
-          title="로그아웃"
+          onClick={onTogglePrivacy}
+          aria-pressed={privacyMode}
+          aria-label={privacyMode ? '금액 가리기 해제' : '금액 가리기'}
+          className={`icon-button ${privacyMode ? 'icon-button--active' : ''}`}
+          title={privacyMode ? '금액 가리기 해제' : '금액 가리기'}
         >
-          <LogOut size={18} />
+          {privacyMode ? <EyeOff size={18} /> : <Eye size={18} />}
         </button>
-      )}
-    </div>
-  </header>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={isFetching}
+          className="icon-button"
+          title="시세·환율·배당 새로고침"
+        >
+          <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
+        </button>
+        <button
+          type="button"
+          onClick={onExportBackup}
+          className="icon-button"
+          title="전체 데이터 JSON 백업"
+          aria-label="전체 데이터 JSON 백업"
+        >
+          <Download size={18} />
+        </button>
+        <button
+          type="button"
+          onClick={() => backupInputRef.current?.click()}
+          className="icon-button"
+          title="JSON 백업 복원"
+          aria-label="JSON 백업 복원"
+        >
+          <Upload size={18} />
+        </button>
+        <input
+          ref={backupInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(event) => {
+            const [file] = event.target.files || [];
+            onImportBackup(file);
+            event.target.value = '';
+          }}
+        />
+        <button type="button" onClick={onAddAsset} className="primary-action">
+          <Plus size={17} strokeWidth={2.5} />
+          <span>자산 추가</span>
+        </button>
+        {onSignOut && (
+          <button type="button" onClick={onSignOut} className="icon-button icon-button--danger" title="로그아웃">
+            <LogOut size={18} />
+          </button>
+        )}
+      </div>
+    </header>
   );
 };
 
