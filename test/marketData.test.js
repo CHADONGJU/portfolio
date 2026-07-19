@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  fetchKrwRateQuote,
+  fetchUsdKrwRateQuoteByDate,
   getTradingViewSymbolCandidates,
   parseJinaJsonResponse,
   parseStockAnalysisDividends,
@@ -8,6 +10,67 @@ import {
   readTradingViewQuote,
   readYahooQuotePrice,
 } from '../src/services/marketData.js';
+
+test('현재 환율은 값과 제공처와 기준 시각을 함께 반환한다', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      rates: { KRW: 1375.25 },
+      time_last_update_utc: 'Sat, 18 Jul 2026 00:00:01 +0000',
+    }),
+  });
+
+  try {
+    const quote = await fetchKrwRateQuote('USD');
+    assert.equal(quote.rate, 1375.25);
+    assert.equal(quote.source, 'open.er-api.com');
+    assert.equal(quote.asOf, '2026-07-18T00:00:01.000Z');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('해외 배당의 원화 환산은 기준일의 과거 환율을 반환한다', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    text: async () => JSON.stringify({ date: '2026-06-03', rates: { KRW: 1368.4 } }),
+  });
+
+  try {
+    const quote = await fetchUsdKrwRateQuoteByDate('2026-06-03');
+    assert.equal(quote.rate, 1368.4);
+    assert.equal(quote.source, 'frankfurter.app');
+    assert.equal(quote.asOf, '2026-06-03');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('과거 환율 원본이 브라우저에서 차단되면 읽기 전용 프록시로 같은 원본을 재조회한다', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls = [];
+  globalThis.fetch = async (url) => {
+    requestedUrls.push(String(url));
+    if (String(url).startsWith('https://api.frankfurter.app/')) {
+      throw new TypeError('Failed to fetch');
+    }
+    return {
+      ok: true,
+      text: async () => JSON.stringify({ date: '2026-06-03', rates: { KRW: 1368.4 } }),
+    };
+  };
+
+  try {
+    const quote = await fetchUsdKrwRateQuoteByDate('2026-06-03');
+    assert.equal(quote.rate, 1368.4);
+    assert.equal(quote.source, 'frankfurter.app');
+    assert.equal(requestedUrls.some((url) => url.startsWith('https://r.jina.ai/http://api.frankfurter.app/')), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test('Naver 시세는 정규장 종가보다 늦은 시간외 종가를 우선한다', () => {
   const quote = readNaverQuote({

@@ -27,9 +27,10 @@ import {
   fetchBitcoinPrices,
   fetchDividends,
   fetchKrwRate,
+  fetchKrwRateQuote,
   fetchStockQuote,
   fetchTradingViewQuotes,
-  fetchUsdKrwRate,
+  fetchUsdKrwRateQuoteByDate,
 } from './services/marketData';
 import {
   loadPortfolioState,
@@ -54,7 +55,9 @@ import {
   getAssetLedgerRows,
   getDateTimestampSeconds,
   getDividendStartDate,
+  getDividendKrwAmount,
   getHeldQuantityOnExDate,
+  isLegacyFixedDividendRecord,
   isVerifiableDividendRecord,
   recalculateEstimatedDividendRow,
   selectReportedDividendRecords,
@@ -65,6 +68,7 @@ import {
   mergeUniqueDividends,
 } from './utils/dividendSync';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
+import { arePortfolioSnapshotsEquivalent } from './utils/portfolioSnapshotComparison';
 import { db } from './firebase';
 
 const MemoTab = React.lazy(() => import('./components/MemoTab'));
@@ -416,6 +420,9 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     dividendAssets,
     tradeLedger,
   );
+  const confirmedDividends = mergeUniqueDividends(
+    Array.isArray(snapshot.confirmedDividends) ? snapshot.confirmedDividends : [],
+  ).filter((dividend) => !isLegacyFixedDividendRecord(dividend));
   return {
     ...snapshot,
     assets,
@@ -423,9 +430,7 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     memos: mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []),
     tradeLedger,
     autoDividends,
-    confirmedDividends: mergeUniqueDividends(
-      Array.isArray(snapshot.confirmedDividends) ? snapshot.confirmedDividends : [],
-    ),
+    confirmedDividends,
     dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], dividendAssets),
     targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
     portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
@@ -433,6 +438,13 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
       : DEFAULT_PORTFOLIO_NAME,
   };
 };
+
+const getCloudSnapshotBaseline = (rawSnapshot = {}, compactedSnapshot = {}) => ({
+  ...compactedSnapshot,
+  confirmedDividends: mergeUniqueDividends(
+    Array.isArray(rawSnapshot.confirmedDividends) ? rawSnapshot.confirmedDividends : [],
+  ),
+});
 
 const getTargetGroups = (targetPortfolio, categoryId) => {
   const savedGroups = targetPortfolio.groups?.[categoryId] || [];
@@ -635,6 +647,7 @@ const App = () => {
   const userEmail = user?.email || '';
   // 1. 상태 관리
   const [exchangeRate, setExchangeRate] = useState(0); 
+  const [exchangeRateInfo, setExchangeRateInfo] = useState({ source: '', asOf: '' });
   const [jpyKrwRate, setJpyKrwRate] = useState(0);
   const [currencyRates, setCurrencyRates] = useState({ KRW: 1 });
   const [isLiveMode] = useState(true);
@@ -867,7 +880,9 @@ const buyLotDraftSummary = useMemo(() => {
             if (cancelled) return;
             addLog('클라우드 저장 구조를 안전하게 최신 버전으로 이전했습니다.', 'success');
           }
-          cloudSnapshotRef.current = cloudState.needsMigration ? compactedData : compactedCloudData;
+          cloudSnapshotRef.current = cloudState.needsMigration
+            ? compactedData
+            : getCloudSnapshotBaseline(cloudState.data, compactedCloudData);
           cloudRevisionRef.current = cloudState.revision || '';
           setAssets(compactedData.assets);
           setTrades(compactedData.trades);
@@ -930,24 +945,10 @@ const buyLotDraftSummary = useMemo(() => {
 
         const compactedData = compactPortfolioSnapshot(cloudState.data);
         const currentData = compactPortfolioSnapshot(portfolioSnapshotRef.current);
-        cloudSnapshotRef.current = compactedData;
+        cloudSnapshotRef.current = getCloudSnapshotBaseline(cloudState.data, compactedData);
         cloudRevisionRef.current = cloudState.revision || revision;
 
-        const stateFields = [
-          'portfolioName',
-          'assets',
-          'trades',
-          'memos',
-          'tradeLedger',
-          'autoDividends',
-          'confirmedDividends',
-          'dividendAssetRegistry',
-          'targetPortfolio',
-        ];
-        const pickState = (snapshot) => Object.fromEntries(
-          stateFields.map((field) => [field, snapshot[field]]),
-        );
-        if (JSON.stringify(pickState(currentData)) === JSON.stringify(pickState(compactedData))) return;
+        if (arePortfolioSnapshotsEquivalent(currentData, compactedData)) return;
 
         applyingCloudSnapshotRef.current = true;
         setAssets(compactedData.assets);
@@ -1070,15 +1071,25 @@ const buyLotDraftSummary = useMemo(() => {
         };
         
         // [1] 환율/코인 연동
-        const [fetchedRate, fetchedJpyRate, bitcoinPrices] = await Promise.all([
-          fetchUsdKrwRate(),
+        const [fetchedRateQuote, fetchedJpyRate, bitcoinPrices] = await Promise.all([
+          fetchKrwRateQuote('USD'),
           fetchKrwRate('JPY'),
           fetchBitcoinPrices(),
         ]);
+        const fetchedRate = Number(fetchedRateQuote?.rate) || 0;
 
         if (fetchedRate) {
           currentRate = fetchedRate;
-          if (shouldShowSyncLogs) addLog(`실시간 환율 확인: 1$ = ${currentRate.toLocaleString(undefined, {maximumFractionDigits:2})}원`, "info");
+          setExchangeRateInfo({
+            source: fetchedRateQuote.source || '',
+            asOf: fetchedRateQuote.asOf || '',
+          });
+          if (shouldShowSyncLogs) {
+            const rateDate = fetchedRateQuote.asOf
+              ? new Date(fetchedRateQuote.asOf).toLocaleString('ko-KR')
+              : '기준 시각 미제공';
+            addLog(`환율 확인: 1 USD = ${currentRate.toLocaleString(undefined, { maximumFractionDigits: 2 })}원 · ${rateDate}`, 'info');
+          }
         } else {
           if (shouldShowSyncLogs) addLog("환율 서버 응답 지연", "error");
         }
@@ -1281,9 +1292,62 @@ const buyLotDraftSummary = useMemo(() => {
 
           const successfulResults = dividendResults.filter((result) => !result.error);
           const refreshedAssetNames = successfulResults.map((result) => result.asset.name).filter(Boolean);
-          const nextAutoDividends = successfulResults
-            .flatMap((result) => result.rows)
-            .sort((a, b) => new Date(b.date) - new Date(a.date));
+          const todayKey = new Date().toISOString().slice(0, 10);
+          const usdRateRequests = new Map();
+          const getUsdRateQuote = (date) => {
+            if (!date || date >= todayKey) {
+              return Promise.resolve(fetchedRateQuote || {
+                rate: currentRate,
+                source: 'latest-rate-fallback',
+                asOf: todayKey,
+              });
+            }
+            if (!usdRateRequests.has(date)) {
+              usdRateRequests.set(date, fetchUsdKrwRateQuoteByDate(date).then((quote) => (
+                quote || {
+                  rate: currentRate,
+                  source: 'latest-rate-fallback',
+                  asOf: todayKey,
+                }
+              )));
+            }
+            return usdRateRequests.get(date);
+          };
+          const rawAutoDividends = successfulResults.flatMap((result) => result.rows);
+          const nextAutoDividends = (await Promise.all(rawAutoDividends.map(async (row) => {
+            const currency = String(row.currency || 'KRW').toUpperCase();
+            if (currency === 'KRW') return {
+              ...row,
+              krwExchangeRate: 1,
+              krwExchangeRateDate: row.paymentDate || row.exDate || row.date || '',
+              krwExchangeRateSource: 'native-krw',
+              krwExchangeRateBasis: 'native',
+              amountKRW: Number(row.amount) || 0,
+            };
+
+            const paymentDate = row.actualPaymentDate || row.paymentDate || '';
+            const hasCompletedPaymentDate = Boolean(paymentDate && paymentDate <= todayKey);
+            const rateDate = hasCompletedPaymentDate
+              ? paymentDate
+              : row.exDate || row.date || todayKey;
+            const quote = currency === 'USD'
+              ? await getUsdRateQuote(rateDate)
+              : {
+                rate: await getCurrencyRate(currency),
+                source: 'latest-rate-fallback',
+                asOf: todayKey,
+              };
+            const rate = Number(quote?.rate) || 0;
+
+            return {
+              ...row,
+              krwExchangeRate: rate,
+              krwExchangeRateDate: String(quote?.asOf || rateDate).slice(0, 10),
+              krwExchangeRateSource: quote?.source || '',
+              krwExchangeRateBasis: hasCompletedPaymentDate ? 'payment-date' : 'ex-date',
+              amountKRW: rate > 0 ? (Number(row.amount) || 0) * rate : 0,
+            };
+          }))).sort((a, b) => new Date(b.date) - new Date(a.date));
 
           const nextRegistry = dividendResults.map((result) => (
             result.error
@@ -1526,7 +1590,10 @@ const buyLotDraftSummary = useMemo(() => {
       return summary;
     }, {});
     const dividendKRW = reportedDividends.reduce((sum, dividend) => (
-      sum + (Number(dividend.amount) || 0) * getCachedKrwRate(dividend.currency, currencyRates, exchangeRate, jpyKrwRate)
+      sum + getDividendKrwAmount(
+        dividend,
+        getCachedKrwRate(dividend.currency, currencyRates, exchangeRate, jpyKrwRate),
+      )
     ), 0);
     const dividendByCurrency = reportedDividends.reduce((summary, dividend) => {
       const currency = dividend.currency || 'KRW';
@@ -1576,6 +1643,34 @@ const buyLotDraftSummary = useMemo(() => {
       })
       .map((currency) => formatMoney(dashboardSummary.dividendByCurrency?.[currency] || 0, currency))
   ), [dashboardSummary.dividendByCurrency]);
+  const dividendCalculationHelper = useMemo(() => {
+    const usdRows = reportedDividends.filter((dividend) => dividend.currency === 'USD');
+    const datedRateRows = usdRows.filter((dividend) => (
+      Number(dividend.krwExchangeRate) > 0 && dividend.krwExchangeRateDate
+    ));
+    const parts = [
+      verifiedConfirmedDividends.length > 0 ? '직접 기록·자동 계산' : '자동 계산',
+      `원화 환산 ${formatMoney(dashboardSummary.dividendKRW, 'KRW')}`,
+    ];
+
+    if (datedRateRows.length > 0) {
+      parts.push(`지급일·배당락일 환율 ${datedRateRows.length}건 적용`);
+    } else if (usdRows.length > 0 && exchangeRate > 0) {
+      const asOf = exchangeRateInfo.asOf
+        ? new Date(exchangeRateInfo.asOf).toLocaleDateString('ko-KR')
+        : '기준일 미제공';
+      parts.push(`현재환율 1 USD=${exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 2 })}원`);
+      parts.push(`${exchangeRateInfo.source || '환율 제공처'} · ${asOf}`);
+    }
+
+    return parts.join(' · ');
+  }, [
+    reportedDividends,
+    verifiedConfirmedDividends.length,
+    dashboardSummary.dividendKRW,
+    exchangeRate,
+    exchangeRateInfo,
+  ]);
   const filteredPerformanceSummary = useMemo(() => {
     const keyword = performanceSearchTerm.trim().toLowerCase();
     if (!keyword) return stockPerformanceSummary;
@@ -2955,7 +3050,7 @@ const buyLotDraftSummary = useMemo(() => {
                   icon: Receipt,
                   tone: dashboardSummary.dividendKRW >= 0 ? 'text-slate-900' : 'text-rose-600',
                   accent: 'amber',
-                  helper: `${verifiedConfirmedDividends.length > 0 ? '직접 기록' : '자동 계산'} · 원화 ${dashboardSummary.dividendCountByCurrency.KRW || 0}건 · 달러 ${dashboardSummary.dividendCountByCurrency.USD || 0}건`,
+                  helper: dividendCalculationHelper,
                 },
               ].map((item) => {
                 const Icon = item.icon;
@@ -3460,6 +3555,14 @@ const buyLotDraftSummary = useMemo(() => {
                             </td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-black text-slate-900 whitespace-nowrap">
                               {formatMoney(div.amount, div.currency)}
+                              {div.currency === 'USD' && Number(div.krwExchangeRate) > 0 && (
+                                <span className="block mt-1 text-[9px] md:text-[10px] font-bold text-slate-400">
+                                  {formatMoney(getDividendKrwAmount(div), 'KRW')}
+                                  {' · '}1 USD={Number(div.krwExchangeRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}원
+                                  {div.krwExchangeRateDate ? ` · ${div.krwExchangeRateDate}` : ''}
+                                  {div.krwExchangeRateBasis === 'payment-date' ? ' 지급일' : ' 배당락일'}
+                                </span>
+                              )}
                             </td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-center whitespace-nowrap">
                               <span

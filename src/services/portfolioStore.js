@@ -10,6 +10,7 @@ import {
   writeBatch,
 } from 'firebase/firestore';
 import { assertSafePortfolioWrite } from '../utils/portfolioWriteSafety';
+import { arePortfolioRootFieldsEquivalent } from '../utils/portfolioSnapshotComparison';
 
 const SCHEMA_VERSION = 2;
 const BATCH_LIMIT = 400;
@@ -211,10 +212,17 @@ export const savePortfolioStateDiff = async (
     });
   });
 
+  const rootFieldsChanged = !previousSnapshot
+    || !arePortfolioRootFieldsEquivalent(previousSnapshot, nextSnapshot);
+  if (operations.length === 0 && !rootFieldsChanged) {
+    return { changed: false, operationCount: 0 };
+  }
+
   await commitOperations(database, operations);
   await setDoc(
     doc(database, 'portfolioStates', userId),
     buildRootMetadata(nextSnapshot, userEmail),
     { merge: true },
   );
+  return { changed: true, operationCount: operations.length };
 };

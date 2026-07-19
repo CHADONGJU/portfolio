@@ -1,12 +1,22 @@
-export const fetchKrwRate = async (currency = 'USD') => {
+export const fetchKrwRateQuote = async (currency = 'USD') => {
   const baseCurrency = String(currency || 'USD').toUpperCase();
-  if (baseCurrency === 'KRW') return 1;
+  if (baseCurrency === 'KRW') return {
+    rate: 1,
+    source: 'native-krw',
+    asOf: new Date().toISOString(),
+  };
 
   try {
     const primary = await fetch(`https://open.er-api.com/v6/latest/${baseCurrency}`);
     if (primary.ok) {
       const data = await primary.json();
-      if (data?.rates?.KRW) return data.rates.KRW;
+      if (Number(data?.rates?.KRW) > 0) return {
+        rate: Number(data.rates.KRW),
+        source: 'open.er-api.com',
+        asOf: data.time_last_update_utc
+          ? new Date(data.time_last_update_utc).toISOString()
+          : new Date().toISOString(),
+      };
     }
   } catch {
     // Continue to the fallback provider.
@@ -18,7 +28,12 @@ export const fetchKrwRate = async (currency = 'USD') => {
     );
     if (fallback.ok) {
       const data = await fallback.json();
-      if (data?.[baseCurrency.toLowerCase()]?.krw) return data[baseCurrency.toLowerCase()].krw;
+      const rate = Number(data?.[baseCurrency.toLowerCase()]?.krw);
+      if (rate > 0) return {
+        rate,
+        source: 'fawaz-currency-api',
+        asOf: data.date ? new Date(`${data.date}T00:00:00Z`).toISOString() : new Date().toISOString(),
+      };
     }
   } catch {
     // Let callers decide how to handle a missing rate.
@@ -26,6 +41,10 @@ export const fetchKrwRate = async (currency = 'USD') => {
 
   return null;
 };
+
+export const fetchKrwRate = async (currency = 'USD') => (
+  (await fetchKrwRateQuote(currency))?.rate ?? null
+);
 
 export const fetchUsdKrwRate = () => fetchKrwRate('USD');
 
@@ -231,25 +250,33 @@ export const fetchTextWithSafeProxy = async (url) => {
   return null;
 };
 
-export const fetchUsdKrwRateByDate = async (date) => {
+export const fetchUsdKrwRateQuoteByDate = async (date) => {
   if (!date) return null;
 
   const today = new Date().toISOString().split('T')[0];
-  if (date >= today) return fetchUsdKrwRate();
+  if (date >= today) return fetchKrwRateQuote('USD');
 
-  const historicalUrls = [
-    `https://api.frankfurter.app/${date}?from=USD&to=KRW`,
-    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/usd.json`,
+  const historicalSources = [
+    {
+      url: `https://api.frankfurter.app/${date}?from=USD&to=KRW`,
+      source: 'frankfurter.app',
+    },
+    {
+      url: `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/usd.json`,
+      source: 'fawaz-currency-api',
+    },
   ];
 
-  for (const url of historicalUrls) {
+  for (const { url, source } of historicalSources) {
     try {
-      const response = await fetch(url, { cache: 'no-store' });
-      if (!response.ok) continue;
-
-      const data = await response.json();
+      const data = await fetchWithSafeProxy(url);
+      if (!data) continue;
       const rate = data?.rates?.KRW ?? data?.usd?.krw;
-      if (Number.isFinite(Number(rate)) && Number(rate) > 0) return Number(rate);
+      if (Number.isFinite(Number(rate)) && Number(rate) > 0) return {
+        rate: Number(rate),
+        source,
+        asOf: String(data?.date || date),
+      };
     } catch {
       continue;
     }
@@ -257,6 +284,10 @@ export const fetchUsdKrwRateByDate = async (date) => {
 
   return null;
 };
+
+export const fetchUsdKrwRateByDate = async (date) => (
+  (await fetchUsdKrwRateQuoteByDate(date))?.rate ?? null
+);
 
 const normalizeTicker = (ticker) => ticker
   .toUpperCase()

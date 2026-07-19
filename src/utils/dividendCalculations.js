@@ -36,6 +36,8 @@ const LEGACY_AUTOMATIC_ADR_FEES = {
   NVO: 0.015,
 };
 
+const LEGACY_FIXED_CONFIRMATION_SOURCES = new Set(['user-photo-record']);
+
 const DOMESTIC_ETF_NAME_PATTERN = /\b(KODEX|TIGER|ACE|RISE|SOL|HANARO|KOSEF|PLUS|TIMEFOLIO|KBSTAR|ARIRANG|WON|KIWOOM|FOCUS)\b|ETF/i;
 const FOREIGN_ASSET_NAME_PATTERN = /미국|인도|일본|차이나|중국|글로벌|유럽|베트남|대만|선진국|신흥국|해외|나스닥|S&P|NIFTY/i;
 const KNOWN_DOMESTIC_FOREIGN_ETFS = new Set(['477730', '453870', '453810']);
@@ -447,6 +449,10 @@ export const isEstimatedDividendRecord = (dividend = {}) => (
   )
 );
 
+export const isLegacyFixedDividendRecord = (dividend = {}) => (
+  LEGACY_FIXED_CONFIRMATION_SOURCES.has(String(dividend.confirmationSource || '').trim())
+);
+
 export const recalculateEstimatedDividendRow = (dividend = {}, asset = {}) => {
   // autoDividends에 저장된 행은 과거 상태값이 actual/confirmed로 남아 있어도
   // 주당 분배금과 기준 수량이 있으면 항상 같은 공식으로 다시 산출한다.
@@ -471,6 +477,7 @@ export const recalculateEstimatedDividendRow = (dividend = {}, asset = {}) => {
     + profile.dividendFlatFee
   );
   const amount = Math.max(0, grossAmount - taxAmount - feeAmount);
+  const krwExchangeRate = parseTradeNumber(dividend.krwExchangeRate);
 
   return {
     ...dividend,
@@ -482,6 +489,7 @@ export const recalculateEstimatedDividendRow = (dividend = {}, asset = {}) => {
     feeAmount,
     taxRate: profile.dividendTaxRate,
     amount,
+    amountKRW: krwExchangeRate > 0 ? amount * krwExchangeRate : dividend.amountKRW,
     sourceCountry: profile.sourceCountry,
     securityType: profile.securityType,
     accountType: profile.accountType,
@@ -501,6 +509,18 @@ export const recalculateEstimatedDividendRow = (dividend = {}, asset = {}) => {
     taxCalculationMode: profile.taxCalculationMode,
     taxNote: profile.taxNote,
   };
+};
+
+export const getDividendKrwAmount = (dividend = {}, fallbackRate = 0) => {
+  const amount = parseTradeNumber(dividend.amount);
+  const currency = String(dividend.currency || 'KRW').toUpperCase();
+  if (currency === 'KRW') return amount;
+
+  const storedRate = parseTradeNumber(dividend.krwExchangeRate);
+  const storedAmount = Number(dividend.amountKRW);
+  if (storedRate > 0 && Number.isFinite(storedAmount)) return storedAmount;
+
+  return amount * parseTradeNumber(fallbackRate);
 };
 
 export const isVerifiableDividendRecord = (dividend = {}) => {
@@ -534,16 +554,35 @@ export const selectReportedDividendRecords = (
   const verifiedCalculated = calculatedDividends.filter(isVerifiableDividendRecord);
   if (verifiedConfirmed.length === 0) return verifiedCalculated;
 
-  // A brokerage receipt is authoritative for the currency it covers. Mixing
-  // other estimated rows from the same currency makes the dashboard total drift
-  // away from the amount that was actually deposited. Calculated rows remain a
-  // fallback only for currencies without any confirmed receipt records.
-  const confirmedCurrencies = new Set(
-    verifiedConfirmed.map((dividend) => String(dividend.currency || 'KRW').toUpperCase()),
-  );
-  const remainingCalculated = verifiedCalculated.filter((dividend) => (
-    !confirmedCurrencies.has(String(dividend.currency || 'KRW').toUpperCase())
-  ));
+  const getAssetKey = (dividend = {}) => {
+    const ticker = normalizeTradeTicker(dividend.ticker || '');
+    return ticker || String(dividend.name || '').trim().toUpperCase();
+  };
+  const getPeriodKey = (dividend = {}) => {
+    const explicitPeriod = String(dividend.period || '').trim();
+    if (/^\d{4}-\d{2}$/.test(explicitPeriod)) return explicitPeriod;
+
+    const date = String(
+      dividend.actualPaymentDate
+      || dividend.paymentDate
+      || dividend.exDate
+      || dividend.date
+      || '',
+    ).trim();
+    return /^\d{4}-\d{2}/.test(date) ? date.slice(0, 7) : '';
+  };
+
+  const confirmedPeriods = new Set(verifiedConfirmed.map((dividend) => (
+    `${getAssetKey(dividend)}::${getPeriodKey(dividend)}`
+  )));
+  const confirmedAssets = new Set(verifiedConfirmed.map(getAssetKey));
+  const remainingCalculated = verifiedCalculated.filter((dividend) => {
+    const assetKey = getAssetKey(dividend);
+    const periodKey = getPeriodKey(dividend);
+    if (!assetKey) return true;
+    if (!periodKey) return !confirmedAssets.has(assetKey);
+    return !confirmedPeriods.has(`${assetKey}::${periodKey}`);
+  });
 
   return [...verifiedConfirmed, ...remainingCalculated].sort((left, right) => {
     const leftDate = left.actualPaymentDate || left.paymentDate || left.exDate || left.date || left.period || '';

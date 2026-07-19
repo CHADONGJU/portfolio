@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { getCategoryColor, getCategoryDetailColor } from '../constants';
-import { isEstimatedDividendRecord } from '../utils/dividendCalculations';
+import { getDividendKrwAmount, isEstimatedDividendRecord } from '../utils/dividendCalculations';
 import { getEmptyDividendMessage, getEmptyDividendStatus } from '../utils/dividendSync';
 import { buildCanonicalTradeRows, buildPositionFromTradeRows } from '../utils/tradeReconciliation';
 
@@ -207,7 +207,9 @@ export const usePortfolioMetrics = ({
       const realizedKRW = sellRows.reduce((sum, trade) => (
         sum + ((Number(trade.pnl) || 0) * getRecordRate(trade.currency))
       ), 0);
-      const dividendKRW = dividendRows.reduce((sum, dividend) => sum + (dividend.amount * getRecordRate(dividend.currency)), 0);
+      const dividendKRW = dividendRows.reduce((sum, dividend) => (
+        sum + getDividendKrwAmount(dividend, getRecordRate(dividend.currency))
+      ), 0);
       const totalKRW = unrealizedKRW + realizedKRW + dividendKRW;
 
       const unrealizedNative = assetRows.reduce((sum, asset) => sum + asset.profitNative, 0);

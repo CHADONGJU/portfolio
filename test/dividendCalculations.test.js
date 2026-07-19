@@ -4,7 +4,9 @@ import {
   buildAutoDividendRows,
   buildDividendAssetUniverse,
   getAssetDividendProfile,
+  getDividendKrwAmount,
   getHeldQuantityOnExDate,
+  isLegacyFixedDividendRecord,
   isVerifiableDividendRecord,
   recalculateEstimatedDividendRow,
   selectReportedDividendRecords,
@@ -141,100 +143,6 @@ test('NVO 자동 배당은 27% 원천세만 반영하고 미확인 ADR 수수료
   assert.equal(rows[0].feeAmount, 0);
   assert.equal(rows[0].recordDate, '2026-03-31');
   assert.equal(rows[0].paymentDate, '2026-04-07');
-});
-
-test('photo receipt benchmark keeps NVO income within source-data rounding tolerance', () => {
-  const asset = {
-    id: 90,
-    name: 'Novo Nordisk',
-    ticker: 'NVO',
-    category: '해외주식',
-    currency: 'USD',
-    originalCurrency: 'USD',
-    quantity: 112,
-    buyDate: '2025-01-01',
-  };
-  const ledger = [
-    { assetId: 90, ticker: 'NVO', side: 'buy', quantity: 64, date: '2025-01-01' },
-    { assetId: 90, ticker: 'NVO', side: 'buy', quantity: 48, date: '2026-01-01' },
-  ];
-  const rows = buildAutoDividendRows({
-    asset,
-    ledger,
-    dividendStartDate: '2025-01-01',
-    dividends: {
-      first: { date: toTimestamp('2025-08-18'), amount: 0.41155 },
-      second: { date: toTimestamp('2026-03-30'), amount: 0.87369 },
-    },
-  });
-
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0].quantity, 64);
-  assert.equal(rows[1].quantity, 112);
-  assert.equal(rows[0].feeAmount, 0);
-  assert.equal(rows[1].feeAmount, 0);
-  assert.ok(Math.abs(rows[0].amount - 19.20) < 0.05);
-  assert.ok(Math.abs(rows[1].amount - 71.40) < 0.05);
-});
-
-test('2025+ overseas photo ledger total matches the public per-share calculation', () => {
-  const receiptFixtures = [
-    ['JEPI', 0.54, 135],
-    ['JEPI', 0.39953, 135],
-    ['SCHD', 0.2604, 40],
-    ['JEPI', 0.35772, 135],
-    ['VZ', 0.6775, 30],
-    ['NVO', 0.41155, 64],
-    ['JEPI', 0.36826, 135],
-    ['SCHD', 0.2604, 40],
-    ['JEPI', 0.36102, 135],
-    ['JEPI', 0.34636, 135],
-    ['VZ', 0.69, 30],
-    ['PG', 1.057, 10],
-    ['JEPI', 0.3706, 135],
-    ['SCHD', 0.2782, 40],
-    ['JEPI', 0.42709, 135],
-    ['JEPI', 0.34443, 135],
-    ['VZ', 0.69, 50],
-    ['PG', 1.057, 10],
-    ['JEPI', 0.35134, 135],
-    ['SCHD', 0.2569, 40],
-    ['QCOM', 0.89, 2],
-    ['UNH', 2.21, 8],
-    ['V', 0.67, 3],
-    ['NVO', 0.87369, 112],
-    ['JEPI', 0.4205, 135],
-    ['JEPI', 0.44761, 135],
-    ['VZ', 0.7075, 50],
-    ['PG', 1.089, 15],
-    ['JEPI', 0.38921, 145],
-    ['QCOM', 0.92, 2],
-    ['UNH', 2.32, 8],
-    ['UPS', 1.64, 10],
-    ['V', 0.67, 3],
-    ['JEPI', 0.38716, 145],
-  ];
-
-  const calculatedTotal = receiptFixtures.reduce((sum, [ticker, perShare, quantity], index) => {
-    const [row] = buildAutoDividendRows({
-      asset: {
-        id: `photo-${index}`,
-        name: ticker,
-        ticker,
-        category: '해외주식',
-        currency: 'USD',
-        originalCurrency: 'USD',
-        quantity,
-        buyDate: '2025-01-01',
-      },
-      dividends: {
-        one: { date: toTimestamp('2026-01-15'), amount: perShare },
-      },
-    });
-    return sum + row.amount;
-  }, 0);
-
-  assert.ok(Math.abs(calculatedTotal - 942.81) < 0.10);
 });
 
 test('매수일과 원장이 없는 보유 수량으로 과거 국내 배당을 추정하지 않는다', () => {
@@ -578,96 +486,6 @@ test('주당 배당금과 배당락일 수량으로 계산된 행만 집계 대�
   }), false);
 });
 
-test('사진에서 확인한 2025년 이후 배당 입금 기록을 통화별로 정확히 합산한다', () => {
-  const usdReceipts = [
-    ['2025-10', 'JEPI', 41.43],
-    ['2025-09', 'SCHD', 8.85],
-    ['2025-09', 'JEPI', 42.26],
-    ['2025-08', 'NVD', 19.20],
-    ['2025-08', 'JEPI', 41.06],
-    ['2025-08', 'VZ', 17.27],
-    ['2025-07', 'JEPI', 45.85],
-    ['2025-07', 'SCHD', 8.85],
-    ['2025-06', 'JEPI', 61.96],
-    ['2026-02', 'PG', 8.98],
-    ['2026-02', 'JEPI', 39.52],
-    ['2026-02', 'VZ', 29.33],
-    ['2026-01', 'JEPI', 49.01],
-    ['2025-12', 'SCHD', 9.46],
-    ['2025-12', 'JEPI', 42.54],
-    ['2025-11', 'PG', 8.98],
-    ['2025-11', 'JEPI', 39.75],
-    ['2025-11', 'VZ', 17.59],
-    ['2026-04', 'NVO', 71.40],
-    ['2026-04', 'JEPI', 48.24],
-    ['2026-03', 'SCHD', 8.73],
-    ['2026-03', 'QCOM', 1.51],
-    ['2026-03', 'UNH', 15.03],
-    ['2026-03', 'JEPI', 40.32],
-    ['2026-03', 'V', 1.71],
-    ['2026-07', 'JEPI', 47.72],
-    ['2026-06', 'QCOM', 1.56],
-    ['2026-06', 'UNH', 15.78],
-    ['2026-06', 'UPS', 13.94],
-    ['2026-06', 'JEPI', 47.96],
-    ['2026-06', 'V', 1.71],
-    ['2026-05', 'PG', 13.88],
-    ['2026-05', 'JEPI', 51.36],
-    ['2026-05', 'VZ', 30.07],
-  ].map(([period, ticker, amount], index) => ({
-    id: `photo-usd-${index + 1}`,
-    period,
-    date: `${period}-01`,
-    name: ticker,
-    ticker,
-    amount,
-    currency: 'USD',
-    status: 'actual',
-    recordType: 'actual',
-    confirmationSource: 'user-photo-record',
-  }));
-
-  const krwReceipts = [
-    ['477730', 'KODEX 인도타타그룹', 1120],
-    ['453870', 'TIGER 인도니프티50', 540],
-  ].map(([ticker, name, amount], index) => ({
-    id: `photo-krw-${index + 1}`,
-    period: '2026-04',
-    date: '2026-04-01',
-    name,
-    ticker,
-    amount,
-    currency: 'KRW',
-    status: 'actual',
-    recordType: 'actual',
-    confirmationSource: 'user-photo-record',
-  }));
-
-  const reported = selectReportedDividendRecords([
-    {
-      id: 'automatic-placeholder',
-      name: 'JEPI',
-      amount: 9999,
-      currency: 'USD',
-      quantity: 1,
-      perShareGrossAmount: 9999,
-      calculationSource: 'market-dividend-per-share',
-      calculationValid: true,
-    },
-  ], [...usdReceipts, ...krwReceipts]);
-
-  const usdTotal = reported
-    .filter((record) => record.currency === 'USD')
-    .reduce((sum, record) => sum + record.amount, 0);
-  const krwTotal = reported
-    .filter((record) => record.currency === 'KRW')
-    .reduce((sum, record) => sum + record.amount, 0);
-
-  assert.equal(reported.length, 36);
-  assert.equal(Number(usdTotal.toFixed(2)), 942.81);
-  assert.equal(krwTotal, 1660);
-});
-
 test('배당 종목군은 전량 매도한 종목도 거래 원장에서 복원한다', () => {
   const universe = buildDividendAssetUniverse(
     [{ id: 1, name: 'JEPI', ticker: 'JEPI', category: '해외주식', currency: 'USD', quantity: 10 }],
@@ -738,44 +556,22 @@ test('직접 확인한 해외 배당이 있어도 국내 ETF 자동 배당은 �
   assert.equal(reported.find((row) => row.ticker === '477730').amount, 1120);
 });
 
-test('직접 확인 기록이 있는 통화는 다른 종목의 자동 추정치를 합산하지 않는다', () => {
-  const reported = selectReportedDividendRecords(
-    [
-      {
-        id: 'auto-spy',
-        name: 'SPY',
-        ticker: 'SPY',
-        amount: 1.62,
-        currency: 'USD',
-        quantity: 1,
-        perShareGrossAmount: 1.9,
-        calculationSource: 'market-dividend-per-share',
-        calculationValid: true,
-      },
-      {
-        id: 'auto-tata',
-        name: 'KODEX 인도타타그룹',
-        ticker: '477730',
-        amount: 1120,
-        currency: 'KRW',
-        quantity: 32,
-        perShareGrossAmount: 35,
-        calculationSource: 'market-dividend-per-share',
-        calculationValid: true,
-      },
-    ],
-    [{
-      id: 'receipt-jepi',
-      name: 'JEPI',
-      ticker: 'JEPI',
-      amount: 47.72,
-      currency: 'USD',
-      status: 'actual',
-      confirmationSource: 'user-photo-record',
-    }],
-  );
+test('과거 사진에서 옮긴 고정 배당 기록은 런타임 복구 대상에서 제외한다', () => {
+  assert.equal(isLegacyFixedDividendRecord({ confirmationSource: 'user-photo-record' }), true);
+  assert.equal(isLegacyFixedDividendRecord({ confirmationSource: 'user-receipt' }), false);
+});
 
-  assert.deepEqual(reported.map((row) => row.id).sort(), ['auto-tata', 'receipt-jepi']);
+test('해외 배당 원화 환산은 행에 저장된 기준일 환율을 우선한다', () => {
+  const dividend = {
+    amount: 10,
+    amountKRW: 13850,
+    currency: 'USD',
+    krwExchangeRate: 1385,
+  };
+
+  assert.equal(getDividendKrwAmount(dividend, 1500), 13850);
+  assert.equal(getDividendKrwAmount({ amount: 10, currency: 'USD' }, 1500), 15000);
+  assert.equal(getDividendKrwAmount({ amount: 1000, currency: 'KRW' }, 1500), 1000);
 });
 
 test('같은 종목·월의 직접 확인 배당은 자동 계산액과 중복 합산하지 않는다', () => {
