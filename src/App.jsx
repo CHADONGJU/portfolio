@@ -23,15 +23,33 @@ import {
   TRADE_LEDGER_STORAGE_KEY,
   TRADES_STORAGE_KEY,
 } from './constants';
-import { fetchBitcoinPrices, fetchDividends, fetchKrwRate, fetchStockQuote, fetchUsdKrwRate } from './services/marketData';
+import { fetchDividends, fetchKrwRate, fetchStockQuote, fetchUsdKrwRate, fetchUsdKrwRateByDate } from './services/marketData';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
-import { loadJson, saveJson } from './utils/storage';
+import { loadJson, removeStoredKeys, saveJson, setStorageErrorHandler } from './utils/storage';
 import { buildCanonicalTradeRows, reconcileAssetsWithTradeLedger } from './utils/tradeReconciliation';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { db } from './firebase';
 
 const isDomesticStockCategory = (category) => category?.includes('국내') && category?.includes('주식');
 const isCommodityCategory = (category) => category?.includes('원자재');
+
+const ASSET_CATEGORIES = ['국내주식', '해외주식', '현금', '원자재'];
+
+const PORTFOLIO_STORAGE_KEYS = [
+  ASSETS_STORAGE_KEY,
+  TRADES_STORAGE_KEY,
+  MEMOS_STORAGE_KEY,
+  TRADE_LEDGER_STORAGE_KEY,
+  AUTO_DIVIDENDS_STORAGE_KEY,
+  DIVIDEND_ASSET_REGISTRY_STORAGE_KEY,
+  PORTFOLIO_NAME_STORAGE_KEY,
+  TARGET_PORTFOLIO_STORAGE_KEY,
+];
+
+// 가상화폐 기능을 제거하면서, 기존에 남아 있는 가상화폐 데이터를 1회 정리한다.
+const CRYPTO_CATEGORY = '가상화폐';
+const CRYPTO_PURGE_FLAG_KEY = 'portfolio_crypto_purged_v1';
+const isCryptoCategory = (category = '') => String(category || '').trim() === CRYPTO_CATEGORY;
 
 const TRADE_SORT_OPTIONS = [
   { value: 'newest', label: '최신 날짜 우선' },
@@ -188,7 +206,7 @@ const DEFAULT_TARGET_PORTFOLIO = {
   },
 };
 
-const buildLedgerEntry = ({ sourceId, asset, side, quantity, price, date, pnl = 0 }) => ({
+const buildLedgerEntry = ({ sourceId, asset, side, quantity, price, date, pnl = 0, fxRate = 0 }) => ({
   id: sourceId || `${Date.now()}-${Math.random()}`,
   sourceId,
   assetId: asset.id ?? asset.assetId ?? null,
@@ -202,6 +220,9 @@ const buildLedgerEntry = ({ sourceId, asset, side, quantity, price, date, pnl = 
   price: Number(price) || 0,
   date,
   pnl: Number(pnl) || 0,
+  // 거래 시점의 원화 환율. 실현손익을 "오늘 환율"로 환산하면
+  // 과거 누적 실현손익이 매일 바뀌므로 기록 시점 값을 함께 남긴다.
+  fxRate: Number(fxRate) || 0,
   createdAt: new Date().toISOString(),
 });
 
@@ -392,6 +413,28 @@ const isTradeLinkedToLedger = (trade, ledger = []) => ledger.some((entry) => (
   && numbersMatch(trade.sellPrice, entry.price)
 ));
 
+/**
+ * targetPortfolio.items / groups는 분류 id를 키로 갖는 맵이다.
+ * Firestore를 merge:true로 쓰면 삭제된 키가 원격에 남으므로,
+ * 읽고 쓸 때마다 categories에 없는 키를 걸러 유령 분류가 되살아나지 않게 한다.
+ */
+const pruneTargetPortfolio = (targetPortfolio) => {
+  if (!targetPortfolio) return DEFAULT_TARGET_PORTFOLIO;
+
+  const categories = Array.isArray(targetPortfolio.categories) ? targetPortfolio.categories : [];
+  const validIds = new Set(categories.map((category) => category.id));
+  const pickValid = (map = {}) => Object.fromEntries(
+    Object.entries(map || {}).filter(([key]) => validIds.has(key)),
+  );
+
+  return {
+    ...targetPortfolio,
+    categories,
+    items: pickValid(targetPortfolio.items),
+    groups: pickValid(targetPortfolio.groups),
+  };
+};
+
 const compactPortfolioSnapshot = (snapshot = {}) => {
   const tradeLedger = mergeUniqueRecords(Array.isArray(snapshot.tradeLedger) ? snapshot.tradeLedger : []);
   const rawTrades = mergeUniqueRecords(Array.isArray(snapshot.trades) ? snapshot.trades : []);
@@ -410,7 +453,7 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     tradeLedger,
     autoDividends: mergeUniqueDividends(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []),
     dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], assets),
-    targetPortfolio: snapshot.targetPortfolio || DEFAULT_TARGET_PORTFOLIO,
+    targetPortfolio: pruneTargetPortfolio(snapshot.targetPortfolio),
     portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
       ? snapshot.portfolioName
       : DEFAULT_PORTFOLIO_NAME,
@@ -609,6 +652,12 @@ const isSuspiciousLivePriceUpdate = (currentAsset = {}, updatedAsset = {}) => {
   const nextPrice = getNativePriceValue(updatedAsset);
   if (currentPrice <= 0 || nextPrice <= 0) return false;
 
+  // 통화 자체가 바뀐 갱신(GBp -> GBP처럼 단위가 100배 달라지는 정규화)은
+  // 급등락이 아니라 단위 교정이므로 이상치로 보면 안 된다.
+  const currentCurrency = String(currentAsset.originalCurrency || currentAsset.currency || '');
+  const nextCurrency = String(updatedAsset.originalCurrency || updatedAsset.currency || '');
+  if (currentCurrency && nextCurrency && currentCurrency !== nextCurrency) return false;
+
   const ratio = Math.max(currentPrice / nextPrice, nextPrice / currentPrice);
   return ratio >= 8;
 };
@@ -637,9 +686,62 @@ const getAssetCategoryOrder = (category = '') => {
   if (normalizedCategory === '국내주식') return 10;
   if (normalizedCategory === '해외주식') return 20;
   if (normalizedCategory === '원자재') return 30;
-  if (normalizedCategory === '가상화폐') return 40;
   if (normalizedCategory === '현금') return 50;
   return 90;
+};
+
+/**
+ * 가상화폐 기능 제거에 따른 기존 데이터 정리.
+ * 자산 목록의 가상화폐 종목명을 기준으로 거래/메모/원장/배당까지 함께 걷어낸다.
+ * 자산 목록에 없더라도 카테고리가 '가상화폐'인 기록은 그대로 제거한다.
+ */
+const purgeCryptoData = (snapshot = {}) => {
+  const assets = snapshot.assets || [];
+  const cryptoAssets = assets.filter((asset) => isCryptoCategory(asset.category));
+  const cryptoNames = new Set(cryptoAssets.map((asset) => asset.name).filter(Boolean));
+  const cryptoAssetIds = new Set(
+    cryptoAssets
+      .map((asset) => (asset.id === undefined || asset.id === null ? '' : String(asset.id)))
+      .filter(Boolean),
+  );
+
+  const isCryptoRecord = (record = {}) => {
+    if (isCryptoCategory(record.category)) return true;
+    const recordAssetId = record.assetId === undefined || record.assetId === null ? '' : String(record.assetId);
+    if (recordAssetId && cryptoAssetIds.has(recordAssetId)) return true;
+    return Boolean(record.name && cryptoNames.has(record.name));
+  };
+
+  const keepRecords = (records = []) => records.filter((record) => !isCryptoRecord(record));
+
+  const nextTargetPortfolio = snapshot.targetPortfolio
+    ? {
+      ...snapshot.targetPortfolio,
+      categories: (snapshot.targetPortfolio.categories || []).filter((category) => !isCryptoCategory(category.id)),
+      items: Object.fromEntries(
+        Object.entries(snapshot.targetPortfolio.items || {}).filter(([key]) => !isCryptoCategory(key)),
+      ),
+      groups: Object.fromEntries(
+        Object.entries(snapshot.targetPortfolio.groups || {}).filter(([key]) => !isCryptoCategory(key)),
+      ),
+    }
+    : snapshot.targetPortfolio;
+
+  const next = {
+    ...snapshot,
+    assets: assets.filter((asset) => !isCryptoCategory(asset.category)),
+    trades: keepRecords(snapshot.trades),
+    memos: keepRecords(snapshot.memos),
+    tradeLedger: keepRecords(snapshot.tradeLedger),
+    autoDividends: keepRecords(snapshot.autoDividends),
+    dividendAssetRegistry: keepRecords(snapshot.dividendAssetRegistry),
+    targetPortfolio: nextTargetPortfolio,
+  };
+
+  const removedCount = ['assets', 'trades', 'memos', 'tradeLedger', 'autoDividends', 'dividendAssetRegistry']
+    .reduce((sum, key) => sum + ((snapshot[key] || []).length - (next[key] || []).length), 0);
+
+  return { snapshot: next, removedCount };
 };
 
 const getCachedKrwRate = (currency, rates = {}, usdRate = 1350, yenRate = 9.5) => {
@@ -649,9 +751,12 @@ const getCachedKrwRate = (currency, rates = {}, usdRate = 1350, yenRate = 9.5) =
   return 1;
 };
 
+// 이 키가 바뀌면 목표 종목 시세를 다시 가져온다.
+// price/nativePrice를 포함하면 effect가 갱신한 값이 다시 effect를 깨워
+// 장중 내내 재조회 -> Firestore 쓰기가 반복되므로 구성 정보만 넣는다.
 const getTargetItemSnapshotKey = (targetPortfolio) => targetPortfolio.categories
   .flatMap(category => getTargetGroups(targetPortfolio, category.id).flatMap(group => (
-    (group.items || []).map(item => `${category.id}:${group.id}:${item.id}:${item.ticker || ''}:${item.price || ''}:${item.nativePrice || ''}`)
+    (group.items || []).map(item => `${category.id}:${group.id}:${item.id}:${item.ticker || ''}`)
   )))
   .join('|');
 
@@ -682,6 +787,10 @@ const App = () => {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [isCloudPortfolioLoaded, setIsCloudPortfolioLoaded] = useState(!user || !db);
   const [cloudPortfolioUserId, setCloudPortfolioUserId] = useState('');
+  const [cloudLoadFailed, setCloudLoadFailed] = useState(false);
+  const [cloudRetryToken, setCloudRetryToken] = useState(0);
+  const loadedUserIdRef = useRef('');
+  const [assetPendingRemoval, setAssetPendingRemoval] = useState(null);
 
   // 피드백 로그 (3초 뒤 자동 삭제)
   const [syncStatus, setSyncStatus] = useState([]);
@@ -695,6 +804,27 @@ const App = () => {
       setSyncStatus(prev => prev.filter(log => log.id !== id));
     }, 3000);
   };
+  const addLogRef = useRef(addLog);
+  addLogRef.current = addLog;
+
+  // localStorage 저장 실패(용량 초과, 시크릿 모드)를 사용자에게 알린다.
+  useEffect(() => {
+    setStorageErrorHandler(() => {
+      addLogRef.current('브라우저 저장 공간이 부족해 로컬 저장에 실패했습니다.', 'error');
+    });
+    return () => setStorageErrorHandler(null);
+  }, []);
+
+  // 삭제 확인 모달은 Escape로 닫을 수 있어야 한다.
+  useEffect(() => {
+    if (!assetPendingRemoval) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setAssetPendingRemoval(null);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [assetPendingRemoval]);
 
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [selectedDividendAsset, setSelectedDividendAsset] = useState(null);
@@ -714,7 +844,7 @@ const App = () => {
   const [selectedTargetCategory, setSelectedTargetCategory] = useState(null);
   const [selectedTargetGroup, setSelectedTargetGroup] = useState(null);
   const [targetPriceSyncStatus, setTargetPriceSyncStatus] = useState('');
-  const [targetCategoryDraft, setTargetCategoryDraft] = useState('가상화폐');
+  const [targetCategoryDraft, setTargetCategoryDraft] = useState('원자재');
   const [manualMemo, setManualMemo] = useState({
     stockName: '',
     ticker: '',
@@ -825,6 +955,64 @@ const buyLotDraftSummary = useMemo(() => {
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
   useEffect(() => { portfolioSnapshotRef.current = portfolioSnapshot; }, [portfolioSnapshot]);
 
+  const resetPortfolioState = () => {
+    setAssets([]);
+    setTrades([]);
+    setMemos([]);
+    setTradeLedger([]);
+    setAutoDividends([]);
+    setDividendAssetRegistry([]);
+    setPortfolioName(DEFAULT_PORTFOLIO_NAME);
+    setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
+  };
+
+  const handleSignOut = async () => {
+    // 로그아웃 후에도 localStorage가 남아 있으면, 같은 기기에서
+    // '로그인 없이 보기'로 들어온 다음 사람에게 이전 사용자 데이터가 그대로 보인다.
+    removeStoredKeys(PORTFOLIO_STORAGE_KEYS);
+    resetPortfolioState();
+    setCloudPortfolioUserId('');
+    setCloudLoadFailed(false);
+
+    try {
+      await signOutUser();
+    } catch (error) {
+      console.error('Sign out failed:', error);
+      addLog('로그아웃 처리 중 오류가 발생했습니다.', 'error');
+    }
+  };
+
+  // 가상화폐 기능 제거에 따른 1회성 데이터 정리.
+  // 클라우드 로드가 '성공'한 뒤에 돌려야 원격 데이터까지 함께 정리된다.
+  // 로드 실패 상태에서 플래그를 남기면 원격의 가상화폐 데이터가 영영 정리되지 않는다.
+  const cryptoPurgedKeyRef = useRef('');
+  useEffect(() => {
+    if (!isCloudPortfolioLoaded || cloudLoadFailed) return;
+    if (userId && cloudPortfolioUserId !== userId) return;
+
+    const purgeKey = userId || 'local';
+    if (cryptoPurgedKeyRef.current === purgeKey) return;
+
+    const purgedRaw = loadJson(CRYPTO_PURGE_FLAG_KEY, []);
+    const purgedKeys = Array.isArray(purgedRaw) ? purgedRaw : [];
+    cryptoPurgedKeyRef.current = purgeKey;
+    if (purgedKeys.includes(purgeKey)) return;
+
+    const { snapshot: purged, removedCount } = purgeCryptoData(portfolioSnapshotRef.current || {});
+    saveJson(CRYPTO_PURGE_FLAG_KEY, [...purgedKeys, purgeKey]);
+
+    if (removedCount <= 0) return;
+
+    setAssets(purged.assets);
+    setTrades(purged.trades);
+    setMemos(purged.memos);
+    setTradeLedger(purged.tradeLedger);
+    setAutoDividends(purged.autoDividends);
+    setDividendAssetRegistry(purged.dividendAssetRegistry);
+    setTargetPortfolio(purged.targetPortfolio);
+    addLog(`가상화폐 관련 기록 ${removedCount.toLocaleString()}건을 정리했습니다.`, 'success');
+  }, [isCloudPortfolioLoaded, cloudLoadFailed, cloudPortfolioUserId, userId]);
+
   useEffect(() => {
     if (!userId || !db) {
       setIsCloudPortfolioLoaded(true);
@@ -834,8 +1022,18 @@ const buyLotDraftSummary = useMemo(() => {
 
     let cancelled = false;
 
+    // 계정이 바뀌었는데 이전 사용자 상태가 메모리에 남아 있으면,
+    // 아래 '원격 문서 없음' 경로에서 남의 데이터를 새 계정에 올려버린다.
+    const previousUserId = loadedUserIdRef.current;
+    const isAccountSwitch = Boolean(previousUserId) && previousUserId !== userId;
+    if (isAccountSwitch) resetPortfolioState();
+
     const loadCloudPortfolio = async () => {
       setIsCloudPortfolioLoaded(false);
+      setCloudLoadFailed(false);
+
+      let loadSucceeded = false;
+
       try {
         const portfolioRef = doc(db, 'portfolioStates', userId);
         const snapshot = await getDoc(portfolioRef);
@@ -855,30 +1053,49 @@ const buyLotDraftSummary = useMemo(() => {
           setTargetPortfolio(compactedData.targetPortfolio);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
         } else {
-          const emptySnapshot = emptyPortfolioSnapshot();
-          setAssets([]);
-          setTrades([]);
-          setMemos([]);
-          setTradeLedger([]);
-          setAutoDividends([]);
-          setDividendAssetRegistry([]);
-          setPortfolioName(DEFAULT_PORTFOLIO_NAME);
-          setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
+          // 원격 문서가 없다고 해서 로컬을 지우면, 로그인 없이 쓰던 기록이 통째로 날아간다.
+          // 다만 계정을 갈아탄 경우에는 앞선 사용자의 데이터이므로 절대 올리면 안 된다.
+          const localSnapshot = compactPortfolioSnapshot(
+            (!isAccountSwitch && portfolioSnapshotRef.current) || emptyPortfolioSnapshot(),
+          );
+          const hasLocalData = (localSnapshot.assets?.length || 0) > 0
+            || (localSnapshot.trades?.length || 0) > 0
+            || (localSnapshot.memos?.length || 0) > 0
+            || (localSnapshot.tradeLedger?.length || 0) > 0;
+
           await setDoc(portfolioRef, {
-            ...cleanForFirestore(emptySnapshot),
+            ...cleanForFirestore(localSnapshot),
             userEmail,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
-          if (!cancelled) addLog('새 포트폴리오를 빈 상태로 시작합니다.', 'success');
+
+          if (!cancelled) {
+            addLog(
+              hasLocalData
+                ? '이 기기에 있던 데이터를 계정에 연결했습니다.'
+                : '새 포트폴리오를 시작합니다.',
+              'success',
+            );
+          }
         }
+
+        loadSucceeded = true;
       } catch (error) {
         console.error('Cloud portfolio load failed:', error);
-        if (!cancelled) addLog('클라우드 데이터 불러오기에 실패했습니다. 로컬 저장소로 계속합니다.', 'error');
+        if (!cancelled) {
+          setCloudLoadFailed(true);
+          addLog('클라우드 데이터를 불러오지 못했습니다. 저장이 잠시 멈춥니다.', 'error');
+        }
       } finally {
         if (!cancelled) {
           setIsCloudPortfolioLoaded(true);
-          setCloudPortfolioUserId(userId);
+          // 읽기에 실패한 상태로 저장 게이트를 열면, 비어 있는 로컬 상태가
+          // 원격 문서를 통째로 덮어써 복구가 불가능해진다.
+          if (loadSucceeded) {
+            loadedUserIdRef.current = userId;
+            setCloudPortfolioUserId(userId);
+          }
         }
       }
     };
@@ -887,10 +1104,10 @@ const buyLotDraftSummary = useMemo(() => {
     return () => {
       cancelled = true;
     };
-  }, [userId, userEmail]);
+  }, [userId, userEmail, cloudRetryToken]);
 
   useEffect(() => {
-    if (!userId || !db || !isCloudPortfolioLoaded || cloudPortfolioUserId !== userId) return undefined;
+    if (!userId || !db || !isCloudPortfolioLoaded || cloudLoadFailed || cloudPortfolioUserId !== userId) return undefined;
 
     const saveTimer = setTimeout(async () => {
       try {
@@ -899,7 +1116,7 @@ const buyLotDraftSummary = useMemo(() => {
           ...cleanForFirestore(compactedSnapshot),
           userEmail,
           updatedAt: serverTimestamp(),
-        });
+        }, { merge: true });
       } catch (error) {
         console.error('Cloud portfolio save failed:', error);
         const message = error?.code === 'permission-denied'
@@ -910,7 +1127,7 @@ const buyLotDraftSummary = useMemo(() => {
     }, 700);
 
     return () => clearTimeout(saveTimer);
-  }, [userId, userEmail, isCloudPortfolioLoaded, cloudPortfolioUserId, portfolioSnapshot]);
+  }, [userId, userEmail, isCloudPortfolioLoaded, cloudLoadFailed, cloudPortfolioUserId, portfolioSnapshot]);
 
   useEffect(() => {
     if (!isCloudPortfolioLoaded) return;
@@ -970,11 +1187,10 @@ const buyLotDraftSummary = useMemo(() => {
           return nextCurrencyRates[code] || 1;
         };
         
-        // [1] 환율/코인 연동
-        const [fetchedRate, fetchedJpyRate, bitcoinPrices] = await Promise.all([
+        // [1] 환율 연동
+        const [fetchedRate, fetchedJpyRate] = await Promise.all([
           fetchUsdKrwRate(),
           fetchKrwRate('JPY'),
-          fetchBitcoinPrices(),
         ]);
 
         if (fetchedRate) {
@@ -1003,10 +1219,6 @@ const buyLotDraftSummary = useMemo(() => {
           if (asset.category === '현금') {
             newCurrentPrice = 1; newOriginalCurrentPrice = 1;
             successCount++;
-          } else if (asset.category === '가상화폐') {
-            if (asset.currency === 'KRW' && bitcoinPrices.krw) { newCurrentPrice = bitcoinPrices.krw; successCount++; }
-            else if (asset.currency === 'USD' && bitcoinPrices.usd) { newCurrentPrice = bitcoinPrices.usd; successCount++; }
-            else failCount++;
           } else if (asset.ticker) {
             
             // 현재가 연동
@@ -1240,8 +1452,14 @@ const buyLotDraftSummary = useMemo(() => {
     if (clickedItem) setSelectedCategory(clickedItem.name);
   };
   const dashboardSummary = useMemo(() => {
+    // 현금은 매입원가 개념이 없는데 분모에 들어가면 수익률이 희석된다.
+    // 개별 자산 수익률도 현금을 제외해 계산하므로 전체 수익률도 기준을 맞춘다.
+    const investedAssets = enhancedAssets.filter((asset) => asset.category !== '현금');
+
     const purchaseKRW = enhancedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
+    const investedPurchaseKRW = investedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
     const evaluationProfitKRW = enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
+    const investedProfitKRW = investedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
     const dividendKRW = autoDividends.reduce((sum, dividend) => (
       sum + (Number(dividend.amount) || 0) * getCachedKrwRate(dividend.currency, currencyRates, exchangeRate || 1350, jpyKrwRate || 9.5)
     ), 0);
@@ -1250,11 +1468,13 @@ const buyLotDraftSummary = useMemo(() => {
       summary[currency] = (summary[currency] || 0) + (Number(dividend.amount) || 0);
       return summary;
     }, {});
-    const totalReturnPercent = purchaseKRW > 0 ? (evaluationProfitKRW / purchaseKRW) * 100 : 0;
+    const totalReturnPercent = investedPurchaseKRW > 0 ? (investedProfitKRW / investedPurchaseKRW) * 100 : 0;
 
     return {
       purchaseKRW,
+      investedPurchaseKRW,
       evaluationProfitKRW,
+      investedProfitKRW,
       totalReturnPercent,
       dividendKRW,
       dividendByCurrency,
@@ -1377,10 +1597,10 @@ const buyLotDraftSummary = useMemo(() => {
               : 0;
             const gapValue = itemTargetValue - currentItemValue;
             const currentPriceKRW = matchedAsset
-              ? toKrwPrice((matchedAsset.originalCurrentPrice || matchedAsset.currentPrice), matchedAsset.currency)
+              ? toKrwPrice(matchedAsset.nativeCurrentPrice, matchedAsset.currency)
               : parseNumber(item.price);
             const currentPriceNative = matchedAsset
-              ? (matchedAsset.originalCurrentPrice || matchedAsset.currentPrice)
+              ? matchedAsset.nativeCurrentPrice
               : (parseNumber(item.nativePrice) || toNativePrice(currentPriceKRW, itemCurrency));
 
             return {
@@ -1542,7 +1762,6 @@ const buyLotDraftSummary = useMemo(() => {
         return nextCurrencyRates[code] || 1;
       };
       const syncTargets = [];
-      const bitcoinPricesPromise = fetchBitcoinPrices();
       const toKrwPrice = async (nativePrice, currency) => nativePrice * await getCurrencyRate(currency);
 
       currentTargetPortfolio.categories.forEach((category) => {
@@ -1586,27 +1805,21 @@ const buyLotDraftSummary = useMemo(() => {
         ));
 
         if (matchedAsset) {
-          const nativePrice = Number(matchedAsset.originalCurrentPrice || matchedAsset.currentPrice) || 0;
+          // enhancedAssets가 계산해둔 현지 통화 가격을 쓴다.
+          // originalCurrentPrice가 없을 때 currentPrice(원화)를 그대로 쓰면 환율이 두 번 곱해진다.
+          const nativePrice = Number(matchedAsset.nativeCurrentPrice) || 0;
           const priceKRW = await toKrwPrice(nativePrice, matchedAsset.currency);
           updates.push({ ...target, currency: matchedAsset.currency, priceKRW, nativePrice, source: 'holding' });
           continue;
         }
 
-        let fetchedPrice = null;
-        let fetchedCurrency = target.currency;
-        if (target.categoryId === '가상화폐' && ['BTC', 'BITCOIN'].includes(target.ticker)) {
-          const bitcoinPrices = await bitcoinPricesPromise;
-          fetchedPrice = target.currency === 'USD' ? bitcoinPrices.usd : bitcoinPrices.krw;
-          fetchedCurrency = target.currency || 'KRW';
-        } else {
-          const stockQuote = await fetchStockQuote({
-            ticker: target.ticker,
-            category: target.categoryId,
-            currency: target.currency,
-          });
-          fetchedPrice = stockQuote?.price ?? null;
-          fetchedCurrency = stockQuote?.currency || target.currency || 'KRW';
-        }
+        const stockQuote = await fetchStockQuote({
+          ticker: target.ticker,
+          category: target.categoryId,
+          currency: target.currency,
+        });
+        const fetchedPrice = stockQuote?.price ?? null;
+        const fetchedCurrency = stockQuote?.currency || target.currency || 'KRW';
 
         if (fetchedPrice !== null) {
           updates.push({
@@ -1636,13 +1849,15 @@ const buyLotDraftSummary = useMemo(() => {
           const changed = Object.entries(nextCurrencyRates).some(([currency, rate]) => prev[currency] !== rate);
           return changed ? nextCurrencyRates : prev;
         });
-        setTargetPortfolio(prev => ({
-          ...prev,
-          groups: {
-            ...prev.groups,
-            ...Object.fromEntries(prev.categories.map(category => [
-              category.id,
-              getTargetGroups(prev, category.id).map(group => ({
+        setTargetPortfolio(prev => {
+          // 값이 실제로 바뀐 항목이 하나도 없으면 상태를 갱신하지 않는다.
+          // 그러지 않으면 시세가 같아도 매 사이클마다 Firestore 문서 전체가 다시 올라간다.
+          let touched = false;
+          const syncedAt = new Date().toISOString();
+
+          const nextGroups = Object.fromEntries(prev.categories.map(category => [
+            category.id,
+            getTargetGroups(prev, category.id).map(group => ({
               ...group,
               items: (group.items || []).map(item => {
                 const update = updates.find(candidate => (
@@ -1653,19 +1868,36 @@ const buyLotDraftSummary = useMemo(() => {
                 ));
 
                 if (!update) return item;
+
+                const nextPrice = String(Math.round(update.priceKRW));
+                const nextNativePrice = String(update.nativePrice);
+                const unchanged = item.price === nextPrice
+                  && item.nativePrice === nextNativePrice
+                  && item.currency === update.currency
+                  && item.priceSource === update.source;
+
+                if (unchanged) return item;
+
+                touched = true;
                 return {
                   ...item,
                   currency: update.currency,
-                  price: String(Math.round(update.priceKRW)),
-                  nativePrice: String(update.nativePrice),
+                  price: nextPrice,
+                  nativePrice: nextNativePrice,
                   priceSource: update.source,
-                  priceUpdatedAt: new Date().toISOString(),
+                  priceUpdatedAt: syncedAt,
                 };
               }),
             })),
-            ])),
-          },
-        }));
+          ]));
+
+          if (!touched) return prev;
+
+          return {
+            ...prev,
+            groups: { ...prev.groups, ...nextGroups },
+          };
+        });
       }
 
       setTargetPriceSyncStatus(
@@ -1767,16 +1999,32 @@ const buyLotDraftSummary = useMemo(() => {
   }, [visibleTrades, exchangeRate, jpyKrwRate, currencyRates]);
   const memoSummary = useMemo(() => buildTradeSummary(visibleMemos, exchangeRate || 1350, jpyKrwRate || 9.5, currencyRates), [visibleMemos, exchangeRate, jpyKrwRate, currencyRates]);
 
-  const removeAsset = (id, e) => {
+  // 자산 삭제는 연결된 거래·메모·원장까지 함께 지우고 되돌릴 수 없다.
+  // 무엇이 같이 지워지는지 먼저 보여준 뒤 확인을 받는다.
+  const requestRemoveAsset = (id, e) => {
     if (e) e.stopPropagation();
     const assetToRemove = assets.find(asset => asset.id === id);
-    setAssets(prevAssets => prevAssets.filter(a => a.id !== id));
-    if (assetToRemove) {
-      setTrades(prevTrades => prevTrades.filter(trade => !isRecordForAsset(trade, assetToRemove)));
-      setMemos(prevMemos => prevMemos.filter(memo => !isRecordForAsset(memo, assetToRemove)));
-      setTradeLedger(prevLedger => prevLedger.filter(entry => !isRecordForAsset(entry, assetToRemove)));
-    }
-    addLog("자산이 삭제되었습니다.", "success");
+    if (!assetToRemove) return;
+
+    setAssetPendingRemoval({
+      asset: assetToRemove,
+      tradeCount: trades.filter(trade => isRecordForAsset(trade, assetToRemove)).length,
+      memoCount: memos.filter(memo => isRecordForAsset(memo, assetToRemove)).length,
+      ledgerCount: tradeLedger.filter(entry => isRecordForAsset(entry, assetToRemove)).length,
+      dividendCount: autoDividends.filter(dividend => isRecordForAsset(dividend, assetToRemove)).length,
+    });
+  };
+
+  const confirmRemoveAsset = () => {
+    const assetToRemove = assetPendingRemoval?.asset;
+    if (!assetToRemove) return;
+
+    setAssets(prevAssets => prevAssets.filter(a => a.id !== assetToRemove.id));
+    setTrades(prevTrades => prevTrades.filter(trade => !isRecordForAsset(trade, assetToRemove)));
+    setMemos(prevMemos => prevMemos.filter(memo => !isRecordForAsset(memo, assetToRemove)));
+    setTradeLedger(prevLedger => prevLedger.filter(entry => !isRecordForAsset(entry, assetToRemove)));
+    setAssetPendingRemoval(null);
+    addLog(`[${assetToRemove.name}] 자산과 관련 기록을 삭제했습니다.`, 'success');
   };
 
   const removeTrade = (record, e) => {
@@ -1872,6 +2120,14 @@ const buyLotDraftSummary = useMemo(() => {
     addLog('메모가 수정되었습니다.', 'success');
   };
 
+  const getMeasuredKrwRate = (currency) => {
+    const code = String(currency || 'KRW').toUpperCase();
+    if (code === 'KRW') return 1;
+    if (code === 'USD') return Number(exchangeRate) > 0 ? Number(exchangeRate) : 0;
+    if (code === 'JPY') return Number(jpyKrwRate) > 0 ? Number(jpyKrwRate) : 0;
+    return Number(currencyRates[code]) > 0 ? Number(currencyRates[code]) : 0;
+  };
+
   const addLedgerEntry = ({ asset, side, quantity, price, date, pnl = 0, sourceId }) => {
     const entry = buildLedgerEntry({
       sourceId,
@@ -1881,9 +2137,58 @@ const buyLotDraftSummary = useMemo(() => {
       price,
       date,
       pnl,
+      // 기록 시점 환율을 함께 남겨야 과거 실현손익이 오늘 환율에 흔들리지 않는다.
+      // 단, 환율을 아직 못 받아온 상태의 추정치(1350 등)를 각인하면 영영 보정되지 않으므로
+      // 실측값이 있을 때만 남기고, 없으면 0으로 두어 나중에 백필/현재 환율이 처리하게 한다.
+      fxRate: getMeasuredKrwRate(asset.currency),
     });
     setTradeLedger(prevLedger => [entry, ...prevLedger]);
   };
+
+  /**
+   * 이미 쌓여 있는 원장에는 fxRate가 없다.
+   * 원화가 아닌 기록만 골라 거래일 기준 환율을 한 번씩 받아와 채워 넣는다.
+   * (한 번 채우면 다시 요청하지 않는다.)
+   */
+  const fxBackfillDoneRef = useRef(false);
+  useEffect(() => {
+    // 원장을 deps에 넣으면, 백필 도중 매매를 한 건만 기록해도 cleanup이 걸려
+    // 그 세션에서는 다시 시작되지 않는다. 원장은 ref로만 읽는다.
+    if (!isCloudPortfolioLoaded || cloudLoadFailed || fxBackfillDoneRef.current) return undefined;
+
+    let cancelled = false;
+
+    const backfill = async () => {
+      const missing = (tradeLedgerRef.current || []).filter((entry) => (
+        entry.currency === 'USD' && !(Number(entry.fxRate) > 0) && entry.date
+      ));
+      if (missing.length === 0) return;
+
+      fxBackfillDoneRef.current = true;
+      const uniqueDates = [...new Set(missing.map((entry) => entry.date))];
+      const rateByDate = {};
+
+      for (const date of uniqueDates) {
+        if (cancelled) return;
+        const rate = await fetchUsdKrwRateByDate(date);
+        if (Number(rate) > 0) rateByDate[date] = Number(rate);
+      }
+
+      if (cancelled || Object.keys(rateByDate).length === 0) return;
+
+      setTradeLedger(prevLedger => prevLedger.map((entry) => {
+        if (entry.currency !== 'USD' || Number(entry.fxRate) > 0) return entry;
+        const rate = rateByDate[entry.date];
+        return rate ? { ...entry, fxRate: rate } : entry;
+      }));
+      addLog(`과거 거래 ${Object.keys(rateByDate).length.toLocaleString()}일치 환율을 반영했습니다.`, 'success');
+    };
+
+    backfill();
+    return () => {
+      cancelled = true;
+    };
+  }, [isCloudPortfolioLoaded, cloudLoadFailed]);
 
   const updateTargetCategoryPercent = (categoryId, percent) => {
     setTargetPortfolio(prev => ({
@@ -2513,8 +2818,25 @@ const buyLotDraftSummary = useMemo(() => {
           onPortfolioNameChange={setPortfolioName}
           onRefresh={() => setRefreshTrigger(t => t + 1)}
           userEmail={userEmail}
-          onSignOut={signOutUser}
+          onSignOut={handleSignOut}
         />
+
+        {cloudLoadFailed && (
+          <div
+            role="alert"
+            className="mb-4 px-4 py-3 md:px-5 md:py-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3"
+          >
+            <p className="flex-1 text-xs md:text-sm font-bold text-amber-700 leading-relaxed">
+              클라우드 데이터를 불러오지 못해 저장을 멈췄습니다. 지금 수정한 내용은 이 기기에만 남으며, 다시 불러오면 계정에 저장된 내용으로 대체됩니다.
+            </p>
+            <button
+              onClick={() => setCloudRetryToken(token => token + 1)}
+              className="px-4 py-2.5 min-h-11 bg-amber-600 text-white rounded-xl font-black text-xs md:text-sm hover:bg-amber-700 transition-colors whitespace-nowrap"
+            >
+              다시 불러오기
+            </button>
+          </div>
+        )}
 
         {/* 탭 */}
         <TabNav activeTab={activeTab} onChange={setActiveTab} />
@@ -2715,7 +3037,7 @@ const buyLotDraftSummary = useMemo(() => {
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[8px] md:text-[9px] text-slate-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-slate-900 text-xs md:text-[13px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalCurrentPrice || asset.currentPrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[8px] md:text-[9px] text-slate-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-slate-900 text-xs md:text-[13px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.nativeCurrentPrice, asset.originalCurrency || asset.currency)}</span></>
                                 )}
                               </div>
                             </div>
@@ -2775,7 +3097,7 @@ const buyLotDraftSummary = useMemo(() => {
                             )}
 
                             <button
-                              onClick={(e) => removeAsset(asset.id, e)}
+                              onClick={(e) => requestRemoveAsset(asset.id, e)}
                               className="inline-flex items-center justify-center gap-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
                               title="자산 삭제"
                             >
@@ -2793,7 +3115,7 @@ const buyLotDraftSummary = useMemo(() => {
                         <Wallet size={24} />
                       </div>
                       <p className="text-slate-800 font-bold text-sm md:text-base">아직 등록된 자산이 없습니다.</p>
-                      <p className="mt-2 text-slate-400 font-medium text-xs md:text-sm">주식, 가상화폐, 현금을 추가하면 상세 가치와 수익률이 표시됩니다.</p>
+                      <p className="mt-2 text-slate-400 font-medium text-xs md:text-sm">주식, 원자재, 현금을 추가하면 상세 가치와 수익률이 표시됩니다.</p>
                     </div>
                   )}
                 </div>
@@ -3190,7 +3512,7 @@ const buyLotDraftSummary = useMemo(() => {
                       onChange={(e) => setTargetCategoryDraft(e.target.value)}
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-700"
                     >
-                      {['국내주식', '해외주식', '현금', '가상화폐', '원자재'].map(category => (
+                      {ASSET_CATEGORIES.map(category => (
                         <option key={category} value={category}>{category}</option>
                       ))}
                     </select>
@@ -4111,6 +4433,65 @@ const buyLotDraftSummary = useMemo(() => {
       </button>
     </div>
   </div>
+      )}
+
+      {assetPendingRemoval && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setAssetPendingRemoval(null)}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="remove-asset-title"
+            className="w-full max-w-md bg-white rounded-2xl md:rounded-3xl p-6 md:p-7 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center mb-4">
+              <Trash2 size={20} aria-hidden="true" />
+            </div>
+            <h2 id="remove-asset-title" className="text-base md:text-lg font-black text-slate-900">
+              [{assetPendingRemoval.asset.name}] 자산을 삭제할까요?
+            </h2>
+            <p className="mt-2 text-xs md:text-sm font-medium text-slate-500 leading-relaxed">
+              아래 기록이 함께 삭제되며 되돌릴 수 없습니다.
+            </p>
+
+            <ul className="mt-4 space-y-1.5 bg-slate-50 border border-slate-100 rounded-2xl p-4">
+              {[
+                { label: '매매 기록', count: assetPendingRemoval.tradeCount },
+                { label: '메모', count: assetPendingRemoval.memoCount },
+                { label: '매매 원장', count: assetPendingRemoval.ledgerCount },
+              ].map(({ label, count }) => (
+                <li key={label} className="flex items-center justify-between text-xs md:text-sm">
+                  <span className="font-bold text-slate-500">{label}</span>
+                  <span className="font-black text-slate-900">{count.toLocaleString()}건</span>
+                </li>
+              ))}
+            </ul>
+
+            {assetPendingRemoval.dividendCount > 0 && (
+              <p className="mt-3 text-[11px] md:text-xs font-bold text-slate-400">
+                배당 내역 {assetPendingRemoval.dividendCount.toLocaleString()}건은 통계를 위해 유지됩니다.
+              </p>
+            )}
+
+            <div className="mt-6 flex gap-2.5">
+              <button
+                onClick={() => setAssetPendingRemoval(null)}
+                className="flex-1 px-5 py-3 min-h-11 bg-slate-100 text-slate-700 rounded-xl md:rounded-2xl font-black text-xs md:text-sm hover:bg-slate-200 transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={confirmRemoveAsset}
+                className="flex-1 px-5 py-3 min-h-11 bg-rose-600 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm hover:bg-rose-700 transition-colors"
+              >
+                삭제하기
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

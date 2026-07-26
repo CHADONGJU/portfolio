@@ -8,7 +8,6 @@ const getDividendCategoryOrder = (category = '') => {
   if (category?.includes('국내') && category?.includes('주식')) return 10;
   if (category?.includes('해외') && category?.includes('주식')) return 20;
   if (category?.includes('원자재')) return 30;
-  if (category?.includes('가상')) return 40;
   if (category?.includes('현금')) return 50;
   return 90;
 };
@@ -18,9 +17,33 @@ const getPerformanceCategoryOrder = (category = '') => {
   if (normalizedCategory.includes('국내') && normalizedCategory.includes('주식')) return 10;
   if (normalizedCategory.includes('해외') && normalizedCategory.includes('주식')) return 20;
   if (normalizedCategory.includes('원자재')) return 30;
-  if (normalizedCategory.includes('가상')) return 40;
   if (normalizedCategory.includes('현금')) return 50;
   return 90;
+};
+
+/**
+ * currentPrice는 원화 환산값이고 originalCurrentPrice가 현지 통화 가격이다.
+ * 구 데이터에는 originalCurrentPrice가 없을 수 있는데, 그때 currentPrice를
+ * 현지 통화로 착각하면 환율이 두 번 곱해진다. 여기서 역산해 통일한다.
+ */
+export const toNativePrice = (nativeValue, krwValue, krwRate) => {
+  const native = parseMetricNumber(nativeValue);
+  if (native > 0) return native;
+
+  const krw = parseMetricNumber(krwValue);
+  if (krw > 0 && krwRate > 0) return krw / krwRate;
+
+  return 0;
+};
+
+/**
+ * 실현손익/배당은 "지금 환율"이 아니라 그 거래가 일어난 시점의 환율로 환산해야
+ * 과거 누적 실현손익이 매일 흔들리지 않는다. 기록에 fxRate가 있으면 그것을 쓴다.
+ */
+const getRecordKrwRate = (record = {}, rateByCurrency) => {
+  const storedRate = Number(record.fxRate);
+  if (Number.isFinite(storedRate) && storedRate > 0) return storedRate;
+  return rateByCurrency(record.currency);
 };
 
 const withRunningPercent = (items, total, getValue) => {
@@ -58,23 +81,29 @@ export const usePortfolioMetrics = ({
     };
 
     const calculatedAssets = assets.map((a) => {
-      // originalAveragePrice가 무조건 있어야 수학이 맞음
-      const safeOrigAvgPrice = a.originalAveragePrice || a.averagePrice;
-      const safeOrigCurrPrice = a.originalCurrentPrice || a.currentPrice;
-
-      const purchaseNative = safeOrigAvgPrice * a.quantity;
-      const currentNative = safeOrigCurrPrice * a.quantity;
       const krwRate = toKrwRate(a.currency);
-      
+      // quantity가 "1,000" 같은 문자열로 들어오면 곱셈이 통째로 NaN이 되고,
+      // 화면에는 NaN 대신 0으로 위장되어 표시된다. 반드시 파싱한다.
+      const quantity = parseMetricNumber(a.quantity);
+
+      // averagePrice는 항상 현지 통화지만, currentPrice는 원화 환산값이다.
+      const safeOrigAvgPrice = parseMetricNumber(a.originalAveragePrice) || parseMetricNumber(a.averagePrice);
+      const safeOrigCurrPrice = toNativePrice(a.originalCurrentPrice, a.currentPrice, krwRate);
+
+      const purchaseNative = safeOrigAvgPrice * quantity;
+      const currentNative = safeOrigCurrPrice * quantity;
+
       const purchaseKRW = purchaseNative * krwRate;
-      const currentKRW = currentNative * krwRate; 
+      const currentKRW = currentNative * krwRate;
       const profitNative = currentNative - purchaseNative;
       const profitKRW = profitNative * krwRate;
-      
+
       const returnPercent = (purchaseNative > 0 && a.category !== '현금') ? ((currentNative - purchaseNative) / purchaseNative) * 100 : 0;
-      
+
       return {
         ...a,
+        nativeAveragePrice: safeOrigAvgPrice,
+        nativeCurrentPrice: safeOrigCurrPrice,
         purchaseNative,
         currentNative,
         purchaseKRW,
@@ -165,7 +194,7 @@ export const usePortfolioMetrics = ({
   const krwNetProfit = krwTrades.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0);
   const usdNetProfit = usdTrades.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0);
   const totalConvertedNetProfit = realizedRecords.reduce((acc, t) => (
-    acc + ((Number(t.pnl) || 0) * realizedKrwRate(t.currency))
+    acc + ((Number(t.pnl) || 0) * getRecordKrwRate(t, realizedKrwRate))
   ), 0);
 
   const stockPerformanceSummary = useMemo(() => {
@@ -197,8 +226,8 @@ export const usePortfolioMetrics = ({
       const currency = firstAsset?.currency || firstTrade?.currency || firstDividend?.currency || 'KRW';
 
       const unrealizedKRW = assetRows.reduce((sum, asset) => sum + asset.profitKRW, 0);
-      const realizedKRW = sellRows.reduce((sum, trade) => sum + ((Number(trade.pnl) || 0) * getRecordRate(trade.currency)), 0);
-      const dividendKRW = dividendRows.reduce((sum, dividend) => sum + (dividend.amount * getRecordRate(dividend.currency)), 0);
+      const realizedKRW = sellRows.reduce((sum, trade) => sum + ((Number(trade.pnl) || 0) * getRecordKrwRate(trade, getRecordRate)), 0);
+      const dividendKRW = dividendRows.reduce((sum, dividend) => sum + (dividend.amount * getRecordKrwRate(dividend, getRecordRate)), 0);
       const totalKRW = unrealizedKRW + realizedKRW + dividendKRW;
 
       const unrealizedNative = assetRows.reduce((sum, asset) => sum + asset.profitNative, 0);
@@ -219,8 +248,8 @@ export const usePortfolioMetrics = ({
           : assetRows.reduce((sum, asset) => sum + parseMetricNumber(asset.quantity), 0),
         totalBuyQuantity: buyRows.reduce((sum, record) => sum + (Number(record.quantity) || 0), 0),
         totalSellQuantity: sellRows.reduce((sum, record) => sum + (Number(record.quantity) || 0), 0),
-        totalBuyAmountKRW: buyRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * getRecordRate(record.currency)), 0),
-        totalSellAmountKRW: sellRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * getRecordRate(record.currency)), 0),
+        totalBuyAmountKRW: buyRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * getRecordKrwRate(record, getRecordRate)), 0),
+        totalSellAmountKRW: sellRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * getRecordKrwRate(record, getRecordRate)), 0),
         unrealizedKRW,
         realizedKRW,
         dividendKRW,

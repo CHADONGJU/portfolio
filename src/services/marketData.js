@@ -31,24 +31,47 @@ export const fetchUsdKrwRate = () => fetchKrwRate('USD');
 
 export const fetchJpyKrwRate = () => fetchKrwRate('JPY');
 
-export const fetchBitcoinPrices = async () => {
-  try {
-    const response = await fetch(
-      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=krw,usd',
-    );
-    if (!response.ok) return { krw: null, usd: null };
-
-    const data = await response.json();
-    return {
-      krw: data?.bitcoin?.krw ?? null,
-      usd: data?.bitcoin?.usd ?? null,
-    };
-  } catch {
-    return { krw: null, usd: null };
-  }
+// Yahoo는 런던 상장 종목을 펜스(GBp) 단위로 돌려준다.
+// 통화 코드를 그대로 저장하면 대소문자 불일치로 환율이 1이 적용되므로
+// 여기서 ISO 코드(대문자)와 기본 단위 가격으로 정규화한다.
+const SUBUNIT_CURRENCIES = {
+  GBX: { parent: 'GBP', divisor: 100 },
+  ZAC: { parent: 'ZAR', divisor: 100 },
+  ILA: { parent: 'ILS', divisor: 100 },
 };
 
-const fetchWithTimeout = async (url, options = {}, timeoutMs = 7000) => {
+export const normalizeQuote = (price, currency, fallbackCurrency = '') => {
+  const rawCurrency = String(currency || '').trim();
+  const upperCurrency = rawCurrency.toUpperCase();
+  const numericPrice = Number(price);
+
+  if (!Number.isFinite(numericPrice)) return null;
+  if (!upperCurrency) {
+    // 통화를 모를 때 임의로 KRW를 박으면 호출부의 '자산 통화' 폴백이 죽는다.
+    // fallback을 주지 않으면 undefined로 남겨 호출부가 판단하게 한다.
+    const fallback = String(fallbackCurrency || '').trim().toUpperCase();
+    return { price: numericPrice, currency: fallback || undefined };
+  }
+
+  // 'GBp'(소문자 p)만 펜스. 'GBP'는 파운드 그대로 둔다.
+  const subunit = rawCurrency === 'GBp'
+    ? { parent: 'GBP', divisor: 100 }
+    : SUBUNIT_CURRENCIES[upperCurrency];
+
+  if (subunit) return { price: numericPrice / subunit.divisor, currency: subunit.parent };
+
+  return { price: numericPrice, currency: upperCurrency };
+};
+
+const PROXY_TIMEOUT_MS = 7000;
+// 직접 호출은 짧게 끊고 프록시로 넘어간다.
+const DIRECT_TIMEOUT_MS = 4000;
+const PROXY_BATCH_SIZE = 3;
+// 모든 배치가 실제로 시도될 수 있는 예산이어야 마지막 폴백(r.jina.ai)이 사문화되지 않는다.
+// 직접 호출 4초 + 프록시 배치 3개 × 7초.
+const PROXY_BUDGET_MS = DIRECT_TIMEOUT_MS + (PROXY_TIMEOUT_MS * 3);
+
+const fetchWithTimeout = async (url, options = {}, timeoutMs = PROXY_TIMEOUT_MS) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -59,58 +82,13 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = 7000) => {
   }
 };
 
-export const fetchWithSafeProxy = async (url) => {
+const buildProxyList = (url, { jinaFirst = false } = {}) => {
   const encodedUrl = encodeURIComponent(url);
+  // r.jina.ai로 감쌀 때도 상위 구간을 https로 유지한다(평문 다운그레이드 방지).
   const bareUrl = url.replace(/^https?:\/\//, '');
-  const proxies = [
-    url,
-    `https://api.allorigins.win/raw?url=${encodedUrl}`,
-    `https://api.allorigins.win/get?url=${encodedUrl}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`,
-    `https://corsproxy.io/?${encodedUrl}`,
-    `https://corsproxy.io/?url=${encodedUrl}`,
-    `https://thingproxy.freeboard.io/fetch/${url}`,
-    `https://r.jina.ai/http://${bareUrl}`,
-  ];
+  const jinaUrl = `https://r.jina.ai/https://${bareUrl}`;
 
-  for (const proxy of proxies) {
-    try {
-      const res = await fetchWithTimeout(proxy, { cache: 'no-store' });
-      if (!res.ok) continue;
-
-      const text = await res.text();
-      let data;
-
-      try {
-        data = JSON.parse(text);
-      } catch {
-        continue;
-      }
-
-      if (data?.contents) {
-        try {
-          return JSON.parse(data.contents);
-        } catch {
-          continue;
-        }
-      }
-
-      return data;
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
-};
-
-export const fetchTextWithSafeProxy = async (url) => {
-  const encodedUrl = encodeURIComponent(url);
-  const bareUrl = url.replace(/^https?:\/\//, '');
-  const jinaUrl = `https://r.jina.ai/http://${bareUrl}`;
-  const proxies = [
-    url,
-    jinaUrl,
+  const rest = [
     `https://api.allorigins.win/raw?url=${encodedUrl}`,
     `https://api.allorigins.win/get?url=${encodedUrl}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`,
@@ -119,26 +97,96 @@ export const fetchTextWithSafeProxy = async (url) => {
     `https://thingproxy.freeboard.io/fetch/${url}`,
   ];
 
-  for (const proxy of proxies) {
+  return jinaFirst ? [url, jinaUrl, ...rest] : [url, ...rest, jinaUrl];
+};
+
+/**
+ * 프록시를 순차로 8번 시도하면 실패 종목 하나가 수 분을 잡아먹는다.
+ * 원본 URL을 먼저 짧게 시도하고(성공하면 가장 신선한 값), 실패하면
+ * 프록시를 3개씩 동시에 던져 가장 먼저 파싱에 성공한 응답을 쓴다.
+ * 종목당 전체 예산(budgetMs)을 넘기면 그대로 포기한다.
+ */
+const toBatches = ([direct, ...proxies]) => {
+  // 원본 URL은 단독 배치로 둔다. 같이 던지면 캐시된 프록시 응답이 이길 수 있다.
+  const batches = direct ? [[direct]] : [];
+  for (let index = 0; index < proxies.length; index += PROXY_BATCH_SIZE) {
+    batches.push(proxies.slice(index, index + PROXY_BATCH_SIZE));
+  }
+  return batches;
+};
+
+const fetchViaProxies = async (urls, parseText, budgetMs = PROXY_BUDGET_MS) => {
+  const deadline = Date.now() + budgetMs;
+  const batches = toBatches(urls);
+
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return null;
+
+    const isDirectAttempt = batchIndex === 0 && batches[0].length === 1;
+    const attemptTimeoutMs = Math.min(
+      remainingMs,
+      isDirectAttempt ? DIRECT_TIMEOUT_MS : PROXY_TIMEOUT_MS,
+    );
+
+    const attempts = batches[batchIndex].map(async (url) => {
+      const res = await fetchWithTimeout(url, { cache: 'no-store' }, attemptTimeoutMs);
+      if (!res.ok) throw new Error(`request responded ${res.status}`);
+
+      const parsed = parseText(await res.text());
+      if (parsed === null || parsed === undefined) throw new Error('payload not usable');
+      return parsed;
+    });
+
     try {
-      const res = await fetchWithTimeout(proxy, { cache: 'no-store' });
-      if (!res.ok) continue;
-
-      const text = await res.text();
-
-      try {
-        const data = JSON.parse(text);
-        if (typeof data?.contents === 'string') return data.contents;
-      } catch {
-        return text;
-      }
+      return await Promise.any(attempts);
     } catch {
-      continue;
+      // 이 배치는 전부 실패했다. 예산이 남아 있으면 다음 배치를 시도한다.
     }
   }
 
   return null;
 };
+
+const parseProxyJson = (text) => {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return null;
+  }
+
+  if (data?.contents) {
+    try {
+      return JSON.parse(data.contents);
+    } catch {
+      return null;
+    }
+  }
+
+  return data ?? null;
+};
+
+const parseProxyText = (text) => {
+  if (!text) return null;
+
+  try {
+    const data = JSON.parse(text);
+    // allorigins의 get 응답은 원문을 contents에 문자열로 담아준다.
+    return typeof data?.contents === 'string' ? data.contents : null;
+  } catch {
+    // JSON이 아니면 원문 그대로가 우리가 원하던 텍스트(CSV 등)다.
+    return text;
+  }
+};
+
+export const fetchWithSafeProxy = async (url) => (
+  fetchViaProxies(buildProxyList(url), parseProxyJson)
+);
+
+export const fetchTextWithSafeProxy = async (url) => (
+  fetchViaProxies(buildProxyList(url, { jinaFirst: true }), parseProxyText)
+);
 
 export const fetchUsdKrwRateByDate = async (date) => {
   if (!date) return null;
@@ -227,22 +275,20 @@ const readYahooPrice = (data) => {
     ?? meta?.chartPreviousClose
     ?? null;
 
-  return price === null ? null : {
-    price,
-    currency: meta?.currency,
-    symbol: meta?.symbol,
-  };
+  if (price === null) return null;
+
+  const normalized = normalizeQuote(price, meta?.currency);
+  return normalized === null ? null : { ...normalized, symbol: meta?.symbol };
 };
 
 const readYahooQuotePrice = (data) => {
   const quote = data?.quoteResponse?.result?.[0];
   const price = pickMarketAwarePrice(quote);
 
-  return price === null ? null : {
-    price,
-    currency: quote?.currency,
-    symbol: quote?.symbol,
-  };
+  if (price === null) return null;
+
+  const normalized = normalizeQuote(price, quote?.currency);
+  return normalized === null ? null : { ...normalized, symbol: quote?.symbol };
 };
 
 const fetchYahooQuote = async (yfTicker) => {
@@ -367,11 +413,13 @@ const fetchStooqQuote = async (asset, ticker) => {
   for (const symbol of getStooqSymbols(asset, ticker)) {
     const stooqUrl = `https://stooq.com/q/l/?s=${symbol}&f=sd2t2ohlcv&h&e=csv`;
     const stooqPrice = readStooqPrice(await fetchTextWithSafeProxy(stooqUrl));
-    if (stooqPrice !== null) return {
-      price: stooqPrice,
-      currency: symbol.endsWith('.jp') ? 'JPY' : asset.currency || 'USD',
-      symbol,
-    };
+    if (stooqPrice !== null) {
+      const normalized = normalizeQuote(
+        stooqPrice,
+        symbol.endsWith('.jp') ? 'JPY' : asset.currency || 'USD',
+      );
+      if (normalized !== null) return { ...normalized, symbol };
+    }
   }
 
   return null;
@@ -402,6 +450,10 @@ export const fetchStockQuote = async (asset) => {
         currency: yahooQuote.currency || 'KRW',
       };
     }
+
+    // 여기까지 왔다면 국내 종목은 더 볼 곳이 없다.
+    // return이 없으면 아래 블록이 같은 Yahoo URL을 한 번 더 돌게 된다.
+    return null;
   }
 
   if (asset.currency === 'USD' || asset.currency === 'JPY' || isOverseasCategory(asset.category || '')) {
