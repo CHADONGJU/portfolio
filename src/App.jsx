@@ -1408,8 +1408,8 @@ const buyLotDraftSummary = useMemo(() => {
 
   const isDomesticStockChart = selectedCategory?.includes('국내') && selectedCategory?.includes('주식');
   const isOverseasStockChart = selectedCategory?.includes('해외') && selectedCategory?.includes('주식');
-  const profitTone = currentCategoryProfitKRW >= 0 ? 'text-emerald-600' : 'text-rose-600';
-  const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100';
+  const profitTone = currentCategoryProfitKRW >= 0 ? 'text-up' : 'text-down';
+  const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-up-soft border-up-soft' : 'bg-down-soft border-down-soft';
   const visibleDetailAssets = useMemo(() => (
     [...(selectedCategory ? subChartData : enhancedAssets)]
       .map((asset) => ({
@@ -2799,12 +2799,12 @@ const buyLotDraftSummary = useMemo(() => {
 
 
   return (
-    <div className="min-h-[100dvh] bg-[#f6f8fb] px-3 py-4 pb-[calc(5rem+env(safe-area-inset-bottom))] md:p-8 text-slate-900 font-sans relative">
+    <div className="min-h-[100dvh] bg-canvas px-4 pt-5 pb-[calc(4rem+env(safe-area-inset-bottom))] md:px-8 md:pt-8 md:pb-16 text-ink relative">
       
       {/* 동기화 라이브 피드백 */}
       <SyncStatusToast syncStatus={syncStatus} />
 
-      <div className="max-w-[1480px] mx-auto space-y-6 md:space-y-7">
+      <div className="max-w-[1320px] mx-auto space-y-5 md:space-y-6">
         
         {/* Header */}
         <DashboardHeader
@@ -2824,14 +2824,14 @@ const buyLotDraftSummary = useMemo(() => {
         {cloudLoadFailed && (
           <div
             role="alert"
-            className="mb-4 px-4 py-3 md:px-5 md:py-3.5 bg-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3"
+            className="px-5 py-4 bg-warn-soft rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3"
           >
-            <p className="flex-1 text-xs md:text-sm font-bold text-amber-700 leading-relaxed">
+            <p className="flex-1 text-[14px] font-semibold text-ink leading-relaxed">
               클라우드 데이터를 불러오지 못해 저장을 멈췄습니다. 지금 수정한 내용은 이 기기에만 남으며, 다시 불러오면 계정에 저장된 내용으로 대체됩니다.
             </p>
             <button
               onClick={() => setCloudRetryToken(token => token + 1)}
-              className="px-4 py-2.5 min-h-11 bg-amber-600 text-white rounded-xl font-black text-xs md:text-sm hover:bg-amber-700 transition-colors whitespace-nowrap"
+              className="shrink-0 h-11 px-5 bg-ink text-surface rounded-xl font-bold text-[14px] hover:opacity-90 transition-opacity whitespace-nowrap"
             >
               다시 불러오기
             </button>
@@ -2842,77 +2842,92 @@ const buyLotDraftSummary = useMemo(() => {
         <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
         {activeTab === 'portfolio' && (
-          <div className="space-y-5 animate-in fade-in duration-500">
-            <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-3">
-              {[
-                {
-                  label: '총 평가금액',
-                  value: formatMoney(totalConvertedKRW, 'KRW'),
-                  icon: Wallet,
-                  tone: 'text-slate-900',
-                  helper: `${enhancedAssets.length.toLocaleString()}개 자산`,
-                },
-                {
-                  label: '총 수익률',
-                  value: `${dashboardSummary.totalReturnPercent > 0 ? '+' : ''}${dashboardSummary.totalReturnPercent.toFixed(2)}%`,
-                  icon: dashboardSummary.totalReturnPercent >= 0 ? TrendingUp : TrendingDown,
-                  tone: dashboardSummary.totalReturnPercent >= 0 ? 'text-emerald-600' : 'text-rose-600',
-                  helper: formatMoney(dashboardSummary.evaluationProfitKRW, 'KRW'),
-                },
-                {
-                  label: '실현손익',
-                  value: `${totalConvertedNetProfit > 0 ? '+' : ''}${formatMoney(totalConvertedNetProfit, 'KRW')}`,
-                  icon: ArrowRightLeft,
-                  tone: totalConvertedNetProfit >= 0 ? 'text-emerald-600' : 'text-rose-600',
-                  helper: '매도 기록 기준',
-                },
-                {
-                  label: '배당 수익',
-                  value: dividendCurrencyParts.length > 0 ? dividendCurrencyParts.join(' / ') : formatMoney(0, 'KRW'),
-                  icon: Receipt,
-                  tone: dashboardSummary.dividendKRW >= 0 ? 'text-slate-900' : 'text-rose-600',
-                  helper: '세후 누적 · 통화별 표시',
-                },
-              ].map((item) => {
-                const Icon = item.icon;
-                return (
-                  <div key={item.label} className="bg-white border border-slate-200/70 rounded-xl p-4 lg:p-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
-                    <div className="flex items-center justify-between gap-3 mb-2">
-                      <p className="text-[10px] md:text-[11px] font-bold text-slate-400">{item.label}</p>
-                      <div className="w-7 h-7 rounded-lg bg-slate-100/70 text-slate-500 flex items-center justify-center">
-                        <Icon size={15} />
-                      </div>
-                    </div>
-                    <p className={`text-lg md:text-xl lg:text-[21px] font-black tracking-tight wrap-break-word ${item.tone}`}>{item.value}</p>
-                    <p className="mt-1 text-[10px] md:text-xs font-semibold text-slate-400">{item.helper}</p>
+          <div className="space-y-5 anim-fade">
+            <section className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,2fr)]">
+              {/* 히어로 — 총 평가금액 */}
+              <div className="bg-surface rounded-[20px] p-6 lg:p-7 flex flex-col justify-center">
+                <p className="text-[14px] font-semibold text-ink-mute">총 평가금액</p>
+                <p className="mt-2 figure text-[32px] lg:text-[38px] font-bold text-ink leading-none wrap-break-word">
+                  {formatMoney(totalConvertedKRW, 'KRW')}
+                </p>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <span
+                    className={`inline-flex items-center gap-1 h-8 px-3 rounded-full text-[14px] font-bold tnum ${
+                      dashboardSummary.totalReturnPercent >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'
+                    }`}
+                  >
+                    {dashboardSummary.totalReturnPercent >= 0
+                      ? <TrendingUp size={14} aria-hidden="true" />
+                      : <TrendingDown size={14} aria-hidden="true" />}
+                    {dashboardSummary.totalReturnPercent > 0 ? '+' : ''}
+                    {dashboardSummary.totalReturnPercent.toFixed(2)}%
+                  </span>
+                  <span className={`text-[14px] font-semibold tnum ${dashboardSummary.investedProfitKRW >= 0 ? 'text-up' : 'text-down'}`}>
+                    {dashboardSummary.evaluationProfitKRW > 0 ? '+' : ''}
+                    {formatMoney(dashboardSummary.evaluationProfitKRW, 'KRW')}
+                  </span>
+                  <span className="text-[13px] font-medium text-ink-mute">
+                    · 현금 제외 기준
+                  </span>
+                </div>
+              </div>
+
+              {/* 보조 지표 3개 */}
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  {
+                    label: '보유 자산',
+                    value: `${enhancedAssets.length.toLocaleString()}개`,
+                    tone: 'text-ink',
+                    helper: '등록된 종목 수',
+                  },
+                  {
+                    label: '실현손익',
+                    value: `${totalConvertedNetProfit > 0 ? '+' : ''}${formatMoney(totalConvertedNetProfit, 'KRW')}`,
+                    tone: totalConvertedNetProfit >= 0 ? 'text-up' : 'text-down',
+                    helper: '매도 시점 환율 기준',
+                  },
+                  {
+                    label: '배당 수익',
+                    value: dividendCurrencyParts.length > 0 ? dividendCurrencyParts.join(' / ') : formatMoney(0, 'KRW'),
+                    tone: dashboardSummary.dividendKRW >= 0 ? 'text-ink' : 'text-down',
+                    helper: '세후 누적',
+                  },
+                ].map((item) => (
+                  <div key={item.label} className="bg-surface rounded-[20px] p-4 lg:p-5 flex flex-col justify-center">
+                    <p className="text-[13px] font-semibold text-ink-mute">{item.label}</p>
+                    <p className={`mt-1.5 figure text-[17px] lg:text-[20px] font-bold leading-tight wrap-break-word ${item.tone}`}>
+                      {item.value}
+                    </p>
+                    <p className="mt-1.5 text-[12px] font-medium text-ink-mute">{item.helper}</p>
                   </div>
-                );
-              })}
+                ))}
+              </div>
             </section>
 
             <div className="grid lg:grid-cols-[minmax(0,1fr)_30rem] xl:grid-cols-[minmax(0,1fr)_34rem] gap-4 lg:gap-5">
             {/* SVG 드릴다운 차트 */}
-            <div className="order-2 lg:order-2 bg-white p-5 lg:p-6 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 flex flex-col items-center h-full">
+            <div className="order-2 lg:order-2 bg-surface p-6 lg:p-7 rounded-[20px] flex flex-col items-center h-full">
               <div className="w-full flex justify-between items-center mb-5 lg:mb-5">
-                <h2 className="text-base lg:text-[15px] font-black text-slate-900 flex items-center gap-2"><PieIcon className="text-slate-500" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
+                <h2 className="text-base lg:text-[16px] font-bold text-ink flex items-center gap-2"><PieIcon className="text-ink-soft" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
                 {selectedCategory && (
-                  <button onClick={() => setSelectedCategory(null)} className="text-[9px] md:text-[10px] font-bold text-slate-600 bg-slate-100 px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center gap-1 hover:bg-slate-200 uppercase tracking-widest"><ArrowLeft size={10} /> 메인으로</button>
+                  <button onClick={() => setSelectedCategory(null)} className="text-[11px] md:text-[12px] font-bold text-ink-soft bg-line-soft px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center gap-1 hover:bg-line"><ArrowLeft size={10} /> 메인으로</button>
                 )}
               </div>
               {enhancedAssets.length === 0 ? (
                 <div className="w-full min-h-[18rem] md:min-h-80 flex flex-col items-center justify-center text-center px-3">
-                  <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-slate-100 text-slate-600 flex items-center justify-center mb-4 md:mb-5">
+                  <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-line-soft text-ink-soft flex items-center justify-center mb-4 md:mb-5">
                     <Target size={24} className="md:w-7 md:h-7" />
                   </div>
-                  <p className="text-base md:text-lg font-bold text-slate-900">첫 자산을 추가해보세요</p>
-                  <p className="mt-2 text-xs md:text-sm font-medium text-slate-400 leading-relaxed max-w-xs">
+                  <p className="text-base md:text-lg font-bold text-ink">첫 자산을 추가해보세요</p>
+                  <p className="mt-2 text-xs md:text-sm font-medium text-ink-mute leading-relaxed max-w-xs">
                     종목을 등록하면 비중, 수익률, 배당 기록이 이 화면에 바로 쌓입니다.
                   </p>
                   <button
                     onClick={() => {
                       setIsAdding(true);
                     }}
-                    className="mt-5 md:mt-6 inline-flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl text-sm font-bold shadow-sm hover:bg-slate-800 transition-colors"
+                    className="mt-6 inline-flex items-center gap-2 h-12 px-5 bg-brand text-surface rounded-2xl text-[15px] font-bold hover:bg-brand-strong active:scale-[0.99] transition-all"
                   >
                     <Plus size={16} /> 자산 추가
                   </button>
@@ -2926,41 +2941,41 @@ const buyLotDraftSummary = useMemo(() => {
                     role={!selectedCategory ? 'button' : undefined}
                     tabIndex={!selectedCategory ? 0 : undefined}
                   />
-                  <div className="absolute inset-[12%] rounded-full bg-white shadow-inner shadow-slate-100/80" />
+                  <div className="absolute inset-[12%] rounded-full bg-surface shadow-inner shadow-line" />
 	                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none p-4 lg:p-6">
-	                    <span className="text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
+	                    <span className="text-[11px] md:text-[12px] text-ink-mute font-bold tracking-[0.2em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
 	                    <div className="flex flex-col items-center gap-0.5">
-	                      {currentCategoryKRW > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-slate-900 tracking-tight whitespace-nowrap">{formatMoney(currentCategoryKRW, 'KRW')}</span>}
-	                      {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[9px] text-slate-300 font-bold">+</span>}
-	                      {currentCategoryUSD > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-slate-900 tracking-tight whitespace-nowrap">{formatMoney(currentCategoryUSD, 'USD')}</span>}
+	                      {currentCategoryKRW > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-ink tracking-tight whitespace-nowrap">{formatMoney(currentCategoryKRW, 'KRW')}</span>}
+	                      {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[11px] text-ink-mute font-bold">+</span>}
+	                      {currentCategoryUSD > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-ink tracking-tight whitespace-nowrap">{formatMoney(currentCategoryUSD, 'USD')}</span>}
 	                    </div>
                     {isDomesticStockChart ? (
 	                      <div className={`mt-2 md:mt-3 max-w-[82%] px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center justify-center gap-1.5 ${profitBgTone}`}>
-                        <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 수익금액</span>
-                        <span className={`text-[10px] md:text-[11px] font-bold ${profitTone}`}>
+                        <span className="text-[11px] md:text-[11px] font-bold text-ink-mute">총 수익금액</span>
+                        <span className={`text-[12px] md:text-[13px] font-bold ${profitTone}`}>
                           {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
                         </span>
                       </div>
                     ) : isOverseasStockChart ? (
-	                      <div className={`mt-2 md:mt-3 max-w-[82%] px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center justify-center gap-1.5 ${currentCategoryProfitUSD >= 0 ? 'bg-emerald-50 border-emerald-100' : 'bg-rose-50 border-rose-100'}`}>
-                        <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest">총 수익금액</span>
-                        <span className={`text-[10px] md:text-[11px] font-bold ${currentCategoryProfitUSD >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+	                      <div className={`mt-2 md:mt-3 max-w-[82%] px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center justify-center gap-1.5 ${currentCategoryProfitUSD >= 0 ? 'bg-up-soft border-up-soft' : 'bg-down-soft border-down-soft'}`}>
+                        <span className="text-[11px] md:text-[11px] font-bold text-ink-mute">총 수익금액</span>
+                        <span className={`text-[12px] md:text-[13px] font-bold ${currentCategoryProfitUSD >= 0 ? 'text-up' : 'text-down'}`}>
                           {currentCategoryProfitUSD > 0 ? '+' : ''}{formatMoney(currentCategoryProfitUSD, 'USD')}
                         </span>
                       </div>
                     ) : (
                       <>
-	                        <div className="mt-2 md:mt-3 max-w-[86%] bg-slate-50 px-2 py-1 md:px-3 md:py-1.5 rounded-full border border-slate-100 flex items-center justify-center gap-1.5">
-	                          <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">총 평가가치</span>
-	                          <span className="text-[10px] md:text-[11px] lg:text-[12px] font-bold text-slate-700 whitespace-nowrap">{formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
+	                        <div className="mt-2 md:mt-3 max-w-[86%] bg-canvas px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center justify-center gap-1.5">
+	                          <span className="text-[11px] md:text-[11px] font-bold text-ink-mute whitespace-nowrap">총 평가가치</span>
+	                          <span className="text-[12px] md:text-[13px] lg:text-[13px] font-bold text-ink-soft whitespace-nowrap">{formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
 	                        </div>
 	                        <div className={`mt-1.5 max-w-[86%] px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center justify-center gap-1.5 ${profitBgTone}`}>
-	                          <span className="text-[8px] md:text-[9px] font-bold text-slate-400 uppercase tracking-widest whitespace-nowrap">총 수익금액</span>
-	                          <span className={`text-[10px] md:text-[11px] font-bold ${profitTone}`}>
+	                          <span className="text-[11px] md:text-[11px] font-bold text-ink-mute whitespace-nowrap">총 수익금액</span>
+	                          <span className={`text-[12px] md:text-[13px] font-bold ${profitTone}`}>
                             {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
                           </span>
                           {isOverseasStockChart && currentCategoryProfitUSD !== 0 && (
-                            <span className={`text-[10px] md:text-[11px] font-bold ${profitTone}`}>
+                            <span className={`text-[12px] md:text-[13px] font-bold ${profitTone}`}>
                               / {currentCategoryProfitUSD > 0 ? '+' : ''}{formatMoney(currentCategoryProfitUSD, 'USD')}
                             </span>
                           )}
@@ -2972,12 +2987,12 @@ const buyLotDraftSummary = useMemo(() => {
               )}
               <div className="mt-6 lg:mt-6 w-full space-y-1.5">
                 {currentChartData.map(data => (
-                  <button key={data.id || data.name} onClick={() => !selectedCategory && setSelectedCategory(data.name)} className={`w-full flex items-center justify-between p-3 lg:px-3 lg:py-2.5 rounded-xl border transition-all ${!selectedCategory ? 'bg-slate-50 border-slate-100 hover:bg-white hover:border-slate-200' : 'bg-white border-slate-100'}`}>
+                  <button key={data.id || data.name} onClick={() => !selectedCategory && setSelectedCategory(data.name)} className={`w-full flex items-center justify-between p-3 lg:px-3 lg:py-2.5 rounded-xl border transition-all ${!selectedCategory ? 'bg-canvas border-line hover:bg-surface hover:border-line' : 'bg-surface border-line'}`}>
                     <div className="flex items-center gap-3">
                       <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full shadow-inner" style={{ backgroundColor: data.color }}></div>
-                      <span className="text-[11px] md:text-xs font-bold text-slate-700">{data.name}</span>
+                      <span className="text-[13px] md:text-xs font-bold text-ink-soft">{data.name}</span>
                     </div>
-                    <span className="text-[10px] md:text-[11px] font-bold text-slate-400">{data.percent.toFixed(1)}%</span>
+                    <span className="text-[12px] md:text-[13px] font-bold text-ink-mute">{data.percent.toFixed(1)}%</span>
                   </button>
                 ))}
               </div>
@@ -2985,35 +3000,35 @@ const buyLotDraftSummary = useMemo(() => {
 
             {/* List 섹션 */}
             <div className="order-1 lg:order-1 space-y-6 min-w-0">
-              <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden">
-                <div className="p-5 lg:px-5 lg:py-4 border-b border-slate-100 flex justify-between items-center bg-white">
-                  <h3 className="text-base lg:text-[15px] font-black text-slate-900">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
+              <div className="bg-surface rounded-[20px] overflow-hidden">
+                <div className="p-5 lg:px-5 lg:py-4 border-b border-line flex justify-between items-center bg-surface">
+                  <h3 className="text-base lg:text-[16px] font-bold text-ink">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full table-fixed text-left">
                     <thead className="hidden md:table-header-group">
-                      <tr className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.16em] border-b border-slate-100 bg-slate-50/50">
+                      <tr className="text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.16em] border-b border-line bg-canvas/50">
                         <th className="px-4 py-3 md:px-5 md:py-3.5 w-[30%]">종목/자산</th>
                         <th className="px-4 py-3 md:px-5 md:py-3.5 w-[38%]">상세 가치</th>
                         <th className="px-4 py-3 md:px-4 md:py-3.5 text-right w-[20%]">수익률</th>
                         <th className="px-4 py-3 md:px-3 md:py-3.5 text-center w-[12%]">관리</th>
                       </tr>
                     </thead>
-                    <tbody className="block md:table-row-group divide-y divide-slate-50">
+                    <tbody className="block md:table-row-group divide-y divide-line">
                       {visibleDetailAssets.map((asset) => (
-                        <tr key={asset.id} className="block md:table-row px-4 py-5 md:p-0 hover:bg-slate-50/60 transition-all group">
+                        <tr key={asset.id} className="block md:table-row px-4 py-5 md:p-0 hover:bg-canvas/60 transition-all group">
                           <td className="block md:table-cell px-0 py-0 md:px-5 md:py-4 whitespace-nowrap align-middle">
                             <div className="flex items-center gap-3">
-                              <div className="w-11 h-11 md:w-9 md:h-9 shrink-0 rounded-2xl md:rounded-xl flex items-center justify-center text-white font-black text-xl md:text-lg shadow-sm group-hover:scale-[1.02] transition-transform" style={{ backgroundColor: asset.color }}>
+                              <div className="w-11 h-11 md:w-9 md:h-9 shrink-0 rounded-2xl md:rounded-xl flex items-center justify-center text-surface font-bold text-xl md:text-lg shadow-sm group-hover:scale-[1.02] transition-transform" style={{ backgroundColor: asset.color }}>
                                 {asset.category === '현금' ? <Banknote size={20}/> : asset.name[0]}
                               </div>
                               <div className="min-w-0 flex-1">
-                                <p className="font-black text-slate-900 text-base md:text-[15px] leading-none truncate">{asset.name}</p>
-                                <p className="text-xs md:text-[12px] text-slate-400 font-bold mt-2 md:mt-1.5 uppercase tracking-[0.14em] truncate">
+                                <p className="font-bold text-ink text-base md:text-[16px] leading-none truncate">{asset.name}</p>
+                                <p className="text-xs md:text-[13px] text-ink-mute font-bold mt-2 md:mt-1.5 truncate">
                                   {asset.category === '현금' ? 'CASH' : asset.ticker} {asset.category !== '현금' && `• ${asset.quantity.toLocaleString()}${asset.category==='원자재'?'단위':'주'}`}
                                 </p>
                                 {asset.category !== '현금' && (
-                                  <p className="text-[10px] md:text-[11px] text-slate-400 font-bold mt-1 truncate">
+                                  <p className="text-[12px] md:text-[13px] text-ink-mute font-bold mt-1 truncate">
                                     최초 매수일 {asset.displayBuyDate || asset.buyDate || '-'}
                                   </p>
                                 )}
@@ -3021,34 +3036,34 @@ const buyLotDraftSummary = useMemo(() => {
                             </div>
                           </td>
                           <td className="block md:table-cell px-0 py-4 md:px-5 md:py-4 align-middle">
-                            <div className="grid grid-cols-2 gap-x-4 md:gap-x-5 gap-y-3 md:gap-y-1.5 bg-slate-50/80 md:bg-transparent px-4 py-3.5 md:p-0 rounded-xl md:rounded-none border border-slate-200/70 md:border-0 group-hover:border-slate-300 transition-colors w-full min-w-0">
+                            <div className="grid grid-cols-2 gap-x-4 md:gap-x-5 gap-y-3 md:gap-y-1.5 bg-canvas/80 md:bg-transparent px-4 py-3.5 md:p-0 rounded-xl md:rounded-none group-transition-colors w-full min-w-0">
                               <div className="flex flex-col">
-                                <span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">{asset.category === '현금' ? '보유 원금' : '총 매입'}</span>
-                                <span className="font-black text-slate-700 text-xs md:text-[13px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.purchaseNative, asset.currency)}</span>
+                                <span className="text-[11px] md:text-[11px] text-ink-mute font-bold">{asset.category === '현금' ? '보유 원금' : '총 매입'}</span>
+                                <span className="font-bold text-ink-soft text-xs md:text-[14px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.purchaseNative, asset.currency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">평단가</span><span className="font-black text-slate-700 text-xs md:text-[13px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalAveragePrice || asset.averagePrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[11px] md:text-[11px] text-ink-mute font-bold">평단가</span><span className="font-bold text-ink-soft text-xs md:text-[14px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalAveragePrice || asset.averagePrice, asset.originalCurrency || asset.currency)}</span></>
                                 )}
                               </div>
                               <div className="flex flex-col">
-                                <span className="text-[8px] md:text-[9px] text-slate-500 font-black uppercase tracking-widest">총 가치</span>
-                                <span className="font-black text-slate-900 text-xs md:text-[13px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.currentNative, asset.currency)}</span>
+                                <span className="text-[11px] md:text-[11px] text-ink-soft font-bold">총 가치</span>
+                                <span className="font-bold text-ink text-xs md:text-[14px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.currentNative, asset.currency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[8px] md:text-[9px] text-slate-500 font-black uppercase tracking-widest">현재가</span><span className="font-black text-slate-900 text-xs md:text-[13px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.nativeCurrentPrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[11px] md:text-[11px] text-ink-soft font-bold">현재가</span><span className="font-bold text-ink text-xs md:text-[14px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.nativeCurrentPrice, asset.originalCurrency || asset.currency)}</span></>
                                 )}
                               </div>
                             </div>
                           </td>
                           <td className="block md:table-cell px-0 pb-4 md:px-4 md:py-4 text-left md:text-right whitespace-nowrap align-middle">
-                            {asset.category === '현금' ? <span className="text-[10px] md:text-xs font-black text-slate-300">-</span> : (
+                            {asset.category === '현금' ? <span className="text-[12px] md:text-xs font-bold text-ink-mute">-</span> : (
                               <div className="flex flex-row md:flex-col items-stretch md:items-end gap-2">
-                                <div className={`inline-flex items-center justify-center gap-1.5 flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[13px] font-black ${asset.returnPercent >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                                <div className={`inline-flex items-center justify-center gap-1.5 flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[14px] font-bold ${asset.returnPercent >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
                                   {asset.returnPercent >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {Math.abs(asset.returnPercent).toFixed(2)}%
                                 </div>
-                                <div className={`inline-flex items-center justify-center flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[13px] font-black ${asset.profitNative >= 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
+                                <div className={`inline-flex items-center justify-center flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[14px] font-bold ${asset.profitNative >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
                                   {asset.profitNative > 0 ? '+' : ''}{formatMoney(asset.profitNative, asset.currency)}
                                 </div>
                               </div>
@@ -3063,7 +3078,7 @@ const buyLotDraftSummary = useMemo(() => {
                                     e.stopPropagation();
                                     openAddBuyModal(asset);
                                   }}
-                                  className="inline-flex items-center justify-center gap-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
+                                  className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-ink hover:bg-line-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
                                   title="추가 매수"
                                 >
                                   <Plus size={16} className="md:w-4.5 md:h-4.5" />
@@ -3075,7 +3090,7 @@ const buyLotDraftSummary = useMemo(() => {
                                     e.stopPropagation();
                                     openSellModal(asset);
                                   }}
-                                  className="inline-flex items-center justify-center gap-1.5 text-slate-500 hover:text-amber-600 hover:bg-amber-50 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
+                                  className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-warn hover:bg-warn-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
                                   title="일부 매도"
                                 >
                                   <Minus size={16} className="md:w-4.5 md:h-4.5" />
@@ -3087,7 +3102,7 @@ const buyLotDraftSummary = useMemo(() => {
                                     e.stopPropagation();
                                     openBuyLotsModal(asset);
                                   }}
-                                  className="inline-flex items-center justify-center gap-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
+                                  className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-brand hover:bg-brand-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
                                   title="매수 기록 관리"
                                 >
                                   <CalendarDays size={16} className="md:w-4.5 md:h-4.5" />
@@ -3098,7 +3113,7 @@ const buyLotDraftSummary = useMemo(() => {
 
                             <button
                               onClick={(e) => requestRemoveAsset(asset.id, e)}
-                              className="inline-flex items-center justify-center gap-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors px-2.5 py-2 rounded-xl text-[11px] font-black"
+                              className="inline-flex items-center justify-center gap-1.5 text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
                               title="자산 삭제"
                             >
                               <Trash2 size={16} className="md:w-4.5 md:h-4.5" />
@@ -3111,11 +3126,11 @@ const buyLotDraftSummary = useMemo(() => {
                   </table>
                   {enhancedAssets.length === 0 && (
                     <div className="p-6 md:p-12 text-center">
-                      <div className="mx-auto w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-slate-50 text-slate-400 flex items-center justify-center mb-4">
+                      <div className="mx-auto w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-canvas text-ink-mute flex items-center justify-center mb-4">
                         <Wallet size={24} />
                       </div>
-                      <p className="text-slate-800 font-bold text-sm md:text-base">아직 등록된 자산이 없습니다.</p>
-                      <p className="mt-2 text-slate-400 font-medium text-xs md:text-sm">주식, 원자재, 현금을 추가하면 상세 가치와 수익률이 표시됩니다.</p>
+                      <p className="text-ink font-bold text-sm md:text-base">아직 등록된 자산이 없습니다.</p>
+                      <p className="mt-2 text-ink-mute font-medium text-xs md:text-sm">주식, 원자재, 현금을 추가하면 상세 가치와 수익률이 표시됩니다.</p>
                     </div>
                   )}
                 </div>
@@ -3127,52 +3142,52 @@ const buyLotDraftSummary = useMemo(() => {
 
         {/* 수익 및 기록 탭 */}
         {activeTab === 'history' && (
-          <div className="space-y-8 animate-in fade-in duration-500">
+          <div className="space-y-8 anim-fade">
             
-            <h3 className="text-lg md:text-xl font-black text-slate-800 flex items-center gap-2"><ArrowRightLeft className="text-slate-500" size={20} /> 종목 매매(실현) 수익 요약</h3>
+            <h3 className="text-lg md:text-xl font-bold text-ink flex items-center gap-2"><ArrowRightLeft className="text-ink-soft" size={20} /> 종목 매매(실현) 수익 요약</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-              <div className="bg-white p-5 md:p-7 rounded-2xl border border-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex flex-col justify-center">
-                <div className="w-10 h-10 md:w-12 md:h-12 bg-slate-50 text-slate-600 rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><Banknote size={20} /></div>
-                <p className="text-slate-400 text-[10px] md:text-[11px] font-black uppercase tracking-[0.2em] mb-1">원화 매매 순수익</p>
-                <p className={`text-2xl md:text-3xl font-black tracking-tighter ${krwNetProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><Banknote size={20} /></div>
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.2em] mb-1">원화 매매 순수익</p>
+                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${krwNetProfit >= 0 ? 'text-up' : 'text-down'}`}>
                   {krwNetProfit > 0 ? '+' : ''}{formatMoney(krwNetProfit, 'KRW')}
                 </p>
               </div>
-              <div className="bg-white p-5 md:p-7 rounded-2xl border border-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)] flex flex-col justify-center">
-                <div className="w-10 h-10 md:w-12 md:h-12 bg-slate-50 text-slate-600 rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><DollarSign size={20} /></div>
-                <p className="text-slate-400 text-[10px] md:text-[11px] font-black uppercase tracking-[0.2em] mb-1">달러 매매 순수익</p>
-                <p className={`text-2xl md:text-3xl font-black tracking-tighter ${usdNetProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><DollarSign size={20} /></div>
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.2em] mb-1">달러 매매 순수익</p>
+                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${usdNetProfit >= 0 ? 'text-up' : 'text-down'}`}>
                   {usdNetProfit > 0 ? '+' : ''}{formatMoney(usdNetProfit, 'USD')}
                 </p>
               </div>
-              <div className="bg-slate-900 p-5 md:p-7 rounded-2xl shadow-sm flex flex-col justify-center text-white relative overflow-hidden">
+              <div className="bg-ink p-5 md:p-7 rounded-2xl shadow-sm flex flex-col justify-center text-surface relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-4 opacity-10"><Wallet size={50}/></div>
-                <p className="text-slate-400 text-[10px] md:text-[11px] font-black uppercase tracking-[0.2em] mb-1">총 환산 매매 순수익</p>
-                <p className={`text-3xl md:text-4xl font-black tracking-tighter ${totalConvertedNetProfit >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.2em] mb-1">총 환산 매매 순수익</p>
+                <p className={`text-3xl md:text-4xl font-bold tracking-tighter ${totalConvertedNetProfit >= 0 ? 'text-up' : 'text-down'}`}>
                   {totalConvertedNetProfit > 0 ? '+' : ''}{formatMoney(totalConvertedNetProfit, 'KRW')}
                 </p>
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden">
-              <div className="p-5 md:p-7 border-b border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white">
+            <div className="bg-surface rounded-[20px] overflow-hidden">
+              <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-surface">
                 <div>
-                  <h3 className="text-base md:text-lg font-black text-slate-900">종목별 총 손익</h3>
-                  <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">평가손익, 실현손익, 세후 배당을 합산합니다.</p>
+                  <h3 className="text-base md:text-lg font-bold text-ink">종목별 총 손익</h3>
+                  <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">평가손익, 실현손익, 세후 배당을 합산합니다.</p>
                 </div>
                 <div className="relative w-full md:w-72">
-                  <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-ink-mute" />
                   <input
                     value={performanceSearchTerm}
                     onChange={(e) => setPerformanceSearchTerm(e.target.value)}
                     placeholder="종목명 또는 티커 검색"
-                    className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold text-slate-700"
+                    className="w-full pl-10 pr-4 py-3 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold text-ink-soft"
                   />
                 </div>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left table-auto">
-                  <thead className="bg-slate-50/50 text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.2em]">
+                  <thead className="bg-canvas/50 text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.2em]">
                     <tr>
                       <th className="px-4 py-4 md:px-8 md:py-5">종목</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">누적 매수/매도</th>
@@ -3182,45 +3197,45 @@ const buyLotDraftSummary = useMemo(() => {
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">총 손익</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-50">
+                  <tbody className="divide-y divide-line">
                     {filteredPerformanceSummary.map((summary) => {
-                      const totalTone = summary.totalKRW >= 0 ? 'text-emerald-600 bg-emerald-50' : 'text-rose-600 bg-rose-50';
+                      const totalTone = summary.totalKRW >= 0 ? 'text-up bg-up-soft' : 'text-down bg-down-soft';
                       return (
-                        <tr key={summary.name} className="hover:bg-slate-50/50 transition-colors">
+                        <tr key={summary.name} className="hover:bg-canvas/50 transition-colors">
                           <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
-                            <p className="text-sm md:text-base font-black text-slate-900">{summary.name}</p>
-                            <p className="text-[9px] md:text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">
+                            <p className="text-sm md:text-base font-bold text-ink">{summary.name}</p>
+                            <p className="text-[11px] md:text-[12px] font-bold text-ink-mute mt-1">
                               {summary.ticker || summary.category || '기록 종목'}
                               {summary.quantity > 0 && ` • 보유 ${summary.quantity.toLocaleString()}주`}
                             </p>
                           </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-600 whitespace-nowrap">
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
                             <div>매수 {summary.totalBuyQuantity.toLocaleString()}주</div>
-                            <div className="text-slate-400 mt-1">매도 {summary.totalSellQuantity.toLocaleString()}주</div>
+                            <div className="text-ink-mute mt-1">매도 {summary.totalSellQuantity.toLocaleString()}주</div>
                           </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-600 whitespace-nowrap">
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
                             {summary.unrealizedKRW > 0 ? '+' : ''}{formatMoney(summary.unrealizedKRW, 'KRW')}
                           </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-600 whitespace-nowrap">
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
                             {summary.realizedKRW > 0 ? '+' : ''}{formatMoney(summary.realizedKRW, 'KRW')}
                           </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-600 whitespace-nowrap">
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
                             {summary.dividendKRW > 0 ? '+' : ''}{formatMoney(summary.dividendKRW, 'KRW')}
                           </td>
                           <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
                             <div className="flex flex-col items-end gap-1">
                               {summary.currency === 'USD' && (
                                 <>
-                                  <span className={`inline-flex px-3 py-1.5 rounded-xl text-xs md:text-sm font-black ${totalTone}`}>
+                                  <span className={`inline-flex px-3 py-1.5 rounded-xl text-xs md:text-sm font-bold ${totalTone}`}>
                                   {summary.totalNative > 0 ? '+' : ''}{formatMoney(summary.totalNative, 'USD')}
                                   </span>
-                                  <span className="text-[10px] md:text-xs font-black text-slate-400">
+                                  <span className="text-[12px] md:text-xs font-bold text-ink-mute">
                                     원화 환산 {summary.totalKRW > 0 ? '+' : ''}{formatMoney(summary.totalKRW, 'KRW')}
                                   </span>
                                 </>
                               )}
                               {summary.currency !== 'USD' && (
-                                <span className={`inline-flex px-3 py-1.5 rounded-xl text-xs md:text-sm font-black ${totalTone}`}>
+                                <span className={`inline-flex px-3 py-1.5 rounded-xl text-xs md:text-sm font-bold ${totalTone}`}>
                                   {summary.totalKRW > 0 ? '+' : ''}{formatMoney(summary.totalKRW, 'KRW')}
                                 </span>
                               )}
@@ -3232,15 +3247,15 @@ const buyLotDraftSummary = useMemo(() => {
                   </tbody>
                 </table>
                 {filteredPerformanceSummary.length === 0 && (
-                  <p className="p-8 md:p-10 text-center text-slate-400 font-bold text-xs md:text-sm">검색 결과가 없습니다.</p>
+                  <p className="p-8 md:p-10 text-center text-ink-mute font-bold text-xs md:text-sm">검색 결과가 없습니다.</p>
                 )}
               </div>
             </div>
 
-            <div className="bg-white p-5 md:p-7 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70">
+            <div className="bg-surface p-5 md:p-7 rounded-[20px]">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 md:mb-8 gap-3 md:gap-4">
-                <h3 className="text-lg md:text-xl font-black flex items-center gap-2 md:gap-3">
-                  <Receipt className="text-slate-500" size={20}/> 
+                <h3 className="text-lg md:text-xl font-bold flex items-center gap-2 md:gap-3">
+                  <Receipt className="text-ink-soft" size={20}/> 
                   {selectedDividendAsset ? `${selectedDividendAsset} 배당 상세 기록` : '종목별 누적 배당 요약'}
                 </h3>
                 
@@ -3249,18 +3264,18 @@ const buyLotDraftSummary = useMemo(() => {
                     <select 
                       value={dividendFilter} 
                       onChange={e => setDividendFilter(e.target.value)}
-                      className="px-3 py-1.5 md:px-4 md:py-2 bg-slate-50 border border-slate-100 rounded-lg md:rounded-xl text-[10px] md:text-xs font-bold outline-none text-slate-600"
+                      className="px-3 py-1.5 md:px-4 md:py-2 bg-canvas rounded-lg md:rounded-xl text-[12px] md:text-xs font-bold outline-none text-ink-soft"
                     >
                       <option value="이번 달">이번 달</option>
                       <option value="올해">올해</option>
                       <option value="전체">전체 기간</option>
                     </select>
-                    <button onClick={() => { setSelectedDividendAsset(null); setDividendFilter('전체'); }} className="text-[9px] md:text-[10px] font-black text-slate-600 bg-slate-100 px-3 py-1.5 md:px-4 md:py-2 rounded-full flex items-center gap-1 hover:bg-slate-200 uppercase tracking-widest transition-all">
+                    <button onClick={() => { setSelectedDividendAsset(null); setDividendFilter('전체'); }} className="text-[11px] md:text-[12px] font-bold text-ink-soft bg-line-soft px-3 py-1.5 md:px-4 md:py-2 rounded-full flex items-center gap-1 hover:bg-line transition-all">
                       <ArrowLeft size={12} /> 전체 보기
                     </button>
                   </div>
                 ) : (
-                  <span className="text-[9px] md:text-[10px] bg-slate-100 text-slate-600 px-2 py-1 md:px-3 md:py-1.5 rounded-full font-black tracking-widest uppercase">
+                  <span className="text-[11px] md:text-[12px] bg-line-soft text-ink-soft px-2 py-1 md:px-3 md:py-1.5 rounded-full font-bold">
                     매수일 기준 세후 자동 추출
                   </span>
                 )}
@@ -3273,35 +3288,35 @@ const buyLotDraftSummary = useMemo(() => {
                     <div 
                       key={summary.name} 
                       onClick={() => setSelectedDividendAsset(summary.name)} 
-                      className="p-5 md:p-6 bg-slate-50 rounded-2xl border border-slate-100 cursor-pointer hover:bg-white hover:border-slate-200 transition-all group"
+                      className="p-5 md:p-6 bg-canvas rounded-[20px] cursor-pointer hover:bg-surface transition-all group"
                     >
                       <div className="flex justify-between items-start mb-4 md:mb-6">
                         <div className="whitespace-nowrap overflow-hidden pr-3 md:pr-4">
-                          <h4 className="font-black text-slate-800 text-base md:text-lg group-hover:text-slate-900 transition-colors truncate">{summary.name}</h4>
-                          <p className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">상세 보기</p>
+                          <h4 className="font-bold text-ink text-base md:text-lg group-hover:text-ink transition-colors truncate">{summary.name}</h4>
+                          <p className="text-[11px] md:text-[12px] text-ink-mute font-bold mt-1">상세 보기</p>
                         </div>
                         <div className="text-right whitespace-nowrap shrink-0">
-                          <p className="text-[9px] md:text-[10px] text-slate-400 font-black uppercase tracking-widest mb-0.5 md:mb-1">세후 누적 배당금</p>
-                          <p className="text-lg md:text-xl font-black text-slate-900">{formatMoney(summary.totalAmount, summary.currency)}</p>
+                          <p className="text-[11px] md:text-[12px] text-ink-mute font-bold mb-0.5 md:mb-1">세후 누적 배당금</p>
+                          <p className="text-lg md:text-xl font-bold text-ink">{formatMoney(summary.totalAmount, summary.currency)}</p>
                         </div>
                       </div>
                       
-                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[10px] md:text-[11px] font-black tracking-widest ${summary.status.includes('완료') ? 'bg-emerald-50 text-emerald-600' : summary.status.includes('이번 달') ? 'bg-slate-100 text-slate-700' : 'bg-slate-200/50 text-slate-500'}`}>
+                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[12px] md:text-[13px] font-bold ${summary.status.includes('완료') ? 'bg-brand-soft text-brand' : summary.status.includes('이번 달') ? 'bg-line-soft text-ink-soft' : 'bg-line-soft text-ink-soft'}`}>
                         {summary.status} {summary.status.includes('예정') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
                       </div>
                     </div>
                   )) : (
-                    <div className="col-span-full py-8 md:py-12 text-center text-slate-400 font-bold text-xs md:text-sm">
+                    <div className="col-span-full py-8 md:py-12 text-center text-ink-mute font-bold text-xs md:text-sm">
                       {isFetching ? '배당 데이터를 갱신 중입니다...' : '매수일 이후 배당 내역이 없거나 데이터를 불러올 수 없습니다.'}
                     </div>
                   )}
                   </div>
                 </div>
               ) : (
-                <div className="bg-slate-50 rounded-2xl p-1 md:p-2 border border-slate-100">
+                <div className="bg-canvas rounded-2xl p-1 md:p-2">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left table-auto">
-                      <thead className="text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.3em] border-b border-slate-200/50">
+                      <thead className="text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.3em] border-b border-line/50">
                         <tr>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">기준 수량</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">주당 세후</th>
@@ -3313,24 +3328,24 @@ const buyLotDraftSummary = useMemo(() => {
                           <th className="px-4 py-4 md:px-8 md:py-5 text-center">상태</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200/50">
+                      <tbody className="divide-y divide-line/50">
                         {filteredHistory.length > 0 ? filteredHistory.map(div => (
-                          <tr key={div.id} className="hover:bg-white transition-colors group">
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{Number(div.quantity || 0).toLocaleString()}주</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{formatMoney(div.perShareNetAmount ?? 0, div.currency)}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-slate-500 whitespace-nowrap">{div.date}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-black text-slate-800 whitespace-nowrap">{div.name}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-slate-500 whitespace-nowrap">{formatMoney(div.grossAmount ?? div.amount, div.currency)}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-black text-rose-500 whitespace-nowrap">-{formatMoney(div.taxAmount ?? 0, div.currency)}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-black text-slate-900 whitespace-nowrap">{formatMoney(div.amount, div.currency)}</td>
+                          <tr key={div.id} className="hover:bg-surface transition-colors group">
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number(div.quantity || 0).toLocaleString()}주</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{formatMoney(div.perShareNetAmount ?? 0, div.currency)}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{div.date}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-bold text-ink whitespace-nowrap">{div.name}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{formatMoney(div.grossAmount ?? div.amount, div.currency)}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-down whitespace-nowrap">-{formatMoney(div.taxAmount ?? 0, div.currency)}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-bold text-ink whitespace-nowrap">{formatMoney(div.amount, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-center whitespace-nowrap">
-                              <span className="text-[9px] md:text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-black tracking-widest uppercase">지급 완료</span>
+                              <span className="text-[11px] md:text-[12px] bg-up-soft text-up px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-bold">지급 완료</span>
                             </td>
                           </tr>
                         )) : (
                           <tr>
                             <td colSpan="8" className="px-4 py-12 md:px-8 md:py-16 text-center">
-                              <p className="text-slate-400 font-bold mb-2 text-xs md:text-sm">해당하는 배당 지급 내역이 없습니다.</p>
+                              <p className="text-ink-mute font-bold mb-2 text-xs md:text-sm">해당하는 배당 지급 내역이 없습니다.</p>
                             </td>
                           </tr>
                         )}
@@ -3341,16 +3356,16 @@ const buyLotDraftSummary = useMemo(() => {
               )}
             </div>
 
-            <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden">
-              <div className="p-5 md:p-7 border-b border-slate-100 flex justify-between items-center bg-white">
-                <h3 className="text-base md:text-lg font-black text-slate-900">과거 매매 기록</h3>
+            <div className="bg-surface rounded-[20px] overflow-hidden">
+              <div className="p-5 md:p-7 border-b border-line flex justify-between items-center bg-surface">
+                <h3 className="text-base md:text-lg font-bold text-ink">과거 매매 기록</h3>
               </div>
-              <div className="p-5 md:p-6 border-b border-slate-50 bg-white space-y-4">
+              <div className="p-5 md:p-6 border-b border-line bg-surface space-y-4">
                 <div className="flex flex-col md:flex-row gap-3">
                   <select
                     value={tradeStockFilter}
                     onChange={(e) => setTradeStockFilter(e.target.value)}
-                    className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-700"
+                    className="px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
                   >
                     <option value="all">전체 종목</option>
                     {tradeStockOptions.map((name) => (
@@ -3360,7 +3375,7 @@ const buyLotDraftSummary = useMemo(() => {
                   <select
                     value={tradeSortMode}
                     onChange={(e) => setTradeSortMode(e.target.value)}
-                    className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-700"
+                    className="px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
                   >
                     {TRADE_SORT_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
@@ -3370,19 +3385,19 @@ const buyLotDraftSummary = useMemo(() => {
                 <div className={`grid grid-cols-1 gap-3 ${tradeStockFilter !== 'all' ? 'md:grid-cols-3' : ''}`}>
                   {tradeStockFilter !== 'all' && (
                     <>
-                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매수 수량</p>
-                        <p className="text-lg font-black text-slate-800">{tradeSummary.totalBuyQuantity.toLocaleString()}</p>
+                      <div className="bg-canvas rounded-xl p-4">
+                        <p className="text-[12px] font-bold text-ink-mute mb-1">총 매수 수량</p>
+                        <p className="text-lg font-bold text-ink">{tradeSummary.totalBuyQuantity.toLocaleString()}</p>
                       </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">총 매도 수량</p>
-                        <p className="text-lg font-black text-slate-800">{tradeSummary.totalSellQuantity.toLocaleString()}</p>
+                      <div className="bg-canvas rounded-xl p-4">
+                        <p className="text-[12px] font-bold text-ink-mute mb-1">총 매도 수량</p>
+                        <p className="text-lg font-bold text-ink">{tradeSummary.totalSellQuantity.toLocaleString()}</p>
                       </div>
                     </>
                   )}
-                  <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">실현 손익</p>
-                    <p className={`text-lg font-black ${tradeSummary.totalProfit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  <div className="bg-canvas rounded-xl p-4">
+                    <p className="text-[12px] font-bold text-ink-mute mb-1">실현 손익</p>
+                    <p className={`text-lg font-bold ${tradeSummary.totalProfit >= 0 ? 'text-up' : 'text-down'}`}>
                       {tradeSummary.totalProfit > 0 ? '+' : ''}{formatMoney(tradeSummary.totalProfit, 'KRW')}
                     </p>
                   </div>
@@ -3390,7 +3405,7 @@ const buyLotDraftSummary = useMemo(() => {
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left table-auto">
-                  <thead className="bg-slate-50/50 text-slate-400 text-[9px] md:text-[10px] font-black uppercase tracking-[0.3em]">
+                  <thead className="bg-canvas/50 text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.3em]">
                     <tr>
                       <th className="px-4 py-4 md:px-8 md:py-5">종목</th>
                       <th className="px-4 py-4 md:px-8 md:py-5">매수/매도일</th>
@@ -3399,7 +3414,7 @@ const buyLotDraftSummary = useMemo(() => {
                       <th className="px-4 py-4 md:px-8 md:py-5 text-center">관리</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-50">
+                  <tbody className="divide-y divide-line">
                     {displayedTrades.map((trade) => {
                       const side = getTradeSide(trade);
                       const action = side === 'sell' ? '매도' : '매수';
@@ -3410,56 +3425,56 @@ const buyLotDraftSummary = useMemo(() => {
                       const pnl = getRecordPnl(trade);
 
                       return (
-                        <tr key={`${trade.sourceType}-${trade.id}`} className="hover:bg-slate-50/50 transition-colors">
+                        <tr key={`${trade.sourceType}-${trade.id}`} className="hover:bg-canvas/50 transition-colors">
                           <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
                             <div className="flex items-center gap-2">
-                              <span className={`inline-flex px-2 py-1 rounded-lg text-[10px] font-black ${side === 'sell' ? 'bg-amber-50 text-amber-600' : 'bg-blue-50 text-blue-600'}`}>
+                              <span className={`inline-flex px-2 py-1 rounded-lg text-[12px] font-bold ${side === 'sell' ? 'bg-down-soft text-down' : 'bg-up-soft text-up'}`}>
                                 {action}
                               </span>
                               <div>
-                                <p className="text-sm md:text-base font-black text-slate-800">{trade.name}</p>
+                                <p className="text-sm md:text-base font-bold text-ink">{trade.name}</p>
                                 {trade.ticker && (
-                                  <p className="text-[9px] md:text-[10px] font-bold text-slate-400 mt-1 uppercase tracking-widest">{trade.ticker}</p>
+                                  <p className="text-[11px] md:text-[12px] font-bold text-ink-mute mt-1">{trade.ticker}</p>
                                 )}
                               </div>
                             </div>
                           </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-[10px] md:text-xs text-slate-500 font-bold whitespace-nowrap">
-                            <span className="text-slate-400 mr-1 md:mr-2">{action}일:</span>{date || '-'}
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-[12px] md:text-xs text-ink-soft font-bold whitespace-nowrap">
+                            <span className="text-ink-mute mr-1 md:mr-2">{action}일:</span>{date || '-'}
                           </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-black text-slate-700 space-y-1 whitespace-nowrap">
+                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft space-y-1 whitespace-nowrap">
                             <div>{formatMoney(price, trade.currency)}</div>
-                            <div className="text-slate-400">{Number(trade.quantity || 0).toLocaleString()}주</div>
+                            <div className="text-ink-mute">{Number(trade.quantity || 0).toLocaleString()}주</div>
                           </td>
                           <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
                             {side === 'sell' ? (
-                              <span className={`inline-flex font-black px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl text-[10px] md:text-xs ${pnl >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                              <span className={`inline-flex font-bold px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl text-[12px] md:text-xs ${pnl >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
                                 {pnl > 0 ? '+' : ''}{formatMoney(pnl, trade.currency)}
                               </span>
                             ) : (
-                              <span className="text-[10px] md:text-xs font-black text-slate-300">-</span>
+                              <span className="text-[12px] md:text-xs font-bold text-ink-mute">-</span>
                             )}
                           </td>
                           <td className="px-4 py-4 md:px-8 md:py-6 text-center whitespace-nowrap">
-                            <button onClick={(e) => removeTrade(trade, e)} className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors p-1.5 md:p-2 rounded-xl" title="기록 삭제"><Trash2 size={16} /></button>
+                            <button onClick={(e) => removeTrade(trade, e)} className="text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors p-1.5 md:p-2 rounded-xl" title="기록 삭제"><Trash2 size={16} /></button>
                           </td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
-                {visibleTrades.length === 0 && <p className="p-8 md:p-10 text-center text-slate-400 font-bold text-xs md:text-sm">표시할 매매 기록이 없습니다.</p>}
+                {visibleTrades.length === 0 && <p className="p-8 md:p-10 text-center text-ink-mute font-bold text-xs md:text-sm">표시할 매매 기록이 없습니다.</p>}
               </div>
               {visibleTrades.length > 0 && (
-                <div className="px-5 py-4 md:px-8 md:py-5 border-t border-slate-50 bg-slate-50/40 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                  <p className="text-[10px] md:text-xs font-bold text-slate-400">
+                <div className="px-5 py-4 md:px-8 md:py-5 border-t border-line bg-canvas/40 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                  <p className="text-[12px] md:text-xs font-bold text-ink-mute">
                     최근 {displayedTrades.length.toLocaleString()}개 표시 중 / 전체 {visibleTrades.length.toLocaleString()}개
                   </p>
                   <div className="flex gap-2">
                     {hasMoreTrades && (
                       <button
                         onClick={() => setTradeVisibleCount(count => count + TRADE_PAGE_SIZE)}
-                        className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-[10px] md:text-xs font-black text-slate-700 hover:text-slate-900 hover:border-slate-300 transition-colors"
+                        className="px-4 py-2 bg-canvas rounded-xl text-[12px] md:text-xs font-bold text-ink-soft hover:text-ink transition-colors"
                       >
                         더보기
                       </button>
@@ -3467,7 +3482,7 @@ const buyLotDraftSummary = useMemo(() => {
                     {displayedTrades.length > TRADE_PAGE_SIZE && (
                       <button
                         onClick={() => setTradeVisibleCount(TRADE_PAGE_SIZE)}
-                        className="px-4 py-2 bg-white border border-slate-100 rounded-xl text-[10px] md:text-xs font-black text-slate-400 hover:text-slate-700 transition-colors"
+                        className="px-4 py-2 bg-canvas rounded-xl text-[12px] md:text-xs font-bold text-ink-mute hover:text-ink-soft transition-colors"
                       >
                         접기
                       </button>
@@ -3481,36 +3496,36 @@ const buyLotDraftSummary = useMemo(() => {
         )}
 
         {activeTab === 'target' && (
-          <div className="space-y-8 animate-in fade-in duration-500">
-            <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden">
-              <div className="p-5 md:p-7 border-b border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-white">
+          <div className="space-y-8 anim-fade">
+            <div className="bg-surface rounded-[20px] overflow-hidden">
+              <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-surface">
                 <div>
-                  <h3 className="text-base md:text-lg font-black text-slate-900">목표 포트폴리오 설정</h3>
-                  <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">분류별 목표 비중과 분류 안 종목별 목표 비중을 저장합니다.</p>
+                  <h3 className="text-base md:text-lg font-bold text-ink">목표 포트폴리오 설정</h3>
+                  <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">분류별 목표 비중과 분류 안 종목별 목표 비중을 저장합니다.</p>
                 </div>
                 <div className="w-full md:w-80">
-                  <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                  <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
                     기준 총 예산
                   </label>
                   <input
                     value={formatInputNumber(targetPortfolio.budget)}
                     onChange={(e) => setTargetPortfolio(prev => ({ ...prev, budget: sanitizeNumericInput(e.target.value) }))}
                     placeholder={`현재 총자산 ${formatMoney(totalConvertedKRW, 'KRW')}`}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-sm font-black text-slate-800"
+                    className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand text-sm font-bold text-ink"
                   />
                 </div>
               </div>
 
-              <div className="p-5 md:p-6 border-b border-slate-50 bg-white">
+              <div className="p-5 md:p-6 border-b border-line bg-surface">
                 <div className="flex flex-col md:flex-row gap-3 md:items-end">
                   <div className="flex-1">
-                    <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                    <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
                       분류 추가
                     </label>
                     <select
                       value={targetCategoryDraft}
                       onChange={(e) => setTargetCategoryDraft(e.target.value)}
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-700"
+                      className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
                     >
                       {ASSET_CATEGORIES.map(category => (
                         <option key={category} value={category}>{category}</option>
@@ -3519,19 +3534,19 @@ const buyLotDraftSummary = useMemo(() => {
                   </div>
                   <button
                     onClick={addTargetCategory}
-                    className="px-5 py-3 bg-slate-900 text-white rounded-xl font-black text-xs md:text-sm flex items-center justify-center gap-2 hover:bg-slate-800 transition-colors"
+                    className="h-12 px-5 bg-ink text-surface rounded-2xl font-bold text-[14px] flex items-center justify-center gap-1.5 hover:opacity-90 transition-opacity"
                   >
                     <Plus size={16} /> 분류 추가
                   </button>
-                  <div className={`px-5 py-3 rounded-xl border text-xs md:text-sm font-black ${Math.abs(targetCategoryTotalPercent - 100) < 0.001 ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : 'bg-amber-50 border-amber-100 text-amber-600'}`}>
+                  <div className={`px-5 py-3 rounded-xl border text-xs md:text-sm font-bold ${Math.abs(targetCategoryTotalPercent - 100) < 0.001 ? 'bg-brand-soft text-brand' : 'bg-warn-soft text-warn'}`}>
                     전체 목표 {targetCategoryTotalPercent.toFixed(1)}%
                   </div>
                   {targetPriceSyncStatus && (
-                    <div className="px-5 py-3 rounded-xl border bg-slate-50 border-slate-200 text-slate-700 text-xs md:text-sm font-black">
+                    <div className="px-5 py-3 rounded-xl border bg-canvas border-line text-ink-soft text-xs md:text-sm font-bold">
                       {targetPriceSyncStatus}
                     </div>
                   )}
-                  <div className="flex bg-slate-100 border border-slate-100 rounded-xl p-1">
+                  <div className="flex bg-line-soft rounded-xl p-1">
                     {[
                       { id: 'table', label: '표' },
                       { id: 'chart', label: '파이그래프' },
@@ -3539,7 +3554,7 @@ const buyLotDraftSummary = useMemo(() => {
                       <button
                         key={mode.id}
                         onClick={() => setTargetViewMode(mode.id)}
-                        className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${targetViewMode === mode.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400 hover:text-slate-700'}`}
+                        className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${targetViewMode === mode.id ? 'bg-surface text-ink shadow-sm' : 'text-ink-mute hover:text-ink-soft'}`}
                       >
                         {mode.label}
                       </button>
@@ -3549,7 +3564,7 @@ const buyLotDraftSummary = useMemo(() => {
               </div>
 
               {targetViewMode === 'chart' && (
-                <div className="p-5 md:p-7 border-b border-slate-50 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="p-5 md:p-7 border-b border-line grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {[
                     { title: '현재 포트폴리오', data: targetCurrentChartData, center: formatMoney(totalConvertedKRW, 'KRW') },
                     {
@@ -3567,9 +3582,9 @@ const buyLotDraftSummary = useMemo(() => {
                       drilldown: true,
                     },
                   ].map((chart) => (
-                    <div key={chart.title} className="bg-slate-50 border border-slate-100 rounded-2xl p-5 md:p-6">
+                    <div key={chart.title} className="bg-canvas rounded-2xl p-5 md:p-6">
                       <div className="flex items-center justify-between gap-3 mb-5">
-                        <h4 className="text-sm md:text-base font-black text-slate-900">{chart.title}</h4>
+                        <h4 className="text-sm md:text-base font-bold text-ink">{chart.title}</h4>
                         {chart.drilldown && selectedTargetGuide ? (
                           <button
                             onClick={() => {
@@ -3579,12 +3594,12 @@ const buyLotDraftSummary = useMemo(() => {
                                 setSelectedTargetCategory(null);
                               }
                             }}
-                            className="text-[10px] font-black text-slate-600 bg-white border border-slate-200 px-3 py-1.5 rounded-xl flex items-center gap-1"
+                            className="text-[12px] font-bold text-ink-soft bg-canvas px-3 py-1.5 rounded-xl flex items-center gap-1"
                           >
                             <ArrowLeft size={12} /> {selectedTargetGroupGuide ? '폴더 목록' : '전체 목표'}
                           </button>
                         ) : (
-                          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{chart.center}</span>
+                          <span className="text-[12px] font-bold text-ink-mute">{chart.center}</span>
                         )}
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-5 items-center">
@@ -3613,10 +3628,10 @@ const buyLotDraftSummary = useMemo(() => {
                             ))}
                           </svg>
                           <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                            <span className="text-[12px] font-bold text-ink-mute">
                               {selectedTargetGroupGuide && chart.drilldown ? selectedTargetGroupGuide.name : selectedTargetGuide && chart.drilldown ? selectedTargetGuide.id : 'Total'}
                             </span>
-                            <span className="text-sm font-black text-slate-900 mt-1">{chart.center}</span>
+                            <span className="text-sm font-bold text-ink mt-1">{chart.center}</span>
                           </div>
                         </div>
                         <div className="space-y-2">
@@ -3630,15 +3645,15 @@ const buyLotDraftSummary = useMemo(() => {
                                 }
                                 else if (chart.drilldown && selectedTargetGuide && !selectedTargetGroupGuide && item.groupId) setSelectedTargetGroup(item.groupId);
                               }}
-                              className={`w-full flex items-center justify-between gap-3 bg-white rounded-xl px-4 py-3 border border-slate-100 text-left ${chart.drilldown && !selectedTargetGroupGuide ? 'hover:border-slate-300 hover:text-slate-900 transition-colors' : ''}`}
+                              className={`w-full flex items-center justify-between gap-3 bg-surface rounded-xl px-4 py-3 text-left ${chart.drilldown && !selectedTargetGroupGuide ? 'hover:text-ink transition-colors' : ''}`}
                             >
                               <div className="flex items-center gap-2 min-w-0">
                                 <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-                                <span className="text-xs font-black text-slate-700 truncate">{item.name}</span>
+                                <span className="text-xs font-bold text-ink-soft truncate">{item.name}</span>
                               </div>
                               <div className="text-right shrink-0">
-                                <p className="text-xs font-black text-slate-900">{item.percent.toFixed(1)}%</p>
-                                <p className="text-[10px] font-bold text-slate-400">{formatMoney(item.value, 'KRW')}</p>
+                                <p className="text-xs font-bold text-ink">{item.percent.toFixed(1)}%</p>
+                                <p className="text-[12px] font-bold text-ink-mute">{formatMoney(item.value, 'KRW')}</p>
                               </div>
                             </button>
                           ))}
@@ -3650,30 +3665,30 @@ const buyLotDraftSummary = useMemo(() => {
               )}
 
               {targetViewMode === 'table' && (
-              <div className="divide-y divide-slate-50">
+              <div className="divide-y divide-line">
                 {targetPortfolioGuide.map((category) => (
                   <div key={category.id} className="p-5 md:p-7 space-y-5">
                     <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr_auto] gap-3 lg:items-end">
                       <div>
-                        <p className="text-sm md:text-base font-black text-slate-900">{category.id}</p>
-                        <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">
+                        <p className="text-sm md:text-base font-bold text-ink">{category.id}</p>
+                        <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">
                           현재 {category.currentPercent.toFixed(1)}% / 목표 {Number(category.percent || 0).toFixed(1)}%
                         </p>
                       </div>
                       <div>
-                        <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+                        <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
                           목표 비중
                         </label>
                         <input
                           inputMode="decimal"
                           value={category.percent}
                           onChange={(e) => updateTargetCategoryPercent(category.id, e.target.value)}
-                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-sm font-black text-slate-800"
+                          className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand text-sm font-bold text-ink"
                         />
                       </div>
                       <button
                         onClick={() => removeTargetCategory(category.id)}
-                        className="px-4 py-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors justify-self-start lg:justify-self-end"
+                        className="px-4 py-3 text-ink-mute hover:text-danger hover:bg-danger-soft rounded-xl transition-colors justify-self-start lg:justify-self-end"
                         title="분류 삭제"
                       >
                         <Trash2 size={17} />
@@ -3681,17 +3696,17 @@ const buyLotDraftSummary = useMemo(() => {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">현재 가치</p>
-                        <p className="text-lg font-black text-slate-800">{formatMoney(category.currentValue, 'KRW')}</p>
+                      <div className="bg-canvas rounded-xl p-4">
+                        <p className="text-[12px] font-bold text-ink-mute mb-1">현재 가치</p>
+                        <p className="text-lg font-bold text-ink">{formatMoney(category.currentValue, 'KRW')}</p>
                       </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">목표 가치</p>
-                        <p className="text-lg font-black text-slate-900">{formatMoney(category.targetValue, 'KRW')}</p>
+                      <div className="bg-canvas rounded-xl p-4">
+                        <p className="text-[12px] font-bold text-ink-mute mb-1">목표 가치</p>
+                        <p className="text-lg font-bold text-ink">{formatMoney(category.targetValue, 'KRW')}</p>
                       </div>
-                      <div className="bg-slate-50 border border-slate-100 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{category.gapValue >= 0 ? '추가 필요 금액' : '목표 초과 금액'}</p>
-                        <p className={`text-lg font-black ${category.gapValue >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      <div className="bg-canvas rounded-xl p-4">
+                        <p className="text-[12px] font-bold text-ink-mute mb-1">{category.gapValue >= 0 ? '추가 필요 금액' : '목표 초과 금액'}</p>
+                        <p className={`text-lg font-bold ${category.gapValue >= 0 ? 'text-up' : 'text-down'}`}>
                           {formatMoney(Math.abs(category.gapValue), 'KRW')}
                         </p>
                       </div>
@@ -3700,29 +3715,29 @@ const buyLotDraftSummary = useMemo(() => {
                     <div className="space-y-4">
                       <div className="flex items-center justify-between gap-3">
                         <div>
-                          <p className="text-xs md:text-sm font-black text-slate-800">분류 안 폴더 목표</p>
-                          <p className={`text-[10px] md:text-xs font-bold mt-1 ${Math.abs(category.groupTotalPercent - 100) < 0.001 || category.groups.length === 0 ? 'text-slate-400' : 'text-amber-600'}`}>
+                          <p className="text-xs md:text-sm font-bold text-ink">분류 안 폴더 목표</p>
+                          <p className={`text-[12px] md:text-xs font-bold mt-1 ${Math.abs(category.groupTotalPercent - 100) < 0.001 || category.groups.length === 0 ? 'text-ink-mute' : 'text-warn'}`}>
                             폴더 목표 합계 {category.groupTotalPercent.toFixed(1)}%
                           </p>
                         </div>
                         <button
                           onClick={() => addTargetGroup(category.id)}
-                          className="px-4 py-2.5 bg-slate-100 text-slate-700 rounded-xl font-black text-xs flex items-center gap-2 hover:bg-slate-200 transition-colors"
+                          className="px-4 py-2.5 bg-line-soft text-ink-soft rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-line transition-colors"
                         >
                           <Plus size={14} /> 폴더 추가
                         </button>
                       </div>
 
                       {category.groups.map((group) => (
-                        <div key={group.id} className="bg-slate-50 border border-slate-100 rounded-2xl p-4 md:p-5 space-y-3">
+                        <div key={group.id} className="bg-canvas rounded-2xl p-4 md:p-5 space-y-3">
                           <div className="grid grid-cols-1 lg:grid-cols-[1fr_0.5fr_auto_auto] gap-2 lg:items-center">
                             <div className="flex items-center gap-2 min-w-0">
-                              <Folder size={17} className="text-slate-500 shrink-0" />
+                              <Folder size={17} className="text-ink-soft shrink-0" />
                               <input
                                 value={group.name}
                                 onChange={(e) => updateTargetGroup(category.id, group.id, { name: e.target.value })}
                                 placeholder="폴더명 예: 빅테크"
-                                className="w-full px-3 py-2.5 bg-white border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-black"
+                                className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
                               />
                             </div>
                             <input
@@ -3730,86 +3745,86 @@ const buyLotDraftSummary = useMemo(() => {
                               value={group.percent}
                               onChange={(e) => updateTargetGroup(category.id, group.id, { percent: sanitizeNumericInput(e.target.value) })}
                               placeholder="폴더 비중 %"
-                              className="px-3 py-2.5 bg-white border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold"
+                              className="px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
                             />
                             <button
                               onClick={() => addTargetItem(category.id, group.id)}
-                              className="px-3 py-2.5 bg-white text-slate-700 border border-slate-200 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 hover:bg-slate-50 transition-colors"
+                              className="px-3 py-2.5 bg-canvas text-ink-soft rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-canvas transition-colors"
                             >
                               <Plus size={13} /> 종목
                             </button>
                             <button
                               onClick={() => removeTargetGroup(category.id, group.id)}
-                              className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                              className="p-2 text-ink-mute hover:text-danger hover:bg-danger-soft rounded-xl transition-colors"
                               title="폴더 삭제"
                             >
                               <Trash2 size={15} />
                             </button>
                           </div>
 
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-[10px] md:text-xs font-black">
-                            <span className="bg-white rounded-xl px-3 py-2 text-slate-500">폴더 목표 {Number(group.percent || 0).toFixed(1)}%</span>
-                            <span className="bg-white rounded-xl px-3 py-2 text-slate-900">목표 {formatMoney(group.targetValue, 'KRW')}</span>
-                            <span className="bg-white rounded-xl px-3 py-2 text-slate-500">현재 {formatMoney(group.currentValue, 'KRW')}</span>
-                            <span className={`${Math.abs(group.itemTotalPercent - 100) < 0.001 || group.items.length === 0 ? 'text-slate-500' : 'text-amber-600'} bg-white rounded-xl px-3 py-2`}>
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-[12px] md:text-xs font-bold">
+                            <span className="bg-surface rounded-xl px-3 py-2 text-ink-soft">폴더 목표 {Number(group.percent || 0).toFixed(1)}%</span>
+                            <span className="bg-surface rounded-xl px-3 py-2 text-ink">목표 {formatMoney(group.targetValue, 'KRW')}</span>
+                            <span className="bg-surface rounded-xl px-3 py-2 text-ink-soft">현재 {formatMoney(group.currentValue, 'KRW')}</span>
+                            <span className={`${Math.abs(group.itemTotalPercent - 100) < 0.001 || group.items.length === 0 ? 'text-ink-soft' : 'text-warn'} bg-surface rounded-xl px-3 py-2`}>
                               종목 합계 {group.itemTotalPercent.toFixed(1)}%
                             </span>
                           </div>
 
-                          <div className="space-y-2 pl-3 md:pl-5 border-l-2 border-slate-200">
+                          <div className="space-y-2 pl-3 md:pl-5 border-l-2 border-line">
                             {group.items.map((item) => (
-                              <div key={item.id} className="grid grid-cols-1 lg:grid-cols-[1fr_0.8fr_0.55fr_0.8fr_auto] gap-2 bg-white border border-slate-100 rounded-2xl p-3">
+                              <div key={item.id} className="grid grid-cols-1 lg:grid-cols-[1fr_0.8fr_0.55fr_0.8fr_auto] gap-2 bg-surface rounded-2xl p-3">
                                 <input
                                   value={item.name}
                                   onChange={(e) => updateTargetItem(category.id, group.id, item.id, { name: e.target.value })}
                                   placeholder="종목명"
-                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold"
+                                  className="px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
                                 />
                                 <input
                                   value={item.ticker}
                                   onChange={(e) => updateTargetItem(category.id, group.id, item.id, { ticker: e.target.value.toUpperCase() })}
                                   placeholder="티커"
-                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold"
+                                  className="px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
                                 />
                                 <input
                                   inputMode="decimal"
                                   value={item.percent}
                                   onChange={(e) => updateTargetItem(category.id, group.id, item.id, { percent: sanitizeNumericInput(e.target.value) })}
                                   placeholder="%"
-                                  className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 text-xs md:text-sm font-bold"
+                                  className="px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
                                 />
-                                <div className="px-3 py-2.5 bg-slate-50 border border-slate-100 rounded-xl text-xs md:text-sm font-bold text-slate-700">
+                                <div className="px-3 py-2.5 bg-canvas rounded-xl text-xs md:text-sm font-bold text-ink-soft">
                                   {item.currentPriceKRW > 0 ? (
                                     <>
-                                      <span className="block text-[9px] font-black text-slate-400 uppercase tracking-widest">자동 현재가</span>
+                                      <span className="block text-[11px] font-bold text-ink-mute">자동 현재가</span>
                                       <span>{formatMoney(item.currentPriceKRW, 'KRW')}</span>
                                       {item.currency && item.currency !== 'KRW' && (
-                                        <span className="block text-[10px] text-slate-500 mt-0.5">{formatMoney(item.currentPriceNative, item.currency)}</span>
+                                        <span className="block text-[12px] text-ink-soft mt-0.5">{formatMoney(item.currentPriceNative, item.currency)}</span>
                                       )}
                                     </>
                                   ) : (
-                                    <span className="text-slate-400">티커 입력 시 자동 연동</span>
+                                    <span className="text-ink-mute">티커 입력 시 자동 연동</span>
                                   )}
                                 </div>
                                 <button
                                   onClick={() => removeTargetItem(category.id, group.id, item.id)}
-                                  className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                                  className="p-2 text-ink-mute hover:text-danger hover:bg-danger-soft rounded-xl transition-colors"
                                   title="종목 삭제"
                                 >
                                   <Trash2 size={15} />
                                 </button>
-                                <div className="lg:col-span-5 grid grid-cols-1 md:grid-cols-4 gap-2 text-[10px] md:text-xs font-black">
-                                  <span className="bg-slate-50 rounded-xl px-3 py-2 text-slate-500">현재 {formatMoney(item.currentValue, 'KRW')}</span>
-                                  <span className="bg-slate-50 rounded-xl px-3 py-2 text-slate-900">목표 {formatMoney(item.targetValue, 'KRW')}</span>
-                                  <span className={`bg-slate-50 rounded-xl px-3 py-2 ${item.gapValue >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                <div className="lg:col-span-5 grid grid-cols-1 md:grid-cols-4 gap-2 text-[12px] md:text-xs font-bold">
+                                  <span className="bg-canvas rounded-xl px-3 py-2 text-ink-soft">현재 {formatMoney(item.currentValue, 'KRW')}</span>
+                                  <span className="bg-canvas rounded-xl px-3 py-2 text-ink">목표 {formatMoney(item.targetValue, 'KRW')}</span>
+                                  <span className={`bg-canvas rounded-xl px-3 py-2 ${item.gapValue >= 0 ? 'text-up' : 'text-down'}`}>
                                     {item.gapValue >= 0 ? '추가 필요' : '목표 초과'} {formatMoney(Math.abs(item.gapValue), 'KRW')}
                                   </span>
-                                  <span className={`bg-slate-50 rounded-xl px-3 py-2 ${
+                                  <span className={`bg-canvas rounded-xl px-3 py-2 ${
                                     item.adjustmentSide === 'buy'
-                                      ? 'text-emerald-600'
+                                      ? 'text-up'
                                       : item.adjustmentSide === 'sell'
-                                        ? 'text-rose-600'
-                                        : 'text-slate-500'
+                                        ? 'text-down'
+                                        : 'text-ink-soft'
                                   }`}>
                                     {item.adjustmentSide === 'buy'
                                       ? `매수 필요 ${item.adjustmentQuantity.toFixed(3)}주 / ${formatMoney(Math.abs(item.gapValue), 'KRW')}`
@@ -3821,7 +3836,7 @@ const buyLotDraftSummary = useMemo(() => {
                               </div>
                             ))}
                             {group.items.length === 0 && (
-                              <p className="px-3 py-4 text-xs font-bold text-slate-400">이 폴더에 종목을 추가하세요.</p>
+                              <p className="px-3 py-4 text-xs font-bold text-ink-mute">이 폴더에 종목을 추가하세요.</p>
                             )}
                           </div>
                         </div>
@@ -3855,28 +3870,28 @@ const buyLotDraftSummary = useMemo(() => {
         )}
 
         {activeTab === 'calendar' && (
-          <div className="bg-white rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 overflow-hidden animate-in fade-in duration-500">
-            <div className="p-5 md:p-7 border-b border-slate-100 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="bg-surface rounded-[20px] overflow-hidden anim-fade">
+            <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div>
-                <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
-                  <CalendarDays size={18} className="text-slate-500" />
+                <h3 className="text-base md:text-lg font-bold text-ink flex items-center gap-2">
+                  <CalendarDays size={18} className="text-ink-soft" />
                   배당 캘린더
                 </h3>
-                <p className="text-[10px] md:text-xs font-bold text-slate-400 mt-1">보유 수량 기준 세전/세후 예상 배당금</p>
+                <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">보유 수량 기준 세전/세후 예상 배당금</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setCalendarMonth(getMonthKey(addMonths(new Date(`${calendarMonth}-01T00:00:00`), -1)))}
-                  className="px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[10px] md:text-xs font-black text-slate-600 hover:bg-slate-100 transition-colors"
+                  className="px-3 py-2 bg-canvas rounded-xl text-[12px] md:text-xs font-bold text-ink-soft hover:bg-line-soft transition-colors"
                 >
                   이전
                 </button>
-                <div className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs md:text-sm font-black min-w-28 text-center">
+                <div className="px-4 py-2 bg-ink text-surface rounded-xl text-xs md:text-sm font-bold min-w-28 text-center">
                   {calendarMonth}
                 </div>
                 <button
                   onClick={() => setCalendarMonth(getMonthKey(addMonths(new Date(`${calendarMonth}-01T00:00:00`), 1)))}
-                  className="px-3 py-2 bg-slate-50 border border-slate-100 rounded-xl text-[10px] md:text-xs font-black text-slate-600 hover:bg-slate-100 transition-colors"
+                  className="px-3 py-2 bg-canvas rounded-xl text-[12px] md:text-xs font-bold text-ink-soft hover:bg-line-soft transition-colors"
                 >
                   다음
                 </button>
@@ -3886,7 +3901,7 @@ const buyLotDraftSummary = useMemo(() => {
             <div className="p-4 md:p-7">
               <div className="grid grid-cols-7 gap-1.5 md:gap-2 mb-2">
                 {CALENDAR_WEEKDAYS.map((weekday) => (
-                  <div key={weekday} className="text-center text-[10px] md:text-xs font-black text-slate-400 py-2">
+                  <div key={weekday} className="text-center text-[12px] md:text-xs font-bold text-ink-mute py-2">
                     {weekday}
                   </div>
                 ))}
@@ -3897,9 +3912,9 @@ const buyLotDraftSummary = useMemo(() => {
                   return (
                     <div
                       key={cell.dateKey}
-                      className={`min-h-20 md:min-h-28 rounded-xl border p-2 transition-colors ${cell.isCurrentMonth ? 'bg-white border-slate-100' : 'bg-slate-50/60 border-slate-50 text-slate-300'}`}
+                      className={`min-h-20 md:min-h-28 rounded-xl border p-2 transition-colors ${cell.isCurrentMonth ? 'bg-surface border-line' : 'bg-canvas/60 border-line text-ink-mute'}`}
                     >
-                      <div className={`text-[10px] md:text-xs font-black mb-1.5 ${cell.isCurrentMonth ? 'text-slate-500' : 'text-slate-300'}`}>
+                      <div className={`text-[12px] md:text-xs font-bold mb-1.5 ${cell.isCurrentMonth ? 'text-ink-soft' : 'text-ink-mute'}`}>
                         {cell.day}
                       </div>
                       <div className="space-y-1">
@@ -3908,13 +3923,13 @@ const buyLotDraftSummary = useMemo(() => {
                             key={event.id}
                             onClick={() => setSelectedCalendarEventId(event.id)}
                             title={`${event.name} 세전 ${formatMoney(event.grossAmount, event.currency)} / 세후 ${formatMoney(event.netAmount, event.currency)}`}
-                            className={`w-full truncate rounded-lg px-2 py-1 text-[10px] md:text-xs font-black text-left transition-colors ${selectedCalendarEvent?.id === event.id ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
+                            className={`w-full truncate rounded-lg px-2 py-1 text-[12px] md:text-xs font-bold text-left transition-colors ${selectedCalendarEvent?.id === event.id ? 'bg-brand text-surface' : 'bg-brand-soft text-brand hover:bg-brand-soft/70'}`}
                           >
                             {event.name}
                           </button>
                         ))}
                         {events.length > 3 && (
-                          <span className="block text-[9px] font-black text-slate-400 px-1">+{events.length - 3}</span>
+                          <span className="block text-[11px] font-bold text-ink-mute px-1">+{events.length - 3}</span>
                         )}
                       </div>
                     </div>
@@ -3922,27 +3937,27 @@ const buyLotDraftSummary = useMemo(() => {
                 })}
               </div>
 
-              <div className="mt-5 md:mt-6 bg-slate-50 border border-slate-100 rounded-2xl p-5 md:p-6">
+              <div className="mt-5 md:mt-6 bg-canvas rounded-2xl p-5 md:p-6">
                 {selectedCalendarEvent ? (
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                     <div>
-                      <p className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-widest mb-1">{selectedCalendarEvent.date}</p>
-                      <h4 className="text-lg md:text-xl font-black text-slate-900">{selectedCalendarEvent.name}</h4>
-                      <p className="text-xs md:text-sm font-bold text-slate-500 mt-1">{selectedCalendarEvent.ticker} · {selectedCalendarEvent.quantity.toLocaleString()}주 기준</p>
+                      <p className="text-[12px] md:text-xs font-bold text-ink-mute mb-1">{selectedCalendarEvent.date}</p>
+                      <h4 className="text-lg md:text-xl font-bold text-ink">{selectedCalendarEvent.name}</h4>
+                      <p className="text-xs md:text-sm font-bold text-ink-soft mt-1">{selectedCalendarEvent.ticker} · {selectedCalendarEvent.quantity.toLocaleString()}주 기준</p>
                     </div>
                     <div className="grid grid-cols-2 gap-3 min-w-full md:min-w-80">
-                      <div className="bg-white border border-slate-100 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">세전 예상</p>
-                        <p className="text-base md:text-lg font-black text-slate-900">{formatMoney(selectedCalendarEvent.grossAmount, selectedCalendarEvent.currency)}</p>
+                      <div className="bg-canvas rounded-xl p-4">
+                        <p className="text-[12px] font-bold text-ink-mute mb-1">세전 예상</p>
+                        <p className="text-base md:text-lg font-bold text-ink">{formatMoney(selectedCalendarEvent.grossAmount, selectedCalendarEvent.currency)}</p>
                       </div>
-                      <div className="bg-white border border-slate-100 rounded-xl p-4">
-                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">세후 예상</p>
-                        <p className="text-base md:text-lg font-black text-blue-600">{formatMoney(selectedCalendarEvent.netAmount, selectedCalendarEvent.currency)}</p>
+                      <div className="bg-canvas rounded-xl p-4">
+                        <p className="text-[12px] font-bold text-ink-mute mb-1">세후 예상</p>
+                        <p className="text-base md:text-lg font-bold text-up">{formatMoney(selectedCalendarEvent.netAmount, selectedCalendarEvent.currency)}</p>
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-center text-xs md:text-sm font-bold text-slate-400">이번 달에 표시할 배당 예정 종목이 없습니다.</p>
+                  <p className="text-center text-xs md:text-sm font-bold text-ink-mute">이번 달에 표시할 배당 예정 종목이 없습니다.</p>
                 )}
               </div>
             </div>
@@ -3952,15 +3967,15 @@ const buyLotDraftSummary = useMemo(() => {
 
       {/* 자산 추가 모달 */}
 {isAdding && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300 max-h-[90vh] overflow-y-auto">
-      <div className="flex justify-between items-center mb-6 md:mb-8 sticky top-0 bg-white z-10 pt-2 pb-2">
-        <h3 className="text-lg md:text-xl font-black text-slate-900">새 자산 등록</h3>
+  <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[100] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
+    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
+      <div className="flex justify-between items-center mb-6 md:mb-8 sticky top-0 bg-surface z-10 pt-2 pb-2">
+        <h3 className="text-lg md:text-xl font-bold text-ink">새 자산 등록</h3>
         <button
           onClick={() => {
             setIsAdding(false);
           }}
-          className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors"
+          className="p-2 bg-canvas hover:bg-line-soft rounded-full transition-colors"
         >
           <X size={18} />
         </button>
@@ -3969,11 +3984,11 @@ const buyLotDraftSummary = useMemo(() => {
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3 md:gap-4">
           <div>
-            <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+            <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
               자산 구분
             </label>
             <select
-              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm"
+              className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm"
               value={newAsset.category}
               onChange={(e) => setNewAsset({ ...newAsset, category: e.target.value })}
             >
@@ -3985,11 +4000,11 @@ const buyLotDraftSummary = useMemo(() => {
           </div>
 
           <div>
-            <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+            <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
               통화 (Currency)
             </label>
             <select
-              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm"
+              className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm"
               value={newAsset.currency}
               onChange={(e) => setNewAsset({ ...newAsset, currency: e.target.value })}
             >
@@ -4001,14 +4016,14 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
 
         <div className="relative">
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             {newAsset.category === '현금' ? '계좌명' : '종목명'}
           </label>
           <div className="relative">
-            <Search size={18} className="absolute left-4 top-3.5 text-slate-400" />
+            <Search size={18} className="absolute left-4 top-3.5 text-ink-mute" />
             <input
               type="text"
-              className="w-full pl-11 pr-4 py-2.5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm"
+              className="w-full pl-11 pr-4 py-2.5 md:py-3 bg-canvas rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm"
               value={newAsset.name}
               onChange={(e) => setNewAsset({ ...newAsset, name: e.target.value })}
             />
@@ -4017,12 +4032,12 @@ const buyLotDraftSummary = useMemo(() => {
 
         {newAsset.category !== '현금' && (
           <div>
-            <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+            <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
               티커 심볼
             </label>
             <input
               type="text"
-              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold uppercase text-xs md:text-sm text-slate-800"
+              className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
               value={newAsset.ticker}
               onChange={(e) => setNewAsset({ ...newAsset, ticker: e.target.value.toUpperCase() })}
             />
@@ -4031,13 +4046,13 @@ const buyLotDraftSummary = useMemo(() => {
 
         {newAsset.category !== '현금' && (
           <div>
-            <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+            <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
               평균 단가 ({getCurrencySymbol(newAsset.currency)})
             </label>
             <input
               type="text"
               inputMode="decimal"
-              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
+              className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
               value={formatInputNumber(newAsset.averagePrice)}
               onChange={(e) =>
                 setNewAsset({
@@ -4050,13 +4065,13 @@ const buyLotDraftSummary = useMemo(() => {
         )}
 
         <div className={newAsset.category === '현금' ? 'col-span-2' : ''}>
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             {newAsset.category === '현금' ? `금액 (${newAsset.currency})` : '매수 수량'}
           </label>
           <input
             type="text"
             inputMode="decimal"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
             value={formatInputNumber(newAsset.quantity)}
             onChange={(e) =>
               setNewAsset({
@@ -4067,14 +4082,14 @@ const buyLotDraftSummary = useMemo(() => {
           />
         </div>
 
-        <div className="border-t border-slate-100 pt-4 mt-2">
+        <div className="border-t border-line pt-4 mt-2">
           <div>
-            <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+            <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
               매수일
             </label>
             <input
               type="date"
-              className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-200 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-800"
+              className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
               value={newAsset.buyDate}
               onChange={(e) => setNewAsset({ ...newAsset, buyDate: e.target.value })}
             />
@@ -4084,12 +4099,12 @@ const buyLotDraftSummary = useMemo(() => {
 
 
         <div>
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             매수 메모
           </label>
           <textarea
             rows="3"
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm resize-none"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
             placeholder="매수 근거를 간단히 남겨두세요."
             value={newAsset.memo}
             onChange={(e) => setNewAsset({ ...newAsset, memo: e.target.value })}
@@ -4097,7 +4112,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
         <button
           onClick={handleAddAsset}
-          className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm hover:scale-[1.02] transition-all uppercase tracking-widest"
+          className="w-full mt-7 h-[54px] bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
         >
           포트폴리오에 반영하기
         </button>
@@ -4108,48 +4123,48 @@ const buyLotDraftSummary = useMemo(() => {
 
 {/* 매수 기록 관리 모달 */}
 {selectedAssetToManageBuys && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[105] flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl p-5 md:p-7 shadow-xl animate-in zoom-in-95 duration-300 flex flex-col">
+  <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[105] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
+    <div className="bg-surface w-full max-w-4xl max-h-[88vh] rounded-t-[24px] md:rounded-[24px] p-6 md:p-7 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-7 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise flex flex-col">
       <div className="flex justify-between items-start gap-4 mb-5 md:mb-6">
         <div className="min-w-0">
-          <h3 className="text-lg md:text-xl font-black text-slate-900 truncate">
+          <h3 className="text-lg md:text-xl font-bold text-ink truncate">
             {selectedAssetToManageBuys.name} 매수 기록
           </h3>
-          <p className="text-[10px] md:text-xs text-slate-400 font-black mt-1 uppercase tracking-[0.14em] truncate">
+          <p className="text-[12px] md:text-xs text-ink-mute font-bold mt-1 truncate">
             {selectedAssetToManageBuys.ticker || '-'} · {buyLotDrafts.length.toLocaleString()}개 기록
           </p>
         </div>
         <button
           onClick={closeBuyLotsModal}
-          className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors shrink-0"
+          className="p-2 bg-canvas hover:bg-line-soft rounded-full transition-colors shrink-0"
         >
           <X size={18} />
         </button>
       </div>
 
       <div className="grid grid-cols-3 gap-2 md:gap-3 mb-4 md:mb-5">
-        <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 md:px-4 md:py-3">
-          <p className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">총 매수수량</p>
-          <p className="mt-1 text-sm md:text-base font-black text-slate-900">
+        <div className="rounded-xl bg-canvas px-3 py-2.5 md:px-4 md:py-3">
+          <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">총 매수수량</p>
+          <p className="mt-1 text-sm md:text-base font-bold text-ink">
             {buyLotDraftSummary.totalQuantity.toLocaleString()}{selectedAssetToManageBuys.category === '원자재' ? '단위' : '주'}
           </p>
         </div>
-        <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 md:px-4 md:py-3">
-          <p className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">평단</p>
-          <p className="mt-1 text-sm md:text-base font-black text-slate-900">
+        <div className="rounded-xl bg-canvas px-3 py-2.5 md:px-4 md:py-3">
+          <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">평단</p>
+          <p className="mt-1 text-sm md:text-base font-bold text-ink">
             {formatMoney(buyLotDraftSummary.averagePrice, selectedAssetToManageBuys.currency)}
           </p>
         </div>
-        <div className="rounded-xl bg-slate-50 border border-slate-100 px-3 py-2.5 md:px-4 md:py-3">
-          <p className="text-[8px] md:text-[9px] font-black text-slate-400 uppercase tracking-widest">최초 매수일</p>
-          <p className="mt-1 text-sm md:text-base font-black text-slate-900">
+        <div className="rounded-xl bg-canvas px-3 py-2.5 md:px-4 md:py-3">
+          <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">최초 매수일</p>
+          <p className="mt-1 text-sm md:text-base font-bold text-ink">
             {buyLotDrafts.map(lot => lot.date).filter(Boolean).sort()[0] || '-'}
           </p>
         </div>
       </div>
 
       <div className="min-h-0 overflow-y-auto pr-1">
-        <div className="hidden md:grid grid-cols-[1.05fr_1fr_1fr_1fr_44px] gap-3 px-2 pb-2 text-[9px] font-black text-slate-400 uppercase tracking-widest">
+        <div className="hidden md:grid grid-cols-[1.05fr_1fr_1fr_1fr_44px] gap-3 px-2 pb-2 text-[11px] font-bold text-ink-mute">
           <span>매수일</span>
           <span className="text-right">단가</span>
           <span className="text-right">수량</span>
@@ -4163,46 +4178,46 @@ const buyLotDraftSummary = useMemo(() => {
             const lotAmount = lotQuantity * lotPrice;
 
             return (
-              <div key={lot.draftId} className="grid grid-cols-1 md:grid-cols-[1.05fr_1fr_1fr_1fr_44px] gap-2 md:gap-3 items-end rounded-xl border border-slate-100 bg-slate-50/70 p-3">
+              <div key={lot.draftId} className="grid grid-cols-1 md:grid-cols-[1.05fr_1fr_1fr_1fr_44px] gap-2 md:gap-3 items-end rounded-xl bg-canvas bg-canvas/70 p-3">
                 <div>
-                  <label className="md:hidden block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">매수일</label>
+                  <label className="md:hidden block text-[11px] font-bold text-ink-mute mb-1">매수일</label>
                   <input
                     type="date"
-                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-800"
+                    className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
                     value={lot.date}
                     onChange={(e) => updateBuyLotDraft(lot.draftId, 'date', e.target.value)}
                   />
                 </div>
                 <div>
-                  <label className="md:hidden block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">단가</label>
+                  <label className="md:hidden block text-[11px] font-bold text-ink-mute mb-1">단가</label>
                   <input
                     type="text"
                     inputMode="decimal"
-                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm text-right"
+                    className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm text-right"
                     value={formatInputNumber(lot.price)}
                     onChange={(e) => updateBuyLotDraft(lot.draftId, 'price', sanitizeNumericInput(e.target.value))}
                   />
                 </div>
                 <div>
-                  <label className="md:hidden block text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">수량</label>
+                  <label className="md:hidden block text-[11px] font-bold text-ink-mute mb-1">수량</label>
                   <input
                     type="text"
                     inputMode="decimal"
-                    className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm text-right"
+                    className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm text-right"
                     value={formatInputNumber(lot.quantity)}
                     onChange={(e) => updateBuyLotDraft(lot.draftId, 'quantity', sanitizeNumericInput(e.target.value))}
                   />
                 </div>
-                <div className="px-3 py-2.5 rounded-xl bg-white border border-slate-100 text-right">
-                  <p className="md:hidden text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">매수금액</p>
-                  <p className="font-black text-slate-800 text-xs md:text-sm">
+                <div className="px-3 py-2.5 rounded-xl bg-canvas text-right">
+                  <p className="md:hidden text-[11px] font-bold text-ink-mute mb-1">매수금액</p>
+                  <p className="font-bold text-ink text-xs md:text-sm">
                     {formatMoney(lotAmount, selectedAssetToManageBuys.currency)}
                   </p>
                 </div>
                 <button
                   onClick={() => removeBuyLotDraft(lot.draftId)}
                   disabled={buyLotDrafts.length <= 1}
-                  className="h-10 md:h-11 inline-flex items-center justify-center rounded-xl text-slate-400 hover:text-rose-600 hover:bg-rose-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-400 transition-colors"
+                  className="h-10 md:h-11 inline-flex items-center justify-center rounded-xl text-ink-mute hover:text-danger hover:bg-danger-soft disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-ink-mute transition-colors"
                   title={`${index + 1}번째 매수 기록 삭제`}
                 >
                   <Trash2 size={16} />
@@ -4216,13 +4231,13 @@ const buyLotDraftSummary = useMemo(() => {
       <div className="flex flex-col md:flex-row gap-2 md:gap-3 mt-5 md:mt-6">
         <button
           onClick={addBuyLotDraft}
-          className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-black text-xs md:text-sm transition-colors"
+          className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-line-soft hover:bg-line text-ink-soft rounded-xl font-bold text-xs md:text-sm transition-colors"
         >
           <Plus size={16} /> 매수 기록 추가
         </button>
         <button
           onClick={handleSaveBuyLots}
-          className="flex-1 px-6 py-3 bg-slate-900 text-white rounded-xl font-black text-xs md:text-sm shadow-sm hover:scale-[1.01] transition-all uppercase tracking-widest"
+          className="flex-1 h-12 px-6 bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
         >
           매수 기록 저장하기
         </button>
@@ -4233,10 +4248,10 @@ const buyLotDraftSummary = useMemo(() => {
 
 {/* 추가 매수 모달 */}
 {isUpdatingAsset && selectedAssetToUpdate && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[110] flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
+  <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[110] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
+    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
       <div className="flex justify-between items-center mb-6 md:mb-8">
-        <h3 className="text-lg md:text-xl font-black text-slate-900">
+        <h3 className="text-lg md:text-xl font-bold text-ink">
           {selectedAssetToUpdate.name} 추가 매수
         </h3>
         <button
@@ -4244,7 +4259,7 @@ const buyLotDraftSummary = useMemo(() => {
             setIsUpdatingAsset(false);
             setSelectedAssetToUpdate(null);
           }}
-          className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors"
+          className="p-2 bg-canvas hover:bg-line-soft rounded-full transition-colors"
         >
           <X size={18} />
         </button>
@@ -4252,13 +4267,13 @@ const buyLotDraftSummary = useMemo(() => {
 
       <div className="space-y-4">
         <div>
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             추가 매수 단가 ({getCurrencySymbol(selectedAssetToUpdate.currency)})
           </label>
           <input
             type="text"
             inputMode="decimal"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
             value={formatInputNumber(addBuyForm.averagePrice)}
             onChange={(e) =>
               setAddBuyForm((prev) => ({
@@ -4270,13 +4285,13 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
 
         <div>
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             추가 매수 수량
           </label>
           <input
             type="text"
             inputMode="decimal"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
             value={formatInputNumber(addBuyForm.quantity)}
             onChange={(e) =>
               setAddBuyForm((prev) => ({
@@ -4287,13 +4302,13 @@ const buyLotDraftSummary = useMemo(() => {
           />
         </div>
 
-        <div className="border-t border-slate-100 pt-4 mt-2">
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+        <div className="border-t border-line pt-4 mt-2">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             추가 매수일
           </label>
           <input
             type="date"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-200 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-800"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
             value={addBuyForm.buyDate}
             onChange={(e) =>
               setAddBuyForm((prev) => ({
@@ -4307,12 +4322,12 @@ const buyLotDraftSummary = useMemo(() => {
 
 
         <div>
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             매수 메모
           </label>
           <textarea
             rows="3"
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm resize-none"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
             placeholder="추가 매수 근거를 간단히 남겨두세요."
             value={addBuyForm.memo}
             onChange={(e) =>
@@ -4325,7 +4340,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
       <button
         onClick={handleAddBuyToAsset}
-        className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm hover:scale-[1.02] transition-all uppercase tracking-widest"
+        className="w-full mt-7 h-[54px] bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
       >
         추가 매수 반영하기
       </button>
@@ -4335,10 +4350,10 @@ const buyLotDraftSummary = useMemo(() => {
 
 {/* 매도 모달 */}
 {isSellingAsset && selectedAssetToSell && (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[120] flex items-center justify-center p-4 animate-in fade-in duration-200">
-    <div className="bg-white w-full max-w-md rounded-2xl p-6 md:p-8 shadow-xl animate-in zoom-in-95 duration-300">
+  <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[120] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
+    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
       <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
-        <h3 className="text-lg md:text-xl font-black text-slate-900 whitespace-nowrap">
+        <h3 className="text-lg md:text-xl font-bold text-ink whitespace-nowrap">
           {selectedAssetToSell.name} 매도
         </h3>
         <button
@@ -4346,7 +4361,7 @@ const buyLotDraftSummary = useMemo(() => {
             setIsSellingAsset(false);
             setSelectedAssetToSell(null);
           }}
-          className="p-2 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors shrink-0"
+          className="p-2 bg-canvas hover:bg-line-soft rounded-full transition-colors shrink-0"
         >
           <X size={18} />
         </button>
@@ -4354,13 +4369,13 @@ const buyLotDraftSummary = useMemo(() => {
 
       <div className="space-y-4">
         <div>
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             매도 단가 ({getCurrencySymbol(selectedAssetToSell.currency)})
           </label>
           <input
             type="text"
             inputMode="decimal"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
             value={formatInputNumber(sellForm.sellPrice)}
             onChange={(e) =>
               setSellForm((prev) => ({
@@ -4372,13 +4387,13 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
 
         <div>
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             매도 수량
           </label>
           <input
             type="text"
             inputMode="decimal"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-black text-slate-900 text-xs md:text-sm"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
             value={formatInputNumber(sellForm.quantity)}
             onChange={(e) =>
               setSellForm((prev) => ({
@@ -4389,13 +4404,13 @@ const buyLotDraftSummary = useMemo(() => {
           />
         </div>
 
-        <div className="border-t border-slate-100 pt-4 mt-2">
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+        <div className="border-t border-line pt-4 mt-2">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             매도일
           </label>
           <input
             type="date"
-            className="w-full px-4 py-2.5 md:px-5 md:py-3 bg-slate-50 border border-slate-200 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm text-slate-800"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
             value={sellForm.sellDate}
             onChange={(e) =>
               setSellForm((prev) => ({
@@ -4409,12 +4424,12 @@ const buyLotDraftSummary = useMemo(() => {
 
 
         <div>
-          <label className="block text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             매도 메모
           </label>
           <textarea
             rows="3"
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-slate-300 font-bold text-xs md:text-sm resize-none"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
             placeholder="매도 근거를 간단히 남겨두세요."
             value={sellForm.memo}
             onChange={(e) =>
@@ -4427,7 +4442,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
       <button
         onClick={handleSellAsset}
-        className="w-full mt-6 px-6 py-3.5 md:py-4 bg-slate-900 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm shadow-sm hover:scale-[1.02] transition-all uppercase tracking-widest"
+        className="w-full mt-7 h-[54px] bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
       >
         매도 반영하기
       </button>
@@ -4437,41 +4452,41 @@ const buyLotDraftSummary = useMemo(() => {
 
       {assetPendingRemoval && (
         <div
-          className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-[2px] flex items-center justify-center p-4 anim-fade"
           onClick={() => setAssetPendingRemoval(null)}
         >
           <div
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="remove-asset-title"
-            className="w-full max-w-md bg-white rounded-2xl md:rounded-3xl p-6 md:p-7 shadow-xl"
+            className="w-full max-w-[420px] bg-surface rounded-[24px] p-7 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="w-11 h-11 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center mb-4">
+            <div className="w-11 h-11 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mb-4">
               <Trash2 size={20} aria-hidden="true" />
             </div>
-            <h2 id="remove-asset-title" className="text-base md:text-lg font-black text-slate-900">
+            <h2 id="remove-asset-title" className="text-base md:text-lg font-bold text-ink">
               [{assetPendingRemoval.asset.name}] 자산을 삭제할까요?
             </h2>
-            <p className="mt-2 text-xs md:text-sm font-medium text-slate-500 leading-relaxed">
+            <p className="mt-2 text-xs md:text-sm font-medium text-ink-soft leading-relaxed">
               아래 기록이 함께 삭제되며 되돌릴 수 없습니다.
             </p>
 
-            <ul className="mt-4 space-y-1.5 bg-slate-50 border border-slate-100 rounded-2xl p-4">
+            <ul className="mt-4 space-y-1.5 bg-canvas rounded-2xl p-4">
               {[
                 { label: '매매 기록', count: assetPendingRemoval.tradeCount },
                 { label: '메모', count: assetPendingRemoval.memoCount },
                 { label: '매매 원장', count: assetPendingRemoval.ledgerCount },
               ].map(({ label, count }) => (
                 <li key={label} className="flex items-center justify-between text-xs md:text-sm">
-                  <span className="font-bold text-slate-500">{label}</span>
-                  <span className="font-black text-slate-900">{count.toLocaleString()}건</span>
+                  <span className="font-bold text-ink-soft">{label}</span>
+                  <span className="font-bold text-ink">{count.toLocaleString()}건</span>
                 </li>
               ))}
             </ul>
 
             {assetPendingRemoval.dividendCount > 0 && (
-              <p className="mt-3 text-[11px] md:text-xs font-bold text-slate-400">
+              <p className="mt-3 text-[13px] md:text-xs font-bold text-ink-mute">
                 배당 내역 {assetPendingRemoval.dividendCount.toLocaleString()}건은 통계를 위해 유지됩니다.
               </p>
             )}
@@ -4479,13 +4494,13 @@ const buyLotDraftSummary = useMemo(() => {
             <div className="mt-6 flex gap-2.5">
               <button
                 onClick={() => setAssetPendingRemoval(null)}
-                className="flex-1 px-5 py-3 min-h-11 bg-slate-100 text-slate-700 rounded-xl md:rounded-2xl font-black text-xs md:text-sm hover:bg-slate-200 transition-colors"
+                className="flex-1 px-5 py-3 min-h-11 bg-line-soft text-ink-soft rounded-xl md:rounded-2xl font-bold text-xs md:text-sm hover:bg-line transition-colors"
               >
                 취소
               </button>
               <button
                 onClick={confirmRemoveAsset}
-                className="flex-1 px-5 py-3 min-h-11 bg-rose-600 text-white rounded-xl md:rounded-2xl font-black text-xs md:text-sm hover:bg-rose-700 transition-colors"
+                className="flex-1 px-5 py-3 min-h-11 bg-danger text-surface rounded-xl md:rounded-2xl font-bold text-xs md:text-sm hover:bg-danger transition-colors"
               >
                 삭제하기
               </button>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Briefcase, Check, LogOut, Pencil, Plus, RefreshCw, UserCircle, X } from 'lucide-react';
+import { Check, LogOut, Pencil, Plus, RefreshCw, X } from 'lucide-react';
 import { DEFAULT_PORTFOLIO_NAME } from '../constants';
 
 const DashboardHeader = ({
@@ -30,22 +30,21 @@ const DashboardHeader = ({
   };
 
   return (
-  <header className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white/95 p-4 md:p-6 rounded-2xl shadow-[0_1px_2px_rgba(15,23,42,0.04)] border border-slate-200/70 relative overflow-hidden">
-    <div className="absolute top-0 left-0 w-full h-1 bg-slate-900"></div>
-    <div className="min-w-0 w-full md:w-auto">
-      <div className="flex items-center gap-3 text-slate-800">
-        <div className="p-2 md:p-2.5 bg-slate-900 rounded-xl text-white shadow-sm shrink-0">
-          <Briefcase size={20} className="md:w-6 md:h-6" />
-        </div>
+    <header className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+      <div className="min-w-0">
         {isEditingName ? (
           <form
-            className="min-w-0 flex flex-1 items-center gap-2"
+            className="flex items-center gap-2"
             onSubmit={(event) => {
               event.preventDefault();
               saveName();
             }}
           >
+            <label htmlFor="portfolio-name" className="sr-only">
+              포트폴리오 이름
+            </label>
             <input
+              id="portfolio-name"
               value={nameDraft}
               onChange={(event) => setNameDraft(event.target.value)}
               onKeyDown={(event) => {
@@ -54,85 +53,92 @@ const DashboardHeader = ({
                   cancelNameEdit();
                 }
               }}
-              className="min-w-0 w-full max-w-[24rem] rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xl md:text-2xl font-bold text-slate-800 outline-none ring-2 ring-slate-100 focus:border-slate-400 focus:ring-slate-200"
+              className="min-w-0 w-full max-w-[22rem] h-12 rounded-2xl bg-surface px-4 text-[22px] md:text-[26px] font-bold text-ink tracking-[-0.03em] outline-none ring-2 ring-brand/30 focus:ring-brand"
               autoFocus
             />
             <button
               type="submit"
-              className="shrink-0 p-2.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800 transition-colors"
-              title="이름 저장"
+              aria-label="이름 저장"
+              className="shrink-0 w-11 h-11 rounded-2xl bg-ink text-surface flex items-center justify-center hover:opacity-90 transition-opacity"
             >
-              <Check size={16} />
+              <Check size={17} aria-hidden="true" />
             </button>
             <button
               type="button"
               onClick={cancelNameEdit}
-              className="shrink-0 p-2.5 rounded-xl bg-white text-slate-400 hover:bg-slate-50 hover:text-slate-700 transition-colors border border-slate-100"
-              title="편집 취소"
+              aria-label="편집 취소"
+              className="shrink-0 w-11 h-11 rounded-2xl bg-surface text-ink-mute flex items-center justify-center hover:text-ink-soft transition-colors"
             >
-              <X size={16} />
+              <X size={17} aria-hidden="true" />
             </button>
           </form>
         ) : (
-          <div className="min-w-0 flex items-center gap-2">
-            <h1 className="min-w-0 text-xl md:text-2xl font-bold truncate">{resolvedPortfolioName}</h1>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <h1 className="min-w-0 truncate text-[24px] md:text-[30px] font-bold text-ink tracking-[-0.035em]">
+              {resolvedPortfolioName}
+            </h1>
             <button
               type="button"
               onClick={() => {
                 setNameDraft(resolvedPortfolioName);
                 setIsEditingName(true);
               }}
-              className="shrink-0 p-2 rounded-xl text-slate-400 hover:bg-slate-50 hover:text-slate-900 transition-colors"
-              title="이름 편집"
+              aria-label="포트폴리오 이름 편집"
+              className="shrink-0 w-9 h-9 rounded-xl text-ink-mute hover:text-ink-soft hover:bg-surface flex items-center justify-center transition-colors"
             >
-              <Pencil size={15} />
+              <Pencil size={15} aria-hidden="true" />
             </button>
           </div>
         )}
+
+        <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] font-medium text-ink-mute">
+          <span className="tnum">
+            {exchangeRate === 0
+              ? '환율 연동 중'
+              : `$1 = ${exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 2 })}원`}
+          </span>
+          <span aria-hidden="true" className="w-[3px] h-[3px] rounded-full bg-line" />
+          <span className="tnum">{lastUpdated ? `${lastUpdated} 기준` : '불러오는 중'}</span>
+          {userEmail && (
+            <>
+              <span aria-hidden="true" className="hidden md:inline-block w-[3px] h-[3px] rounded-full bg-line" />
+              <span className="hidden md:inline truncate max-w-[200px]">{userEmail}</span>
+            </>
+          )}
+        </p>
       </div>
-      <p className="text-slate-400 text-[10px] md:text-[11px] mt-2 font-bold uppercase tracking-[0.14em] leading-relaxed flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span>{lastUpdated ? `Sync: ${lastUpdated}` : 'Loading...'}</span>
-        <span className="hidden md:inline-block w-1 h-1 bg-slate-300 rounded-full"></span>
-        <span>
-          현재 환율:{' '}
-          {exchangeRate === 0
-            ? '연동 중...'
-            : `$1 = ${exchangeRate.toLocaleString(undefined, { maximumFractionDigits: 2 })}원`}
-        </span>
-      </p>
-    </div>
-    <div className="flex flex-wrap gap-2 w-full md:w-auto">
-      {userEmail && (
-        <div className="w-full md:w-auto flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200/70 rounded-xl text-slate-500">
-          <UserCircle size={16} className="text-slate-500 shrink-0" />
-          <span className="min-w-0 truncate text-[11px] font-bold max-w-[180px]">{userEmail}</span>
-        </div>
-      )}
-      <button
-        onClick={onRefresh}
-        disabled={isFetching}
-        className="p-3 md:p-3.5 bg-slate-50 rounded-xl hover:bg-slate-100 transition-all border border-slate-200/70 disabled:opacity-50 text-slate-600"
-        title="수동 갱신"
-      >
-        <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} />
-      </button>
-      <button
-        onClick={onAddAsset}
-        className="flex-1 md:flex-none justify-center bg-slate-900 text-white px-5 md:px-6 py-3 md:py-3.5 rounded-xl font-bold text-xs shadow-sm hover:bg-slate-800 transition-colors flex items-center gap-2"
-      >
-        <Plus size={16} /> 자산 추가
-      </button>
-      {onSignOut && (
+
+      <div className="flex items-center gap-2">
         <button
-          onClick={onSignOut}
-          className="p-3 md:p-3.5 bg-white rounded-xl hover:bg-rose-50 transition-all border border-slate-200/70 text-slate-400 hover:text-rose-600"
-          title="로그아웃"
+          type="button"
+          onClick={onRefresh}
+          disabled={isFetching}
+          aria-label={isFetching ? '시세를 갱신하는 중입니다' : '시세 새로고침'}
+          className="shrink-0 w-12 h-12 rounded-2xl bg-surface text-ink-soft flex items-center justify-center hover:bg-line-soft disabled:opacity-40 transition-colors"
         >
-          <LogOut size={18} />
+          <RefreshCw size={18} className={isFetching ? 'animate-spin' : ''} aria-hidden="true" />
         </button>
-      )}
-    </div>
-  </header>
+
+        <button
+          type="button"
+          onClick={onAddAsset}
+          className="flex-1 md:flex-none h-12 px-5 rounded-2xl bg-brand text-surface font-bold text-[15px] flex items-center justify-center gap-1.5 hover:bg-brand-strong active:scale-[0.98] transition-all"
+        >
+          <Plus size={17} aria-hidden="true" /> 자산 추가
+        </button>
+
+        {onSignOut && (
+          <button
+            type="button"
+            onClick={onSignOut}
+            aria-label="로그아웃"
+            className="shrink-0 w-12 h-12 rounded-2xl bg-surface text-ink-mute flex items-center justify-center hover:text-danger hover:bg-danger-soft transition-colors"
+          >
+            <LogOut size={18} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+    </header>
   );
 };
 

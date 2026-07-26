@@ -1,18 +1,139 @@
 @import "tailwindcss";
 
+/*
+ * 디자인 토큰 — 토스증권 계열의 라이트 테마.
+ * 한국 증시 관례에 따라 상승은 빨강(up), 하락은 파랑(down)이다.
+ * 삭제/오류(danger)는 up과 같은 빨강이지만 의미가 달라 이름을 분리해 둔다.
+ */
+@theme {
+  --color-canvas: #f2f4f6;
+  --color-surface: #ffffff;
+  --color-line: #e5e8eb;
+  --color-line-soft: #f2f4f6;
+
+  --color-ink: #191f28;
+  --color-ink-soft: #4e5968;
+  --color-ink-mute: #8b95a1;
+
+  --color-brand: #3182f6;
+  --color-brand-strong: #1b64da;
+  --color-brand-soft: #e8f3ff;
+
+  --color-up: #f04452;
+  --color-up-soft: #fdeced;
+  --color-down: #3182f6;
+  --color-down-soft: #e8f3ff;
+
+  --color-danger: #f04452;
+  --color-danger-soft: #fdeced;
+  --color-warn: #ff9500;
+  --color-warn-soft: #fff5e6;
+
+  --font-sans:
+    'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+    'Apple SD Gothic Neo', system-ui, 'Segoe UI', Roboto, sans-serif;
+}
+
 html {
   min-height: 100%;
-  background: #f8fafc;
+  background: var(--color-canvas);
 }
 
 body,
 #root {
   min-height: 100dvh;
-  background: #f8fafc;
+  background: var(--color-canvas);
 }
 
 body {
   margin: 0;
   overflow-x: hidden;
   -webkit-text-size-adjust: 100%;
+  font-family: var(--font-sans);
+  color: var(--color-ink);
+  /* 한글은 자간을 살짝 좁혀야 촘촘하게 읽힌다. */
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 숫자는 자리수가 흔들리지 않도록 고정폭으로 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* 금액·수익률처럼 크게 보여주는 숫자 */
+.figure {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.035em;
+}
+
+/* 가로 스크롤 영역의 스크롤바를 얇게 */
+.scroll-soft {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+.scroll-soft::-webkit-scrollbar {
+  height: 6px;
+  width: 6px;
+}
+
+.scroll-soft::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+  border-radius: 999px;
+}
+
+.scroll-soft::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 키보드 포커스에만 링을 보여준다 (마우스 클릭 시 잔상 방지) */
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── 모션 ────────────────────────────────────────────────
+ * tailwindcss-animate 플러그인이 설치돼 있지 않아 기존 animate-in 계열
+ * 클래스는 실제로는 아무 동작도 하지 않았다. 필요한 것만 직접 정의한다.
+ */
+@keyframes anim-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes anim-rise-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes anim-sheet-in {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes anim-drop-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: none; }
+}
+
+.anim-fade { animation: anim-fade-in 0.16s ease-out both; }
+.anim-rise { animation: anim-rise-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.anim-drop { animation: anim-drop-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* 모바일에서는 아래에서 올라오는 시트처럼 */
+@media (max-width: 767px) {
+  .anim-rise { animation-name: anim-sheet-in; }
 }

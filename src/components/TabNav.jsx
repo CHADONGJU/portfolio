@@ -1,22 +1,38 @@
 const TABS = [
   { id: 'portfolio', label: '내 포트폴리오' },
-  { id: 'history', label: '수익 및 배당 기록' },
-  { id: 'target', label: '목표 포트폴리오' },
-  { id: 'notes', label: '메모장' },
+  { id: 'history', label: '수익·배당' },
+  { id: 'target', label: '목표' },
+  { id: 'notes', label: '메모' },
   { id: 'calendar', label: '캘린더' },
 ];
 
 const TabNav = ({ activeTab, onChange }) => (
-  <nav className="flex gap-1.5 p-1 bg-white rounded-2xl w-full md:w-fit border border-slate-200/70 shadow-[0_1px_2px_rgba(15,23,42,0.04)] overflow-x-auto max-w-full">
-    {TABS.map((tab) => (
-      <button
-        key={tab.id}
-        onClick={() => onChange(tab.id)}
-        className={`shrink-0 px-3 md:px-7 py-2.5 md:py-3 rounded-xl font-bold text-[10px] md:text-xs transition-all whitespace-nowrap ${activeTab === tab.id ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}
-      >
-        {tab.label}
-      </button>
-    ))}
+  <nav
+    aria-label="화면 전환"
+    className="flex gap-1 overflow-x-auto scroll-soft -mx-1 px-1 border-b border-line"
+  >
+    {TABS.map((tab) => {
+      const isActive = activeTab === tab.id;
+      return (
+        <button
+          key={tab.id}
+          type="button"
+          onClick={() => onChange(tab.id)}
+          aria-current={isActive ? 'page' : undefined}
+          className={`relative shrink-0 px-3.5 md:px-5 h-12 md:h-[52px] text-[14px] md:text-[15px] whitespace-nowrap transition-colors ${
+            isActive ? 'text-ink font-bold' : 'text-ink-mute font-semibold hover:text-ink-soft'
+          }`}
+        >
+          {tab.label}
+          <span
+            aria-hidden="true"
+            className={`absolute left-2 right-2 -bottom-px h-[2.5px] rounded-full transition-opacity ${
+              isActive ? 'bg-ink opacity-100' : 'opacity-0'
+            }`}
+          />
+        </button>
+      );
+    })}
   </nav>
 );
 
