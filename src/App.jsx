@@ -16,6 +16,7 @@ import {
   DEFAULT_PORTFOLIO_NAME,
   DIVIDEND_ASSET_REGISTRY_STORAGE_KEY,
   getCategoryColor,
+  LEGACY_PORTFOLIO_NAMES,
   getCategoryDetailColor,
   MEMOS_STORAGE_KEY,
   PORTFOLIO_NAME_STORAGE_KEY,
@@ -50,6 +51,13 @@ const PORTFOLIO_STORAGE_KEYS = [
 const CRYPTO_CATEGORY = '가상화폐';
 const CRYPTO_PURGE_FLAG_KEY = 'portfolio_crypto_purged_v1';
 const isCryptoCategory = (category = '') => String(category || '').trim() === CRYPTO_CATEGORY;
+
+// 저장돼 있던 옛 기본 이름은 새 기본 이름으로 옮긴다.
+const normalizePortfolioName = (name) => {
+  const trimmed = typeof name === 'string' ? name.trim() : '';
+  if (!trimmed || LEGACY_PORTFOLIO_NAMES.includes(trimmed)) return DEFAULT_PORTFOLIO_NAME;
+  return trimmed;
+};
 
 const TRADE_SORT_OPTIONS = [
   { value: 'newest', label: '최신 날짜 우선' },
@@ -454,9 +462,7 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     autoDividends: mergeUniqueDividends(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []),
     dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], assets),
     targetPortfolio: pruneTargetPortfolio(snapshot.targetPortfolio),
-    portfolioName: typeof snapshot.portfolioName === 'string' && snapshot.portfolioName.trim()
-      ? snapshot.portfolioName
-      : DEFAULT_PORTFOLIO_NAME,
+    portfolioName: normalizePortfolioName(snapshot.portfolioName),
   };
 };
 
@@ -921,7 +927,7 @@ const buyLotDraftSummary = useMemo(() => {
   const [trades, setTrades] = useState(() => loadJson(TRADES_STORAGE_KEY, []));
   const [memos, setMemos] = useState(() => loadJson(MEMOS_STORAGE_KEY, []));
   const [tradeLedger, setTradeLedger] = useState(() => loadJson(TRADE_LEDGER_STORAGE_KEY, []));
-  const [portfolioName, setPortfolioName] = useState(() => loadJson(PORTFOLIO_NAME_STORAGE_KEY, DEFAULT_PORTFOLIO_NAME));
+  const [portfolioName, setPortfolioName] = useState(() => normalizePortfolioName(loadJson(PORTFOLIO_NAME_STORAGE_KEY, DEFAULT_PORTFOLIO_NAME)));
   const [targetPortfolio, setTargetPortfolio] = useState(() => loadJson(TARGET_PORTFOLIO_STORAGE_KEY, DEFAULT_TARGET_PORTFOLIO));
   const [dividendAssetRegistry, setDividendAssetRegistry] = useState(() => loadJson(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY, []));
   const targetPortfolioRef = useRef(targetPortfolio);

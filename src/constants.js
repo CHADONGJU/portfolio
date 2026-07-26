@@ -1,4 +1,8 @@
-export const DEFAULT_PORTFOLIO_NAME = '투자 통합 대시보드';
+export const DEFAULT_PORTFOLIO_NAME = '주식 포트폴리오';
+
+// 예전 기본 이름. 저장된 값이 이 중 하나면 새 기본 이름으로 갈아끼운다.
+// (사용자가 직접 지은 이름은 그대로 둔다.)
+export const LEGACY_PORTFOLIO_NAMES = ['투자 통합 대시보드'];
 export const PORTFOLIO_NAME_STORAGE_KEY = 'portfolio_name_v1';
 export const ASSETS_STORAGE_KEY = 'portfolio_assets_v17';
 export const TRADES_STORAGE_KEY = 'portfolio_trades_v17';
