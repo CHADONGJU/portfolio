@@ -449,10 +449,7 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
   const trades = tradeLedger.length > 0
     ? rawTrades.filter((trade) => isTradeLinkedToLedger(trade, tradeLedger))
     : rawTrades;
-  const assets = reconcileAssetsWithTradeLedger(
-    mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []),
-    tradeLedger,
-  );
+  const assets = mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []);
   return {
     ...snapshot,
     assets,
@@ -1146,7 +1143,11 @@ const buyLotDraftSummary = useMemo(() => {
 
   useEffect(() => {
     if (!isCloudPortfolioLoaded || tradeLedger.length === 0) return;
-    setAssets(prevAssets => reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), tradeLedger));
+    setAssets(prevAssets => {
+      const mergedAssets = mergeUniqueAssets(prevAssets);
+      const reconciledAssets = reconcileAssetsWithTradeLedger(mergedAssets, tradeLedger);
+      return reconciledAssets.length < mergedAssets.length ? mergedAssets : reconciledAssets;
+    });
   }, [isCloudPortfolioLoaded, tradeLedger]);
 
   // 2. 완벽한 데이터 연동 로직
