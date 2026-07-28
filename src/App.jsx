@@ -1,5 +1,4 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
@@ -25,8 +24,15 @@ import {
   TRADES_STORAGE_KEY,
 } from './constants';
 import { fetchDividends, fetchKrwRate, fetchStockQuote, fetchUsdKrwRate, fetchUsdKrwRateByDate } from './services/marketData';
+import {
+  loadPortfolioState,
+  migratePortfolioState,
+  savePortfolioStateDiff,
+  subscribePortfolioState,
+} from './services/portfolioStore';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { loadJson, removeStoredKeys, saveJson, setStorageErrorHandler } from './utils/storage';
+import { arePortfolioSnapshotsEquivalent } from './utils/portfolioSnapshotComparison';
 import { buildCanonicalTradeRows, reconcileAssetsWithTradeLedger } from './utils/tradeReconciliation';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { db } from './firebase';
@@ -763,7 +769,6 @@ const getTargetItemSnapshotKey = (targetPortfolio) => targetPortfolio.categories
   )))
   .join('|');
 
-const cleanForFirestore = (value) => JSON.parse(JSON.stringify(value));
 const emptyPortfolioSnapshot = () => ({
   portfolioName: DEFAULT_PORTFOLIO_NAME,
   assets: [],
@@ -946,6 +951,9 @@ const buyLotDraftSummary = useMemo(() => {
     targetPortfolio,
   }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, dividendAssetRegistry, targetPortfolio]);
   const portfolioSnapshotRef = useRef(portfolioSnapshot);
+  const cloudSnapshotRef = useRef(null);
+  const cloudRevisionRef = useRef('');
+  const applyingCloudSnapshotRef = useRef(false);
 
   useEffect(() => { saveJson(ASSETS_STORAGE_KEY, assets); }, [assets]);
   useEffect(() => { saveJson(TRADES_STORAGE_KEY, trades); }, [trades]);
@@ -976,6 +984,8 @@ const buyLotDraftSummary = useMemo(() => {
     resetPortfolioState();
     setCloudPortfolioUserId('');
     setCloudLoadFailed(false);
+    cloudSnapshotRef.current = null;
+    cloudRevisionRef.current = '';
 
     try {
       await signOutUser();
@@ -1038,14 +1048,21 @@ const buyLotDraftSummary = useMemo(() => {
       let loadSucceeded = false;
 
       try {
-        const portfolioRef = doc(db, 'portfolioStates', userId);
-        const snapshot = await getDoc(portfolioRef);
+        const cloudState = await loadPortfolioState(db, userId);
 
         if (cancelled) return;
 
-        if (snapshot.exists()) {
-          const data = snapshot.data();
-          const compactedData = compactPortfolioSnapshot(data);
+        if (cloudState.exists) {
+          const compactedData = compactPortfolioSnapshot(cloudState.data);
+          if (cloudState.needsMigration) {
+            await migratePortfolioState(db, userId, compactedData, userEmail);
+            if (cancelled) return;
+            addLog('클라우드 저장 구조를 안전하게 최신 버전으로 이전했습니다.', 'success');
+          }
+
+          cloudSnapshotRef.current = compactedData;
+          cloudRevisionRef.current = cloudState.revision || '';
+          applyingCloudSnapshotRef.current = true;
           setAssets(compactedData.assets);
           setTrades(compactedData.trades);
           setMemos(compactedData.memos);
@@ -1066,21 +1083,18 @@ const buyLotDraftSummary = useMemo(() => {
             || (localSnapshot.memos?.length || 0) > 0
             || (localSnapshot.tradeLedger?.length || 0) > 0;
 
-          await setDoc(portfolioRef, {
-            ...cleanForFirestore(localSnapshot),
-            userEmail,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
+          await migratePortfolioState(db, userId, localSnapshot, userEmail);
+          if (cancelled) return;
+          cloudSnapshotRef.current = localSnapshot;
+          cloudRevisionRef.current = '';
+          applyingCloudSnapshotRef.current = true;
 
-          if (!cancelled) {
-            addLog(
-              hasLocalData
-                ? '이 기기에 있던 데이터를 계정에 연결했습니다.'
-                : '새 포트폴리오를 시작합니다.',
-              'success',
-            );
-          }
+          addLog(
+            hasLocalData
+              ? '이 기기에 있던 데이터를 계정에 연결했습니다.'
+              : '새 포트폴리오를 시작합니다.',
+            'success',
+          );
         }
 
         loadSucceeded = true;
@@ -1110,21 +1124,73 @@ const buyLotDraftSummary = useMemo(() => {
   }, [userId, userEmail, cloudRetryToken]);
 
   useEffect(() => {
+    if (!userId || !db || !isCloudPortfolioLoaded || cloudLoadFailed || cloudPortfolioUserId !== userId) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let isReloading = false;
+
+    return subscribePortfolioState(db, userId, async ({ exists, revision }) => {
+      if (cancelled || !exists || !revision || revision === cloudRevisionRef.current || isReloading) return;
+      isReloading = true;
+
+      try {
+        const cloudState = await loadPortfolioState(db, userId);
+        if (cancelled || !cloudState.exists) return;
+
+        const compactedData = compactPortfolioSnapshot(cloudState.data);
+        const currentData = compactPortfolioSnapshot(portfolioSnapshotRef.current);
+        cloudSnapshotRef.current = compactedData;
+        cloudRevisionRef.current = cloudState.revision || revision;
+
+        if (arePortfolioSnapshotsEquivalent(currentData, compactedData)) return;
+
+        applyingCloudSnapshotRef.current = true;
+        setAssets(compactedData.assets);
+        setTrades(compactedData.trades);
+        setMemos(compactedData.memos);
+        setTradeLedger(compactedData.tradeLedger);
+        setAutoDividends(compactedData.autoDividends);
+        setDividendAssetRegistry(compactedData.dividendAssetRegistry);
+        setPortfolioName(compactedData.portfolioName);
+        setTargetPortfolio(compactedData.targetPortfolio);
+        addLog('다른 기기에서 변경된 포트폴리오를 반영했습니다.', 'success');
+      } catch (error) {
+        console.error('Realtime cloud portfolio reload failed:', error);
+      } finally {
+        isReloading = false;
+      }
+    }, (error) => {
+      console.error('Realtime cloud portfolio subscription failed:', error);
+    });
+  }, [userId, isCloudPortfolioLoaded, cloudLoadFailed, cloudPortfolioUserId]);
+
+  useEffect(() => {
     if (!userId || !db || !isCloudPortfolioLoaded || cloudLoadFailed || cloudPortfolioUserId !== userId) return undefined;
+    if (applyingCloudSnapshotRef.current) {
+      applyingCloudSnapshotRef.current = false;
+      return undefined;
+    }
 
     const saveTimer = setTimeout(async () => {
       try {
         const compactedSnapshot = compactPortfolioSnapshot(portfolioSnapshot);
-        await setDoc(doc(db, 'portfolioStates', userId), {
-          ...cleanForFirestore(compactedSnapshot),
+        await savePortfolioStateDiff(
+          db,
+          userId,
+          compactedSnapshot,
+          cloudSnapshotRef.current,
           userEmail,
-          updatedAt: serverTimestamp(),
-        }, { merge: true });
+        );
+        cloudSnapshotRef.current = compactedSnapshot;
       } catch (error) {
         console.error('Cloud portfolio save failed:', error);
-        const message = error?.code === 'permission-denied'
-          ? '클라우드 저장 권한이 없습니다. Firestore 규칙을 확인해주세요.'
-          : '클라우드 저장에 실패했습니다. 잠시 후 다시 시도합니다.';
+        const message = error?.code === 'unsafe-portfolio-shrink'
+          ? '데이터가 비정상적으로 대량 감소해 클라우드 저장을 차단했습니다. 기존 기록은 유지됩니다.'
+          : error?.code === 'permission-denied'
+            ? '클라우드 저장 권한이 없습니다. Firestore 규칙을 확인해주세요.'
+            : '클라우드 저장에 실패했습니다. 잠시 후 다시 시도합니다.';
         addLog(message, 'error');
       }
     }, 700);
