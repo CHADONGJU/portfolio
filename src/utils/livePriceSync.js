@@ -46,7 +46,10 @@ export const buildLivePriceUpdate = ({
       quote?.currency || asset.currency || asset.originalCurrency || 'KRW',
     ).toUpperCase();
 
-    if (isSuspiciousQuoteUpdate(asset, quotePrice, quoteCurrency, normalizedRate)) {
+    if (
+      quote?.verified !== true
+      && isSuspiciousQuoteUpdate(asset, quotePrice, quoteCurrency, normalizedRate)
+    ) {
       return {
         status: 'rejected',
         asset: {
@@ -71,6 +74,9 @@ export const buildLivePriceUpdate = ({
         quoteSymbol: quote?.symbol || asset.ticker || '',
         quoteCheckedAt: checkedAt,
         quoteUpdatedAt: checkedAt,
+        quoteProviderUpdatedAt: quote?.providerUpdatedAt || '',
+        quoteValidation: quote?.validation || '',
+        quoteCorroboratedBy: quote?.corroboratedBy || '',
         quoteError: '',
       },
     };

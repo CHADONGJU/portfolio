@@ -67,9 +67,92 @@ const PROXY_TIMEOUT_MS = 7000;
 // 직접 호출은 짧게 끊고 프록시로 넘어간다.
 const DIRECT_TIMEOUT_MS = 4000;
 const PROXY_BATCH_SIZE = 3;
+const MAX_QUOTE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const DOMESTIC_QUOTE_TOLERANCE = 0.2;
 // 모든 배치가 실제로 시도될 수 있는 예산이어야 마지막 폴백(r.jina.ai)이 사문화되지 않는다.
 // 직접 호출 4초 + 프록시 배치 3개 × 7초.
 const PROXY_BUDGET_MS = DIRECT_TIMEOUT_MS + (PROXY_TIMEOUT_MS * 3);
+
+const withCacheBuster = (url) => {
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}_=${Date.now()}`;
+};
+
+const normalizeProviderTimestamp = (value) => {
+  if (value === null || value === undefined || value === '') return null;
+
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue) && numericValue > 0) {
+    const milliseconds = numericValue < 1e12 ? numericValue * 1000 : numericValue;
+    const date = new Date(milliseconds);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
+export const isFreshQuoteTimestamp = (
+  providerUpdatedAt,
+  now = Date.now(),
+  maxAgeMs = MAX_QUOTE_AGE_MS,
+) => {
+  const timestamp = normalizeProviderTimestamp(providerUpdatedAt);
+  if (!timestamp) return false;
+
+  const ageMs = Number(now) - new Date(timestamp).getTime();
+  return ageMs >= -(5 * 60 * 1000) && ageMs <= maxAgeMs;
+};
+
+export const areDomesticQuotesConsistent = (
+  firstQuote,
+  secondQuote,
+  tolerance = DOMESTIC_QUOTE_TOLERANCE,
+) => {
+  const firstPrice = Number(firstQuote?.price);
+  const secondPrice = Number(secondQuote?.price);
+  if (
+    !Number.isFinite(firstPrice)
+    || firstPrice <= 0
+    || !Number.isFinite(secondPrice)
+    || secondPrice <= 0
+  ) return false;
+
+  return Math.abs(firstPrice - secondPrice) / Math.max(firstPrice, secondPrice) <= tolerance;
+};
+
+export const selectValidatedDomesticQuote = (
+  naverQuote,
+  yahooQuote,
+  now = Date.now(),
+) => {
+  const freshNaverQuote = isFreshQuoteTimestamp(naverQuote?.providerUpdatedAt, now)
+    ? naverQuote
+    : null;
+  const freshYahooQuote = isFreshQuoteTimestamp(yahooQuote?.providerUpdatedAt, now)
+    ? yahooQuote
+    : null;
+
+  if (freshNaverQuote && freshYahooQuote) {
+    if (!areDomesticQuotesConsistent(freshNaverQuote, freshYahooQuote)) return null;
+
+    return {
+      ...freshNaverQuote,
+      verified: true,
+      validation: 'cross-provider',
+      corroboratedBy: freshYahooQuote.source || 'yahoo',
+    };
+  }
+
+  const singleFreshQuote = freshNaverQuote || freshYahooQuote;
+  if (!singleFreshQuote) return null;
+
+  return {
+    ...singleFreshQuote,
+    verified: false,
+    validation: 'fresh-provider-timestamp',
+  };
+};
 
 const fetchWithTimeout = async (url, options = {}, timeoutMs = PROXY_TIMEOUT_MS) => {
   const controller = new AbortController();
@@ -282,8 +365,9 @@ export const pickMarketAwarePrice = (quote) => {
 };
 
 const readYahooPrice = (data) => {
-  const meta = data?.chart?.result?.[0]?.meta;
-  const quote = data?.chart?.result?.[0]?.indicators?.quote?.[0];
+  const result = data?.chart?.result?.[0];
+  const meta = result?.meta;
+  const quote = result?.indicators?.quote?.[0];
   const close = quote?.close?.findLast((value) => typeof value === 'number');
   const price = pickMarketAwarePrice(meta)
     ?? close
@@ -293,7 +377,21 @@ const readYahooPrice = (data) => {
   if (price === null) return null;
 
   const normalized = normalizeQuote(price, meta?.currency);
-  return normalized === null ? null : { ...normalized, symbol: meta?.symbol };
+  if (normalized === null) return null;
+
+  const marketState = String(meta?.marketState || '').toUpperCase();
+  const marketTimestamp = marketState.startsWith('POST')
+    ? (meta?.postMarketTime || meta?.regularMarketTime)
+    : marketState.startsWith('PRE')
+      ? (meta?.preMarketTime || meta?.regularMarketTime)
+      : meta?.regularMarketTime;
+  const fallbackTimestamp = result?.timestamp?.findLast((value) => Number.isFinite(Number(value)));
+
+  return {
+    ...normalized,
+    symbol: meta?.symbol,
+    providerUpdatedAt: normalizeProviderTimestamp(marketTimestamp || fallbackTimestamp),
+  };
 };
 
 const readYahooQuotePrice = (data) => {
@@ -303,7 +401,15 @@ const readYahooQuotePrice = (data) => {
   if (price === null) return null;
 
   const normalized = normalizeQuote(price, quote?.currency);
-  return normalized === null ? null : { ...normalized, symbol: quote?.symbol };
+  return normalized === null ? null : {
+    ...normalized,
+    symbol: quote?.symbol,
+    providerUpdatedAt: normalizeProviderTimestamp(
+      quote?.postMarketTime
+      || quote?.preMarketTime
+      || quote?.regularMarketTime,
+    ),
+  };
 };
 
 const fetchYahooQuote = async (yfTicker) => {
@@ -313,7 +419,7 @@ const fetchYahooQuote = async (yfTicker) => {
   ];
 
   for (const url of urls) {
-    const quote = readYahooQuotePrice(await fetchWithSafeProxy(url));
+    const quote = readYahooQuotePrice(await fetchWithSafeProxy(withCacheBuster(url)));
     if (quote !== null) return { ...quote, source: 'yahoo' };
   }
 
@@ -325,12 +431,9 @@ const isDomesticStock = (asset, ticker) => {
   return isDomesticCategory(asset.category || '') || /^\d{5,6}(\.(KS|KQ))?$/.test(ticker);
 };
 
-const readNaverPrice = (data) => {
+export const readNaverQuote = (data) => {
   const item = data?.result?.areas?.[0]?.datas?.[0];
   if (!item) return null;
-
-  const currentPrice = Number(item.nv);
-  if (Number.isFinite(currentPrice) && currentPrice > 0) return currentPrice;
 
   const overMarketInfo = item.nxtOverMarketPriceInfo;
   const overPrice = Number(String(overMarketInfo?.overPrice ?? '').replace(/,/g, ''));
@@ -340,8 +443,25 @@ const readNaverPrice = (data) => {
     && Number.isFinite(overPrice)
     && overPrice > 0
   ) {
-    return overPrice;
+    return {
+      price: overPrice,
+      currency: 'KRW',
+      source: 'naver',
+      providerUpdatedAt: normalizeProviderTimestamp(
+        overMarketInfo.localTradedAt || data?.result?.time,
+      ),
+      marketSession: overMarketInfo.tradingSessionType || 'AFTER_MARKET',
+    };
   }
+
+  const currentPrice = Number(item.nv);
+  if (Number.isFinite(currentPrice) && currentPrice > 0) return {
+    price: currentPrice,
+    currency: 'KRW',
+    source: 'naver',
+    providerUpdatedAt: normalizeProviderTimestamp(data?.result?.time),
+    marketSession: item.ms || 'REGULAR',
+  };
 
   return null;
 };
@@ -417,11 +537,26 @@ const fetchYahooChartQuote = async (yfTicker) => {
   ];
 
   for (const url of urls) {
-    const quote = readYahooPrice(await fetchWithSafeProxy(url));
+    const quote = readYahooPrice(await fetchWithSafeProxy(withCacheBuster(url)));
     if (quote !== null) return { ...quote, source: 'yahoo' };
   }
 
   return fetchYahooQuote(yfTicker);
+};
+
+const fetchFirstYahooChartQuote = async (tickers = []) => {
+  const uniqueTickers = [...new Set(tickers.filter(Boolean))];
+  if (uniqueTickers.length === 0) return null;
+
+  try {
+    return await Promise.any(uniqueTickers.map(async (ticker) => {
+      const quote = await fetchYahooChartQuote(ticker);
+      if (quote === null) throw new Error('quote unavailable');
+      return quote;
+    }));
+  } catch {
+    return null;
+  }
 };
 
 const fetchStooqQuote = async (asset, ticker) => {
@@ -446,26 +581,20 @@ export const fetchStockQuote = async (asset) => {
 
   if (isDomesticStock(asset, ticker)) {
     const cleanTicker = ticker.replace(/[^0-9]/g, '');
-    if (cleanTicker) {
-      const naverUrl = `https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:${cleanTicker}`;
-      const data = await fetchWithSafeProxy(naverUrl);
+    const naverPromise = cleanTicker
+      ? fetchWithSafeProxy(withCacheBuster(
+        `https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:${cleanTicker}`,
+      )).then(readNaverQuote)
+      : Promise.resolve(null);
+    const yahooPromise = fetchFirstYahooChartQuote(getYahooTickers(asset, ticker));
+    const [naverQuote, yahooQuote] = await Promise.all([naverPromise, yahooPromise]);
+    const validatedQuote = selectValidatedDomesticQuote(naverQuote, yahooQuote);
 
-      const naverPrice = readNaverPrice(data);
-      if (naverPrice !== null) return {
-        price: naverPrice,
-        currency: 'KRW',
-        symbol: ticker,
-        source: 'naver',
-      };
-    }
-
-    for (const yfTicker of getYahooTickers(asset, ticker)) {
-      const yahooQuote = await fetchYahooChartQuote(yfTicker);
-      if (yahooQuote !== null) return {
-        ...yahooQuote,
-        currency: yahooQuote.currency || 'KRW',
-      };
-    }
+    if (validatedQuote !== null) return {
+      ...validatedQuote,
+      currency: validatedQuote.currency || 'KRW',
+      symbol: validatedQuote.symbol || ticker,
+    };
 
     // 여기까지 왔다면 국내 종목은 더 볼 곳이 없다.
     // return이 없으면 아래 블록이 같은 Yahoo URL을 한 번 더 돌게 된다.

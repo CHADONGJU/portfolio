@@ -116,3 +116,33 @@ test('시세 동기화 결과는 live와 캐시·실패를 분리 집계한다',
     { live: 2, cached: 1, rejected: 1, failed: 1 },
   );
 });
+
+test('cross-provider verified quotes can repair a corrupted cached price', () => {
+  const result = buildLivePriceUpdate({
+    asset: {
+      ticker: '000660',
+      currency: 'KRW',
+      originalCurrentPrice: 209500,
+      currentPrice: 209500,
+    },
+    quote: {
+      price: 1557000,
+      currency: 'KRW',
+      source: 'naver',
+      symbol: '000660',
+      providerUpdatedAt: '2026-07-28T07:12:27.301Z',
+      validation: 'cross-provider',
+      corroboratedBy: 'yahoo',
+      verified: true,
+    },
+    rate: 1,
+    checkedAt: '2026-07-28T08:00:00.000Z',
+  });
+
+  assert.equal(result.status, 'live');
+  assert.equal(result.asset.currentPrice, 1557000);
+  assert.equal(result.asset.originalCurrentPrice, 1557000);
+  assert.equal(result.asset.quoteProviderUpdatedAt, '2026-07-28T07:12:27.301Z');
+  assert.equal(result.asset.quoteValidation, 'cross-provider');
+  assert.equal(result.asset.quoteCorroboratedBy, 'yahoo');
+});

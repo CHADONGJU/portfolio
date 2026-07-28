@@ -648,6 +648,9 @@ const mergeLiveAssetUpdates = (currentAssets = [], refreshedAssets = []) => {
       quoteSymbol: refreshed.quoteSymbol,
       quoteCheckedAt: refreshed.quoteCheckedAt,
       quoteUpdatedAt: refreshed.quoteUpdatedAt,
+      quoteProviderUpdatedAt: refreshed.quoteProviderUpdatedAt,
+      quoteValidation: refreshed.quoteValidation,
+      quoteCorroboratedBy: refreshed.quoteCorroboratedBy,
       quoteError: refreshed.quoteError,
     };
   }));
@@ -1288,6 +1291,9 @@ const buyLotDraftSummary = useMemo(() => {
               quoteSymbol: quoteResult.asset.quoteSymbol,
               quoteCheckedAt: quoteResult.asset.quoteCheckedAt,
               quoteUpdatedAt: quoteResult.asset.quoteUpdatedAt,
+              quoteProviderUpdatedAt: quoteResult.asset.quoteProviderUpdatedAt,
+              quoteValidation: quoteResult.asset.quoteValidation,
+              quoteCorroboratedBy: quoteResult.asset.quoteCorroboratedBy,
               quoteError: quoteResult.asset.quoteError,
             };
 
