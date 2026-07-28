@@ -249,18 +249,33 @@ const getUsTickerAliases = (ticker) => {
   return [...new Set(aliases)];
 };
 
-const pickMarketAwarePrice = (quote) => {
+export const pickMarketAwarePrice = (quote) => {
   if (!quote) return null;
 
-  const candidates = [];
-
-  candidates.push(
-    quote.regularMarketPrice,
-    quote.currentPrice,
-    quote.previousClose,
-    quote.postMarketPrice,
-    quote.preMarketPrice,
-  );
+  const marketState = String(quote.marketState || '').toUpperCase();
+  const candidates = marketState.startsWith('POST')
+    ? [
+      quote.postMarketPrice,
+      quote.regularMarketPrice,
+      quote.currentPrice,
+      quote.preMarketPrice,
+      quote.previousClose,
+    ]
+    : marketState.startsWith('PRE')
+      ? [
+        quote.preMarketPrice,
+        quote.regularMarketPrice,
+        quote.currentPrice,
+        quote.postMarketPrice,
+        quote.previousClose,
+      ]
+      : [
+        quote.regularMarketPrice,
+        quote.currentPrice,
+        quote.postMarketPrice,
+        quote.preMarketPrice,
+        quote.previousClose,
+      ];
 
   const price = candidates.find((value) => Number.isFinite(Number(value)) && Number(value) > 0);
   return price === undefined ? null : Number(price);
@@ -299,7 +314,7 @@ const fetchYahooQuote = async (yfTicker) => {
 
   for (const url of urls) {
     const quote = readYahooQuotePrice(await fetchWithSafeProxy(url));
-    if (quote !== null) return quote;
+    if (quote !== null) return { ...quote, source: 'yahoo' };
   }
 
   return null;
@@ -396,14 +411,14 @@ const getYahooTickers = (asset, ticker) => {
 
 const fetchYahooChartQuote = async (yfTicker) => {
   const urls = [
-    `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=false`,
-    `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=false`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
     `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1d&range=5d`,
   ];
 
   for (const url of urls) {
     const quote = readYahooPrice(await fetchWithSafeProxy(url));
-    if (quote !== null) return quote;
+    if (quote !== null) return { ...quote, source: 'yahoo' };
   }
 
   return fetchYahooQuote(yfTicker);
@@ -418,7 +433,7 @@ const fetchStooqQuote = async (asset, ticker) => {
         stooqPrice,
         symbol.endsWith('.jp') ? 'JPY' : asset.currency || 'USD',
       );
-      if (normalized !== null) return { ...normalized, symbol };
+      if (normalized !== null) return { ...normalized, symbol, source: 'stooq' };
     }
   }
 
@@ -440,6 +455,7 @@ export const fetchStockQuote = async (asset) => {
         price: naverPrice,
         currency: 'KRW',
         symbol: ticker,
+        source: 'naver',
       };
     }
 
@@ -469,11 +485,11 @@ export const fetchStockQuote = async (asset) => {
 
   const yahooUrls = yahooTickers.flatMap((yfTicker) => [
     {
-      url: `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=false`,
+      url: `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
       reader: readYahooPrice,
     },
     {
-      url: `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=false`,
+      url: `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1m&range=1d&includePrePost=true`,
       reader: readYahooPrice,
     },
     {
@@ -489,7 +505,7 @@ export const fetchStockQuote = async (asset) => {
   for (const { url, reader } of yahooUrls) {
     const yfData = await fetchWithSafeProxy(url);
     const yfQuote = reader(yfData);
-    if (yfQuote !== null) return yfQuote;
+    if (yfQuote !== null) return { ...yfQuote, source: 'yahoo' };
   }
 
   return null;

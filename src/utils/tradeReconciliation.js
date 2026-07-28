@@ -62,6 +62,10 @@ export const normalizeTradeRow = (record = {}) => {
   const date = getTradeRecordDate(record);
   const price = getTradeRecordPrice(record);
   const quantity = parseTradeNumber(record.quantity);
+  const recordedPnl = record.pnl ?? record.realizedPnl;
+  const hasRecordedPnl = recordedPnl !== null
+    && recordedPnl !== undefined
+    && recordedPnl !== '';
   const pnl = parseTradeNumber(record.pnl ?? record.realizedPnl);
 
   return {
@@ -71,6 +75,7 @@ export const normalizeTradeRow = (record = {}) => {
     price,
     quantity,
     pnl,
+    hasRecordedPnl,
   };
 };
 
@@ -98,6 +103,8 @@ export const buildPositionFromTradeRows = (rows = []) => {
       const computedPnl = matchedQuantity > EPSILON
         ? (row.price - averageCost) * matchedQuantity
         : row.pnl;
+      const hasCalculatedPnl = matchedQuantity > EPSILON;
+      const resolvedPnl = row.hasRecordedPnl ? row.pnl : computedPnl;
 
       quantity = Math.max(0, quantity - matchedQuantity);
       cost = Math.max(0, cost - (averageCost * matchedQuantity));
@@ -108,7 +115,10 @@ export const buildPositionFromTradeRows = (rows = []) => {
 
       return {
         ...row,
-        pnl: computedPnl,
+        pnl: resolvedPnl,
+        pnlSource: row.hasRecordedPnl
+          ? 'recorded'
+          : (hasCalculatedPnl ? 'calculated' : 'unavailable'),
         matchedQuantity,
       };
     });

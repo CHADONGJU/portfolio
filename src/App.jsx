@@ -34,6 +34,8 @@ import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/fo
 import { loadJson, removeStoredKeys, saveJson, setStorageErrorHandler } from './utils/storage';
 import { arePortfolioSnapshotsEquivalent } from './utils/portfolioSnapshotComparison';
 import { buildCanonicalTradeRows, reconcileAssetsWithTradeLedger } from './utils/tradeReconciliation';
+import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
+import { buildTradeSummary } from './utils/tradeSummary';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { db } from './firebase';
 
@@ -146,10 +148,6 @@ const getTradeSide = (record) => {
   if (record.sellDate || getRecordPnl(record) !== 0) return 'sell';
   return 'buy';
 };
-const normalizeTradeAction = (record) => {
-  return getTradeSide(record) === 'sell' ? '매도' : '매수';
-};
-
 const numbersMatch = (left, right) => Math.abs(parseNumber(left) - parseNumber(right)) < 0.0001;
 const findMatchingSellTrade = (memo, trades) => trades.find((trade) => {
   if (!memo.name || memo.name !== trade.name) return false;
@@ -174,31 +172,6 @@ const sortTradeRecords = (records, sortMode) => [...records].sort((a, b) => {
   if (sortMode === 'profit-desc') return getRecordPnl(b) - getRecordPnl(a);
   if (sortMode === 'profit-asc') return getRecordPnl(a) - getRecordPnl(b);
   return new Date(getRecordDate(b)) - new Date(getRecordDate(a));
-});
-
-  const buildTradeSummary = (records, exchangeRate = 1, yenRate = 1, rates = {}) => records.reduce((summary, record) => {
-  const quantity = Number(record.quantity) || 0;
-  const action = normalizeTradeAction(record);
-  const pnl = getRecordPnl(record);
-  const pnlKRW = pnl * getCachedKrwRate(record.currency, rates, exchangeRate, yenRate);
-
-  if (action === '매수') {
-    summary.totalBuyQuantity += quantity;
-    summary.totalBuyCount += 1;
-  }
-  if (action === '매도') {
-    summary.totalSellQuantity += quantity;
-    summary.totalSellCount += 1;
-  }
-  summary.totalProfit += pnlKRW;
-
-  return summary;
-}, {
-  totalBuyQuantity: 0,
-  totalSellQuantity: 0,
-  totalBuyCount: 0,
-  totalSellCount: 0,
-  totalProfit: 0,
 });
 
 const DEFAULT_TARGET_PORTFOLIO = {
@@ -652,25 +625,6 @@ const getAssetIdentityKey = (asset = {}) => {
   ].join('::');
 };
 
-const getNativePriceValue = (asset = {}) => (
-  parseNumber(asset.originalCurrentPrice) || parseNumber(asset.currentPrice)
-);
-
-const isSuspiciousLivePriceUpdate = (currentAsset = {}, updatedAsset = {}) => {
-  const currentPrice = getNativePriceValue(currentAsset);
-  const nextPrice = getNativePriceValue(updatedAsset);
-  if (currentPrice <= 0 || nextPrice <= 0) return false;
-
-  // 통화 자체가 바뀐 갱신(GBp -> GBP처럼 단위가 100배 달라지는 정규화)은
-  // 급등락이 아니라 단위 교정이므로 이상치로 보면 안 된다.
-  const currentCurrency = String(currentAsset.originalCurrency || currentAsset.currency || '');
-  const nextCurrency = String(updatedAsset.originalCurrency || updatedAsset.currency || '');
-  if (currentCurrency && nextCurrency && currentCurrency !== nextCurrency) return false;
-
-  const ratio = Math.max(currentPrice / nextPrice, nextPrice / currentPrice);
-  return ratio >= 8;
-};
-
 const mergeLiveAssetUpdates = (currentAssets = [], refreshedAssets = []) => {
   const refreshedByKey = new Map(
     refreshedAssets.map((asset) => [getAssetIdentityKey(asset), asset])
@@ -678,7 +632,7 @@ const mergeLiveAssetUpdates = (currentAssets = [], refreshedAssets = []) => {
 
   return mergeUniqueAssets(currentAssets.map((asset) => {
     const refreshed = refreshedByKey.get(getAssetIdentityKey(asset));
-    if (!refreshed || isSuspiciousLivePriceUpdate(asset, refreshed)) return asset;
+    if (!refreshed) return asset;
 
     return {
       ...asset,
@@ -686,6 +640,12 @@ const mergeLiveAssetUpdates = (currentAssets = [], refreshedAssets = []) => {
       originalCurrency: refreshed.originalCurrency,
       currentPrice: refreshed.currentPrice,
       originalCurrentPrice: refreshed.originalCurrentPrice,
+      quoteStatus: refreshed.quoteStatus,
+      quoteSource: refreshed.quoteSource,
+      quoteSymbol: refreshed.quoteSymbol,
+      quoteCheckedAt: refreshed.quoteCheckedAt,
+      quoteUpdatedAt: refreshed.quoteUpdatedAt,
+      quoteError: refreshed.quoteError,
     };
   }));
 };
@@ -1281,44 +1241,54 @@ const buyLotDraftSummary = useMemo(() => {
 
         const currentTradeLedger = tradeLedgerRef.current;
         const dividendTasks = [];
-        let successCount = 0;
-        let failCount = 0;
+        const quoteStatuses = [];
+        const quoteCheckedAt = new Date().toISOString();
 
         const updatedAssets = await Promise.all(currentAssets.map(async (asset) => {
           let newCurrentPrice = asset.currentPrice;
           let newOriginalCurrentPrice = asset.originalCurrentPrice || asset.originalAveragePrice;
           let nextAssetCurrency = asset.currency;
+          let quoteMetadata = {};
           
           if (asset.category === '현금') {
             newCurrentPrice = 1; newOriginalCurrentPrice = 1;
-            successCount++;
           } else if (asset.ticker) {
-            
-            // 현재가 연동
-            const stockQuote = await fetchStockQuote(asset);
-            const fetchedPrice = stockQuote?.price ?? null;
-            
-            if (fetchedPrice !== null) {
-              const quoteCurrency = stockQuote?.currency || asset.currency || 'KRW';
-              const quoteRate = await getCurrencyRate(quoteCurrency);
-              newOriginalCurrentPrice = fetchedPrice;
-              newCurrentPrice = Math.round(newOriginalCurrentPrice * quoteRate);
-              nextAssetCurrency = quoteCurrency;
-              successCount++;
-            } else if (Number(asset.originalCurrentPrice) > 0 || Number(asset.currentPrice) > 0) {
-              const cachedCurrency = asset.currency || asset.originalCurrency || 'KRW';
-              const cachedRate = await getCurrencyRate(cachedCurrency);
-              nextAssetCurrency = cachedCurrency;
-              newOriginalCurrentPrice = Number(asset.originalCurrentPrice) > 0
-                ? Number(asset.originalCurrentPrice)
-                : Number(asset.currentPrice) / cachedRate;
-              newCurrentPrice = Number(asset.currentPrice) > 0
-                ? Number(asset.currentPrice)
-                : Math.round(newOriginalCurrentPrice * cachedRate);
-              successCount++;
-            } else {
-              failCount++;
+            let stockQuote = null;
+            try {
+              stockQuote = await fetchStockQuote(asset);
+            } catch {
+              stockQuote = null;
+            }
+
+            const quoteCurrency = stockQuote?.currency
+              || asset.currency
+              || asset.originalCurrency
+              || 'KRW';
+            const quoteRate = await getCurrencyRate(quoteCurrency);
+            const quoteResult = buildLivePriceUpdate({
+              asset,
+              quote: stockQuote,
+              rate: quoteRate,
+              checkedAt: quoteCheckedAt,
+            });
+
+            quoteStatuses.push(quoteResult.status);
+            newCurrentPrice = quoteResult.asset.currentPrice;
+            newOriginalCurrentPrice = quoteResult.asset.originalCurrentPrice;
+            nextAssetCurrency = quoteResult.asset.currency;
+            quoteMetadata = {
+              quoteStatus: quoteResult.asset.quoteStatus,
+              quoteSource: quoteResult.asset.quoteSource,
+              quoteSymbol: quoteResult.asset.quoteSymbol,
+              quoteCheckedAt: quoteResult.asset.quoteCheckedAt,
+              quoteUpdatedAt: quoteResult.asset.quoteUpdatedAt,
+              quoteError: quoteResult.asset.quoteError,
+            };
+
+            if (quoteResult.status === 'failed') {
               addLog(`[${asset.name}] 주가 연동 실패 (티커 재확인)`, "error");
+            } else if (quoteResult.status === 'rejected') {
+              addLog(`[${asset.name}] 비정상 시세 응답을 차단했습니다.`, "error");
             }
 
             // 배당 갱신 실행 
@@ -1331,7 +1301,8 @@ const buyLotDraftSummary = useMemo(() => {
                 currency: nextAssetCurrency,
                 originalCurrency: nextAssetCurrency,
                 currentPrice: newCurrentPrice,
-                originalCurrentPrice: newOriginalCurrentPrice
+                originalCurrentPrice: newOriginalCurrentPrice,
+                ...quoteMetadata,
               };
 
               dividendTasks.push(
@@ -1374,7 +1345,8 @@ const buyLotDraftSummary = useMemo(() => {
             currency: nextAssetCurrency,
             originalCurrency: nextAssetCurrency,
             currentPrice: newCurrentPrice,
-            originalCurrentPrice: newOriginalCurrentPrice
+            originalCurrentPrice: newOriginalCurrentPrice,
+            ...quoteMetadata,
           };
         }));
 
@@ -1385,10 +1357,19 @@ const buyLotDraftSummary = useMemo(() => {
           return changed ? nextCurrencyRates : prev;
         });
         setAssets(prevAssets => mergeLiveAssetUpdates(prevAssets, updatedAssets));
-        setLastUpdated(new Date().toLocaleTimeString());
+        const priceSyncSummary = summarizePriceSync(quoteStatuses);
+        const checkedQuoteCount = quoteStatuses.length;
+        if (priceSyncSummary.live > 0) setLastUpdated(new Date().toLocaleTimeString());
 
-        if (successCount > 0 && failCount === 0) addLog("모든 주식 및 환율 최신화 완료!", "success");
-        else if (failCount > 0) addLog(`일부 종목 갱신 실패 (${failCount}건).`, "error");
+        if (checkedQuoteCount > 0 && priceSyncSummary.live === checkedQuoteCount) {
+          addLog(`현재가 ${priceSyncSummary.live.toLocaleString()}건 조회 완료`, "success");
+        } else if (checkedQuoteCount > 0) {
+          const unavailableCount = priceSyncSummary.failed + priceSyncSummary.rejected;
+          addLog(
+            `현재가 조회 ${priceSyncSummary.live.toLocaleString()}건 성공 · 저장 가격 ${priceSyncSummary.cached.toLocaleString()}건${unavailableCount > 0 ? ` · 실패 ${unavailableCount.toLocaleString()}건` : ''}`,
+            "error",
+          );
+        }
 
         if (dividendTasks.length > 0) {
           Promise.all(dividendTasks).then((dividendResults) => {
@@ -1864,6 +1845,8 @@ const buyLotDraftSummary = useMemo(() => {
 
       setTargetPriceSyncStatus('목표 종목 현재가 연동 중...');
       const updates = [];
+      let liveCount = 0;
+      let cachedCount = 0;
       let failCount = 0;
 
       for (const target of syncTargets) {
@@ -1881,28 +1864,46 @@ const buyLotDraftSummary = useMemo(() => {
           // enhancedAssets가 계산해둔 현지 통화 가격을 쓴다.
           // originalCurrentPrice가 없을 때 currentPrice(원화)를 그대로 쓰면 환율이 두 번 곱해진다.
           const nativePrice = Number(matchedAsset.nativeCurrentPrice) || 0;
-          const priceKRW = await toKrwPrice(nativePrice, matchedAsset.currency);
-          updates.push({ ...target, currency: matchedAsset.currency, priceKRW, nativePrice, source: 'holding' });
-          continue;
+          if (nativePrice > 0) {
+            const priceKRW = await toKrwPrice(nativePrice, matchedAsset.currency);
+            const hasLiveHoldingPrice = matchedAsset.quoteStatus === 'live';
+            if (hasLiveHoldingPrice) liveCount += 1;
+            else cachedCount += 1;
+            updates.push({
+              ...target,
+              currency: matchedAsset.currency,
+              priceKRW,
+              nativePrice,
+              source: hasLiveHoldingPrice ? 'holding-live' : 'holding-cached',
+            });
+            continue;
+          }
         }
 
-        const stockQuote = await fetchStockQuote({
-          ticker: target.ticker,
-          category: target.categoryId,
-          currency: target.currency,
-        });
+        let stockQuote = null;
+        try {
+          stockQuote = await fetchStockQuote({
+            ticker: target.ticker,
+            category: target.categoryId,
+            currency: target.currency,
+          });
+        } catch {
+          stockQuote = null;
+        }
         const fetchedPrice = stockQuote?.price ?? null;
         const fetchedCurrency = stockQuote?.currency || target.currency || 'KRW';
 
-        if (fetchedPrice !== null) {
+        if (Number.isFinite(Number(fetchedPrice)) && Number(fetchedPrice) > 0) {
+          liveCount += 1;
           updates.push({
             ...target,
             currency: fetchedCurrency,
             nativePrice: fetchedPrice,
             priceKRW: await toKrwPrice(fetchedPrice, fetchedCurrency),
-            source: 'market',
+            source: stockQuote?.source ? `market-${stockQuote.source}` : 'market',
           });
         } else if (target.currentPriceKRW > 0) {
+          cachedCount += 1;
           const cachedRate = await getCurrencyRate(target.currency);
           updates.push({
             ...target,
@@ -1973,9 +1974,13 @@ const buyLotDraftSummary = useMemo(() => {
         });
       }
 
+      const statusParts = [];
+      if (liveCount > 0) statusParts.push(`시세 조회 ${liveCount.toLocaleString()}개 성공`);
+      if (cachedCount > 0) statusParts.push(`저장 가격 ${cachedCount.toLocaleString()}개`);
+      if (failCount > 0) statusParts.push(`실패 ${failCount.toLocaleString()}개`);
       setTargetPriceSyncStatus(
-        updates.length > 0
-          ? `현재가 ${updates.length.toLocaleString()}개 최신화 완료${failCount > 0 ? ` / 실패 ${failCount.toLocaleString()}개` : ''}`
+        statusParts.length > 0
+          ? statusParts.join(' / ')
           : '현재가를 가져오지 못했습니다. 티커를 확인해주세요.'
       );
     }, 900);
@@ -2037,7 +2042,8 @@ const buyLotDraftSummary = useMemo(() => {
 
   const memoLedgerRecords = useMemo(() => {
     const matchedMemoIds = new Set();
-    const ledgerRecords = tradeLedger.map((entry) => {
+    const canonicalLedgerRows = tradeLedger.length > 0 ? tradeRecords : [];
+    const ledgerRecords = canonicalLedgerRows.map((entry) => {
       const matchedMemo = findMatchingMemoForLedger(entry, enrichedMemos);
       if (matchedMemo) matchedMemoIds.add(matchedMemo.id);
 
@@ -2060,7 +2066,7 @@ const buyLotDraftSummary = useMemo(() => {
       }));
 
     return [...ledgerRecords, ...memoOnlyRecords];
-  }, [tradeLedger, enrichedMemos]);
+  }, [tradeLedger.length, tradeRecords, enrichedMemos]);
   const visibleMemos = useMemo(() => {
     const filtered = memoStockFilter === 'all'
       ? memoLedgerRecords
