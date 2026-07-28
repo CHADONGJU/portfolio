@@ -36,6 +36,7 @@ import { arePortfolioSnapshotsEquivalent } from './utils/portfolioSnapshotCompar
 import { buildCanonicalTradeRows, reconcileAssetsWithTradeLedger } from './utils/tradeReconciliation';
 import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
 import { buildTradeSummary } from './utils/tradeSummary';
+import { getDividendRefreshState } from './utils/dividendRefresh';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { db } from './firebase';
 
@@ -121,7 +122,7 @@ const getEstimatedDividendIntervalMonths = (history = []) => {
   if (daysDiff >= 330) return 12;
   return 3;
 };
-const getNextDividendDate = (history = [], today = new Date()) => {
+const getNextEstimatedExDividendDate = (history = [], today = new Date()) => {
   const sortedDates = history
     .map((dividend) => new Date(`${dividend.date}T00:00:00`))
     .filter((date) => Number.isFinite(date.getTime()))
@@ -594,6 +595,8 @@ const buildAutoDividendRows = ({ asset, ledger = [], dividends = {}, dividendSta
       return {
         id: `${asset.id}-${d.date}`,
         date: dividendDate,
+        exDate: dividendDate,
+        dateBasis: 'ex-dividend',
         name: asset.name,
         quantity: heldQuantity,
         perShareGrossAmount: d.amount,
@@ -1179,6 +1182,7 @@ const buyLotDraftSummary = useMemo(() => {
   // 2. 완벽한 데이터 연동 로직
   const assetsRef = useRef(assets);
   const tradeLedgerRef = useRef(tradeLedger);
+  const dividendAssetRegistryRef = useRef(dividendAssetRegistry);
   const exchangeRateRef = useRef(exchangeRate);
   const jpyKrwRateRef = useRef(jpyKrwRate);
   const currencyRatesRef = useRef(currencyRates);
@@ -1186,6 +1190,7 @@ const buyLotDraftSummary = useMemo(() => {
   const liveFetchRunIdRef = useRef(0);
   useEffect(() => { assetsRef.current = assets; }, [assets]);
   useEffect(() => { tradeLedgerRef.current = tradeLedger; }, [tradeLedger]);
+  useEffect(() => { dividendAssetRegistryRef.current = dividendAssetRegistry; }, [dividendAssetRegistry]);
   useEffect(() => { exchangeRateRef.current = exchangeRate; }, [exchangeRate]);
   useEffect(() => { jpyKrwRateRef.current = jpyKrwRate; }, [jpyKrwRate]);
   useEffect(() => { currencyRatesRef.current = currencyRates; }, [currencyRates]);
@@ -1240,6 +1245,7 @@ const buyLotDraftSummary = useMemo(() => {
         if (currentJpyRate > 0) nextCurrencyRates.JPY = currentJpyRate;
 
         const currentTradeLedger = tradeLedgerRef.current;
+        const currentDividendRegistry = dividendAssetRegistryRef.current;
         const dividendTasks = [];
         const quoteStatuses = [];
         const quoteCheckedAt = new Date().toISOString();
@@ -1293,8 +1299,6 @@ const buyLotDraftSummary = useMemo(() => {
 
             // 배당 갱신 실행 
             if (!isCommodityCategory(asset.category)) {
-              let yfTicker = asset.ticker.toUpperCase().trim();
-              if (isDomesticStockCategory(asset.category) && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
               const dividendStartDate = getDividendStartDate(asset, currentTradeLedger);
               if (!dividendStartDate) return {
                 ...asset,
@@ -1305,39 +1309,54 @@ const buyLotDraftSummary = useMemo(() => {
                 ...quoteMetadata,
               };
 
-              dividendTasks.push(
-                fetchDividends({ ...asset, ticker: yfTicker }).then((divs) => {
-                  const sourceDividendCount = divs ? Object.keys(divs).length : 0;
-                  if (!divs) return {
+              const dividendRefreshState = getDividendRefreshState({
+                asset,
+                ledger: currentTradeLedger,
+                registry: currentDividendRegistry,
+                now: quoteCheckedAt,
+              });
+
+              if (dividendRefreshState.shouldRefresh) {
+                let yfTicker = asset.ticker.toUpperCase().trim();
+                if (isDomesticStockCategory(asset.category) && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
+
+                dividendTasks.push(
+                  fetchDividends({ ...asset, ticker: yfTicker }).then((divs) => {
+                    const sourceDividendCount = divs ? Object.keys(divs).length : 0;
+                    if (!divs) return {
+                      asset,
+                      holdingRevision: dividendRefreshState.holdingRevision,
+                      error: false,
+                      hasDividends: false,
+                      sourceDividendCount: 0,
+                      rows: [],
+                    };
+
+                    const rows = buildAutoDividendRows({
+                      asset,
+                      ledger: currentTradeLedger,
+                      dividends: divs,
+                      dividendStartDate,
+                    });
+
+                    return {
+                      asset,
+                      holdingRevision: dividendRefreshState.holdingRevision,
+                      error: false,
+                      hasDividends: sourceDividendCount > 0,
+                      sourceDividendCount,
+                      rows,
+                    };
+                  }).catch(() => ({
                     asset,
-                    error: false,
+                    holdingRevision: dividendRefreshState.holdingRevision,
+                    error: true,
                     hasDividends: false,
                     sourceDividendCount: 0,
                     rows: [],
-                  };
-
-                  const rows = buildAutoDividendRows({
-                    asset,
-                    ledger: currentTradeLedger,
-                    dividends: divs,
-                    dividendStartDate,
-                  });
-
-                  return {
-                    asset,
-                    error: false,
-                    hasDividends: sourceDividendCount > 0,
-                    sourceDividendCount,
-                    rows,
-                  };
-                }).catch(() => ({
-                  asset,
-                  error: true,
-                  hasDividends: false,
-                  sourceDividendCount: 0,
-                  rows: [],
-                }))
-              );
+                  }))
+                );
+              }
             }
           }
           return {
@@ -1381,7 +1400,8 @@ const buyLotDraftSummary = useMemo(() => {
               .flatMap((result) => result.rows)
               .sort((a, b) => new Date(b.date) - new Date(a.date));
 
-            const nextRegistry = successfulResults.map((result) => ({
+            const registryCheckedAt = new Date().toISOString();
+            const nextRegistry = dividendResults.map((result) => ({
               assetId: result.asset.id,
               name: result.asset.name,
               ticker: result.asset.ticker,
@@ -1390,7 +1410,10 @@ const buyLotDraftSummary = useMemo(() => {
               hasDividends: result.hasDividends,
               sourceDividendCount: result.sourceDividendCount,
               earnedDividendCount: result.rows.length,
-              checkedAt: new Date().toISOString(),
+              holdingRevision: result.holdingRevision,
+              dateBasis: 'ex-dividend',
+              syncStatus: result.error ? 'error' : 'success',
+              checkedAt: registryCheckedAt,
             }));
 
             setDividendAssetRegistry(prevRegistry => (
@@ -1561,7 +1584,7 @@ const buyLotDraftSummary = useMemo(() => {
     return dividendSummary
       .map((summary) => {
         const history = Array.isArray(summary.history) ? summary.history : [];
-        const nextDate = getNextDividendDate(history, today);
+        const nextDate = getNextEstimatedExDividendDate(history, today);
         if (!nextDate) return null;
 
         const dateKey = formatDateKey(nextDate);
@@ -3355,7 +3378,7 @@ const buyLotDraftSummary = useMemo(() => {
                   </div>
                 ) : (
                   <span className="text-[11px] md:text-[12px] bg-line-soft text-ink-soft px-2 py-1 md:px-3 md:py-1.5 rounded-full font-bold">
-                    매수일 기준 세후 자동 추출
+                    배당락일 기준 세후 자동 계산
                   </span>
                 )}
               </div>
@@ -3380,8 +3403,8 @@ const buyLotDraftSummary = useMemo(() => {
                         </div>
                       </div>
                       
-                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[12px] md:text-[13px] font-bold ${summary.status.includes('완료') ? 'bg-brand-soft text-brand' : summary.status.includes('이번 달') ? 'bg-line-soft text-ink-soft' : 'bg-line-soft text-ink-soft'}`}>
-                        {summary.status} {summary.status.includes('예정') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
+                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[12px] md:text-[13px] font-bold ${summary.status.includes('반영') ? 'bg-brand-soft text-brand' : summary.status.includes('이번 달') ? 'bg-line-soft text-ink-soft' : 'bg-line-soft text-ink-soft'}`}>
+                        {summary.status} {summary.status.includes('예상') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
                       </div>
                     </div>
                   )) : (
@@ -3399,7 +3422,7 @@ const buyLotDraftSummary = useMemo(() => {
                         <tr>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">기준 수량</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">주당 세후</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5">지급 일자</th>
+                          <th className="px-4 py-4 md:px-8 md:py-5">배당락 일자</th>
                           <th className="px-4 py-4 md:px-8 md:py-5">종목명</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">세전</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">세금</th>
@@ -3418,13 +3441,13 @@ const buyLotDraftSummary = useMemo(() => {
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-down whitespace-nowrap">-{formatMoney(div.taxAmount ?? 0, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-bold text-ink whitespace-nowrap">{formatMoney(div.amount, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-center whitespace-nowrap">
-                              <span className="text-[11px] md:text-[12px] bg-up-soft text-up px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-bold">지급 완료</span>
+                              <span className="text-[11px] md:text-[12px] bg-up-soft text-up px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-bold">배당 반영</span>
                             </td>
                           </tr>
                         )) : (
                           <tr>
                             <td colSpan="8" className="px-4 py-12 md:px-8 md:py-16 text-center">
-                              <p className="text-ink-mute font-bold mb-2 text-xs md:text-sm">해당하는 배당 지급 내역이 없습니다.</p>
+                              <p className="text-ink-mute font-bold mb-2 text-xs md:text-sm">해당하는 배당락 내역이 없습니다.</p>
                             </td>
                           </tr>
                         )}
@@ -3954,9 +3977,11 @@ const buyLotDraftSummary = useMemo(() => {
               <div>
                 <h3 className="text-base md:text-lg font-bold text-ink flex items-center gap-2">
                   <CalendarDays size={18} className="text-ink-soft" />
-                  배당 캘린더
+                  예상 배당락 캘린더
                 </h3>
-                <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">보유 수량 기준 세전/세후 예상 배당금</p>
+                <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">
+                  Yahoo 배당락일 기준 예상치 · 실제 지급일과 다를 수 있습니다.
+                </p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -4020,7 +4045,7 @@ const buyLotDraftSummary = useMemo(() => {
                 {selectedCalendarEvent ? (
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                     <div>
-                      <p className="text-[12px] md:text-xs font-bold text-ink-mute mb-1">{selectedCalendarEvent.date}</p>
+                      <p className="text-[12px] md:text-xs font-bold text-ink-mute mb-1">예상 배당락일 {selectedCalendarEvent.date}</p>
                       <h4 className="text-lg md:text-xl font-bold text-ink">{selectedCalendarEvent.name}</h4>
                       <p className="text-xs md:text-sm font-bold text-ink-soft mt-1">{selectedCalendarEvent.ticker} · {selectedCalendarEvent.quantity.toLocaleString()}주 기준</p>
                     </div>
@@ -4036,7 +4061,7 @@ const buyLotDraftSummary = useMemo(() => {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-center text-xs md:text-sm font-bold text-ink-mute">이번 달에 표시할 배당 예정 종목이 없습니다.</p>
+                  <p className="text-center text-xs md:text-sm font-bold text-ink-mute">이번 달에 표시할 예상 배당락 종목이 없습니다.</p>
                 )}
               </div>
             </div>

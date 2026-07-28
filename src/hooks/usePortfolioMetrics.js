@@ -293,7 +293,7 @@ export const usePortfolioMetrics = ({
           category: asset.category || registry?.category || '',
           currency: asset.currency || registry?.currency || 'KRW',
           totalAmount: 0,
-          status: '지급 기록 대기',
+          status: '배당락 기록 대기',
           expectedAmount: 0,
           history: [],
         };
@@ -328,11 +328,11 @@ export const usePortfolioMetrics = ({
       const nextYear = nextDate.getFullYear();
 
       if (lastDate.getMonth() + 1 === currentMonth && lastDate.getFullYear() === currentYear) {
-        status = '이번 달 지급 완료';
+        status = '이번 달 배당 반영';
       } else if (nextMonth === currentMonth && nextYear === currentYear) {
-        status = '이번 달 지급 예정';
+        status = '이번 달 배당락 예상';
       } else {
-        status = `${nextMonth}월 지급 예정`;
+        status = `${nextMonth}월 배당락 예상`;
       }
 
       summary[asset.name] = {

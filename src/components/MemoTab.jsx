@@ -16,7 +16,6 @@ const MemoItem = ({ memo, onRemoveMemo, onUpdateMemo, formatMoney }) => {
   const action = normalizeAction(memo);
   const actionTone = action === '매수' ? 'bg-up-soft text-up' : 'bg-down-soft text-down';
   const pnl = Number(memo.pnl || 0);
-  const tradeAmount = Number(memo.price || 0) * Number(memo.quantity || 0);
   const isSell = action === '매도';
 
   const handleSave = () => {
@@ -40,7 +39,6 @@ const MemoItem = ({ memo, onRemoveMemo, onUpdateMemo, formatMoney }) => {
             <span className="inline-flex items-center gap-1"><CalendarDays size={12} /> {memo.date}</span>
             <span>{Number(memo.quantity || 0).toLocaleString()}주</span>
             <span>단가 {formatMoney(memo.price, memo.currency)}</span>
-            <span>{action}금액 {formatMoney(tradeAmount, memo.currency)}</span>
             {isSell && memo.pnlSource === 'unavailable' ? (
               <span className="text-ink-mute">손익 계산 불가</span>
             ) : isSell && (
@@ -145,7 +143,7 @@ const MemoTab = ({
           </button>
         </div>
 
-        <div className="p-5 md:p-6 border-b border-line grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="p-5 md:p-6 border-b border-line grid grid-cols-1 md:grid-cols-3 gap-3">
           <div className="bg-canvas rounded-xl p-4">
             <p className="text-[12px] font-bold text-ink-mute mb-1">총 매수 횟수</p>
             <p className="text-lg font-bold text-ink">{summary.totalBuyCount.toLocaleString()}회</p>
@@ -153,10 +151,6 @@ const MemoTab = ({
           <div className="bg-canvas rounded-xl p-4">
             <p className="text-[12px] font-bold text-ink-mute mb-1">총 매도 횟수</p>
             <p className="text-lg font-bold text-ink">{summary.totalSellCount.toLocaleString()}회</p>
-          </div>
-          <div className="bg-canvas rounded-xl p-4">
-            <p className="text-[12px] font-bold text-ink-mute mb-1">총 매도금액</p>
-            <p className="text-lg font-bold text-ink">{formatMoney(summary.totalSellAmount, 'KRW')}</p>
           </div>
           <div className="bg-canvas rounded-xl p-4">
             <p className="text-[12px] font-bold text-ink-mute mb-1">총 실현 손익</p>
