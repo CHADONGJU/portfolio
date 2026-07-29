@@ -29,11 +29,12 @@ const AuthGate = ({ children }) => {
 
   if (isAuthLoading) {
     return (
-      <div className="min-h-[100dvh] bg-surface flex items-center justify-center">
+      <div className="auth-screen flex items-center justify-center">
+        <div className="auth-grid" aria-hidden="true" />
         <span
           role="status"
           aria-label="로그인 상태를 확인하는 중"
-          className="w-7 h-7 rounded-full border-[3px] border-line border-t-brand animate-spin"
+          className="w-7 h-7 rounded-full border-[3px] border-white/12 border-t-white/70 animate-spin"
         />
       </div>
     );
@@ -54,62 +55,67 @@ const AuthGate = ({ children }) => {
   };
 
   return (
-    <div className="min-h-[100dvh] bg-surface flex flex-col items-center justify-center px-6">
-      <div className="w-full max-w-[320px] flex flex-col items-center">
-        <div className="w-16 h-16 rounded-[20px] bg-brand flex items-center justify-center text-surface text-[26px] font-bold">
-          주
-        </div>
-        <h1 className="mt-6 text-[22px] font-bold text-ink tracking-[-0.03em]">
-          {DEFAULT_PORTFOLIO_NAME}
-        </h1>
+    <div className="auth-screen flex flex-col items-center justify-center px-6 py-12">
+      <div className="auth-grid" aria-hidden="true" />
 
-        {error && (
-          <p
-            role="alert"
-            className="mt-8 w-full rounded-2xl bg-danger-soft px-4 py-3.5 text-[13px] font-semibold text-danger leading-relaxed text-center"
-          >
-            {error}
-          </p>
-        )}
+      <main className="w-full max-w-[384px] anim-rise">
+        <div className="auth-card px-7 pt-9 pb-7 md:px-8 md:pt-10 md:pb-8 flex flex-col items-center text-center">
+          <div className="auth-mark w-14 h-14 rounded-[18px] flex items-center justify-center text-white text-[23px] font-bold tracking-[-0.04em]">
+            주
+          </div>
 
-        {isFirebaseConfigured ? (
-          <>
-            <button
-              type="button"
-              onClick={handleGoogleSignIn}
-              disabled={isSubmitting}
-              className={`w-full h-[54px] bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] disabled:opacity-50 disabled:active:scale-100 transition-all flex items-center justify-center gap-2.5 ${error ? 'mt-4' : 'mt-14'}`}
+          <h1 className="mt-5 text-[21px] font-bold text-white tracking-[-0.035em]">
+            {DEFAULT_PORTFOLIO_NAME}
+          </h1>
+
+          <div className="auth-divider w-full mt-7" aria-hidden="true" />
+
+          {error && (
+            <p
+              role="alert"
+              className="mt-6 w-full rounded-2xl bg-[#c8433f]/16 ring-1 ring-inset ring-[#c8433f]/30 px-4 py-3.5 text-[13px] font-semibold text-[#f5b0ac] leading-relaxed"
             >
-              {isSubmitting ? (
-                <span className="w-4 h-4 rounded-full border-2 border-surface/40 border-t-surface animate-spin" />
-              ) : (
-                <>
-                  <span className="w-[22px] h-[22px] rounded-full bg-surface flex items-center justify-center">
-                    <GoogleMark />
-                  </span>
-                  Google로 계속하기
-                </>
-              )}
-            </button>
+              {error}
+            </p>
+          )}
 
+          {isFirebaseConfigured ? (
+            <>
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={isSubmitting}
+                className={`auth-btn-primary w-full h-[52px] rounded-2xl font-bold text-[15px] flex items-center justify-center gap-2.5 ${error ? 'mt-4' : 'mt-5'}`}
+              >
+                {isSubmitting ? (
+                  <span className="w-4 h-4 rounded-full border-2 border-black/15 border-t-black/60 animate-spin" />
+                ) : (
+                  <>
+                    <GoogleMark />
+                    Google로 계속하기
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAllowLocalPreview(true)}
+                className="auth-btn-ghost mt-2 w-full h-12 rounded-2xl text-[14px] font-semibold"
+              >
+                로그인 없이 둘러보기
+              </button>
+            </>
+          ) : (
             <button
               type="button"
               onClick={() => setAllowLocalPreview(true)}
-              className="mt-2 h-12 px-4 rounded-2xl text-[14px] font-semibold text-ink-mute hover:text-ink-soft hover:bg-canvas transition-colors"
+              className="auth-btn-primary mt-5 w-full h-[52px] rounded-2xl font-bold text-[15px]"
             >
-              로그인 없이 사용하기
+              로그인 없이 둘러보기
             </button>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setAllowLocalPreview(true)}
-            className="mt-14 w-full h-[54px] bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
-          >
-            로그인 없이 사용하기
-          </button>
-        )}
-      </div>
+          )}
+        </div>
+      </main>
     </div>
   );
 };

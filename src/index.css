@@ -1,33 +1,53 @@
 @import "tailwindcss";
 
 /*
- * 디자인 토큰 — 토스증권 계열의 라이트 테마.
+ * 디자인 토큰 — 그래파이트 모노.
+ * 브랜드에서 색을 걷어내고 무채색만 남겼다. 화면에서 유일하게 색을 갖는 건
+ * 등락 숫자뿐이라 시선이 자연스럽게 수치로 간다.
  * 한국 증시 관례에 따라 상승은 빨강(up), 하락은 파랑(down)이다.
- * 삭제/오류(danger)는 up과 같은 빨강이지만 의미가 달라 이름을 분리해 둔다.
+ * 삭제/오류(danger)는 up과 같은 계열이지만 의미가 달라 이름을 분리해 둔다.
  */
 @theme {
-  --color-canvas: #f2f4f6;
+  /* 면 — 완전 무채색 */
+  --color-canvas: #f4f4f5;
   --color-surface: #ffffff;
-  --color-line: #e5e8eb;
-  --color-line-soft: #f2f4f6;
+  --color-line: #e4e4e7;
+  --color-line-soft: #f0f0f2;
 
-  --color-ink: #191f28;
-  --color-ink-soft: #4e5968;
-  --color-ink-mute: #8b95a1;
+  /* 글자 */
+  --color-ink: #0c0d10;
+  --color-ink-soft: #52555d;
+  --color-ink-mute: #8b8e97;
 
-  --color-brand: #3182f6;
-  --color-brand-strong: #1b64da;
-  --color-brand-soft: #e8f3ff;
+  /* 브랜드 — 그래파이트. 색을 쓰지 않으니 수익률 숫자만 색으로 튄다. */
+  --color-brand: #26282e;
+  --color-brand-strong: #111318;
+  --color-brand-soft: #f1f1f3;
 
-  --color-up: #f04452;
-  --color-up-soft: #fdeced;
-  --color-down: #3182f6;
-  --color-down-soft: #e8f3ff;
+  /* 등락 — 채도를 낮춘 딥 레드 / 슬레이트 블루 */
+  --color-up: #c8433f;
+  --color-up-soft: #fbeeed;
+  --color-down: #3f6fa8;
+  --color-down-soft: #eef2f8;
 
-  --color-danger: #f04452;
-  --color-danger-soft: #fdeced;
-  --color-warn: #ff9500;
-  --color-warn-soft: #fff5e6;
+  --color-danger: #c8433f;
+  --color-danger-soft: #fbeeed;
+  --color-warn: #b0761c;
+  --color-warn-soft: #f9f3e8;
+
+  /* 밤 화면(로그인) 전용 잉크 */
+  --color-night: #0b0c0e;
+
+  /* 그림자 — 한 겹은 접지선, 한 겹은 공기 */
+  --shadow-card:
+    0 1px 1px rgba(12, 13, 16, 0.03),
+    0 6px 20px -14px rgba(12, 13, 16, 0.2);
+  --shadow-lift:
+    0 1px 2px rgba(12, 13, 16, 0.05),
+    0 14px 32px -18px rgba(12, 13, 16, 0.3);
+  --shadow-modal:
+    0 2px 6px rgba(12, 13, 16, 0.08),
+    0 32px 64px -24px rgba(12, 13, 16, 0.34);
 
   --font-sans:
     'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
@@ -52,9 +72,14 @@ body {
   font-family: var(--font-sans);
   color: var(--color-ink);
   /* 한글은 자간을 살짝 좁혀야 촘촘하게 읽힌다. */
-  letter-spacing: -0.01em;
+  letter-spacing: -0.012em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-ink) 14%, transparent);
+  color: var(--color-ink);
 }
 
 /* 숫자는 자리수가 흔들리지 않도록 고정폭으로 */
@@ -66,7 +91,8 @@ body {
 /* 금액·수익률처럼 크게 보여주는 숫자 */
 .figure {
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.035em;
+  font-feature-settings: 'tnum', 'ss01';
+  letter-spacing: -0.038em;
 }
 
 /* 가로 스크롤 영역의 스크롤바를 얇게 */
@@ -93,6 +119,7 @@ body {
 :focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: 2px;
+  border-radius: 8px;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -103,6 +130,126 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ── 표면 정교화 ──────────────────────────────────────────
+ * App.jsx가 4,500줄이라 클래스를 일일이 고치는 대신, 카드가 실제로 쓰는
+ * 조합(.bg-surface + 특정 라운드)만 골라 헤어라인과 그림자를 얹는다.
+ * components 레이어라서 JSX에 적힌 유틸리티가 언제나 우선한다.
+ */
+@layer components {
+  /* 앱 셸 — 위쪽이 아주 살짝 밝은 캔버스 */
+  .min-h-\[100dvh\].bg-canvas {
+    background-color: var(--color-canvas);
+    background-image:
+      radial-gradient(
+        120rem 40rem at 50% -18rem,
+        rgba(12, 13, 16, 0.05),
+        transparent 70%
+      ),
+      linear-gradient(180deg, #fafafa 0%, var(--color-canvas) 26rem);
+    background-attachment: fixed, scroll;
+  }
+
+  /* 카드 */
+  .bg-surface.rounded-\[20px\] {
+    border: 1px solid var(--color-line-soft);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* 클릭 가능한 카드는 살짝 떠오르게 */
+  .bg-surface.rounded-\[20px\].cursor-pointer:hover,
+  a.bg-surface.rounded-\[20px\]:hover,
+  button.bg-surface.rounded-\[20px\]:hover {
+    box-shadow: var(--shadow-lift);
+    border-color: var(--color-line);
+  }
+
+  /* 모달·시트 */
+  .bg-surface.rounded-\[24px\],
+  .bg-surface.rounded-t-\[24px\] {
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    box-shadow: var(--shadow-modal);
+  }
+
+  /* 딤 처리를 살짝 흐리게 — 뒤 화면이 유리 너머로 보이도록 */
+  .bg-ink\/60 {
+    background-color: rgba(10, 14, 23, 0.5);
+    backdrop-filter: blur(6px) saturate(120%);
+    -webkit-backdrop-filter: blur(6px) saturate(120%);
+  }
+
+  /* 브랜드 버튼 — 위쪽 광택 한 겹 + 색 그림자 */
+  button.bg-brand,
+  a.bg-brand {
+    background-image: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.16),
+      rgba(255, 255, 255, 0) 55%,
+      rgba(0, 0, 0, 0.06)
+    );
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.18),
+      0 1px 2px rgba(16, 21, 31, 0.12),
+      0 10px 22px -12px rgba(12, 13, 16, 0.5);
+  }
+
+  button.bg-brand:active,
+  a.bg-brand:active {
+    box-shadow:
+      inset 0 1px 2px rgba(0, 0, 0, 0.18),
+      0 1px 2px rgba(16, 21, 31, 0.1);
+  }
+
+  button.bg-brand:disabled {
+    box-shadow: none;
+    background-image: none;
+  }
+
+  /* 잉크 버튼 */
+  button.bg-ink,
+  a.bg-ink {
+    background-image: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.14),
+      rgba(255, 255, 255, 0) 60%
+    );
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.14),
+      0 1px 2px rgba(16, 21, 31, 0.16),
+      0 10px 20px -14px rgba(16, 21, 31, 0.6);
+  }
+
+  /* 배지·칩 — 테두리 없이 떠 있는 대신 아주 옅은 안쪽 선 */
+  .bg-up-soft,
+  .bg-down-soft,
+  .bg-brand-soft,
+  .bg-danger-soft,
+  .bg-warn-soft {
+    box-shadow: inset 0 0 0 1px rgba(16, 21, 31, 0.035);
+  }
+}
+
+/* ── 유틸 ───────────────────────────────────────────────── */
+.hairline {
+  box-shadow: inset 0 0 0 1px var(--color-line-soft);
+}
+
+.elev-card {
+  box-shadow: var(--shadow-card);
+}
+
+.elev-lift {
+  box-shadow: var(--shadow-lift);
+}
+
+/* 라벨류 — 작은 대문자 느낌으로 격을 올린다 */
+.eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-ink-mute);
 }
 
 /* ── 모션 ────────────────────────────────────────────────
@@ -129,11 +276,156 @@ body {
   to { opacity: 1; transform: none; }
 }
 
-.anim-fade { animation: anim-fade-in 0.16s ease-out both; }
-.anim-rise { animation: anim-rise-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both; }
-.anim-drop { animation: anim-drop-in 0.22s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.anim-fade { animation: anim-fade-in 0.18s ease-out both; }
+.anim-rise { animation: anim-rise-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.anim-drop { animation: anim-drop-in 0.24s cubic-bezier(0.16, 1, 0.3, 1) both; }
 
 /* 모바일에서는 아래에서 올라오는 시트처럼 */
 @media (max-width: 767px) {
   .anim-rise { animation-name: anim-sheet-in; }
+}
+
+/* ── 로그인 화면 ──────────────────────────────────────────
+ * 본문은 밝지만 진입 화면만 짙은 잉크로 두어 첫인상을 만든다.
+ */
+.auth-screen {
+  position: relative;
+  isolation: isolate;
+  min-height: 100dvh;
+  background: var(--color-night);
+  color: #fff;
+  overflow: hidden;
+}
+
+/* 광원 두 개 — 인디고를 위에서, 아주 옅은 청록을 아래에서 */
+.auth-screen::before {
+  content: '';
+  position: absolute;
+  inset: -35% -12% auto -12%;
+  height: 120%;
+  z-index: -2;
+  background:
+    radial-gradient(48rem 36rem at 50% 50%, rgba(154, 162, 178, 0.26), transparent 64%),
+    radial-gradient(34rem 26rem at 16% 22%, rgba(122, 130, 146, 0.17), transparent 62%),
+    radial-gradient(32rem 24rem at 86% 26%, rgba(110, 118, 134, 0.14), transparent 62%);
+  filter: blur(6px);
+  animation: auth-drift 20s ease-in-out infinite alternate;
+}
+
+.auth-screen::after {
+  content: '';
+  position: absolute;
+  inset: auto -20% -32% -20%;
+  height: 62%;
+  z-index: -2;
+  background: radial-gradient(42rem 24rem at 55% 92%, rgba(120, 128, 144, 0.14), transparent 66%);
+  filter: blur(10px);
+}
+
+@keyframes auth-drift {
+  from { transform: translate3d(-2%, -1%, 0) scale(1); }
+  to { transform: translate3d(3%, 2%, 0) scale(1.06); }
+}
+
+/* 아주 미세한 격자 — 배경이 텅 비어 보이지 않게 */
+.auth-grid {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.028) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.028) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(52rem 40rem at 50% 48%, #000 8%, transparent 72%);
+  -webkit-mask-image: radial-gradient(52rem 40rem at 50% 48%, #000 8%, transparent 72%);
+}
+
+/* 유리 카드 */
+.auth-card {
+  position: relative;
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.035));
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  backdrop-filter: blur(26px) saturate(150%);
+  -webkit-backdrop-filter: blur(26px) saturate(150%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 0 90px -10px rgba(150, 158, 175, 0.22),
+    0 44px 88px -34px rgba(0, 0, 0, 0.85);
+}
+
+/* 카드 상단을 가로지르는 한 줄 하이라이트 */
+.auth-card::before {
+  content: '';
+  position: absolute;
+  top: -1px;
+  left: 14%;
+  right: 14%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+}
+
+/* 로고 마크 */
+.auth-mark {
+  background:
+    linear-gradient(155deg, #8d939c 0%, #383c44 48%, #15171b 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 0 -8px 20px rgba(0, 0, 0, 0.35),
+    0 14px 30px -12px rgba(0, 0, 0, 0.9);
+}
+
+/* 흰 버튼 */
+.auth-btn-primary {
+  background: linear-gradient(180deg, #ffffff, #eef0f4);
+  color: var(--color-night);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 14px 28px -16px rgba(0, 0, 0, 0.9);
+  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.16s ease;
+}
+
+.auth-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 4px rgba(0, 0, 0, 0.3),
+    0 20px 34px -16px rgba(0, 0, 0, 0.95);
+}
+
+.auth-btn-primary:active:not(:disabled) {
+  transform: translateY(0) scale(0.994);
+}
+
+.auth-btn-primary:disabled {
+  opacity: 0.55;
+  transform: none;
+}
+
+/* 보조 버튼 */
+.auth-btn-ghost {
+  color: rgba(255, 255, 255, 0.55);
+  transition: color 0.16s ease, background-color 0.16s ease;
+}
+
+.auth-btn-ghost:hover {
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.auth-divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.12),
+    transparent
+  );
 }
