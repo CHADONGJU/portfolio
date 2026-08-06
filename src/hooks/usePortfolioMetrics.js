@@ -1,6 +1,12 @@
 import { useMemo } from 'react';
 import { getCategoryColor, getCategoryDetailColor } from '../constants';
-import { buildCanonicalTradeRows, buildPositionFromTradeRows } from '../utils/tradeReconciliation';
+import {
+  buildCanonicalTradeRows,
+  buildKrwCostBasisByAsset,
+  buildPositionFromTradeRows,
+  getTradeAssetKey,
+  getTradeRound,
+} from '../utils/tradeReconciliation';
 
 const parseMetricNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
 
@@ -9,15 +15,6 @@ const getDividendCategoryOrder = (category = '') => {
   if (category?.includes('해외') && category?.includes('주식')) return 20;
   if (category?.includes('원자재')) return 30;
   if (category?.includes('현금')) return 50;
-  return 90;
-};
-
-const getPerformanceCategoryOrder = (category = '') => {
-  const normalizedCategory = String(category || '').trim();
-  if (normalizedCategory.includes('국내') && normalizedCategory.includes('주식')) return 10;
-  if (normalizedCategory.includes('해외') && normalizedCategory.includes('주식')) return 20;
-  if (normalizedCategory.includes('원자재')) return 30;
-  if (normalizedCategory.includes('현금')) return 50;
   return 90;
 };
 
@@ -44,6 +41,19 @@ const getRecordKrwRate = (record = {}, rateByCurrency) => {
   const storedRate = Number(record.fxRate);
   if (Number.isFinite(storedRate) && storedRate > 0) return storedRate;
   return rateByCurrency(record.currency);
+};
+
+/**
+ * 매도 한 건의 원화 실현손익.
+ * 매수일·매도일 환율을 모두 아는 기록은 krwPnl(환차손익 포함)을 그대로 쓰고,
+ * 환율을 다 모르는 옛 기록만 "손익 × 매도일 환율"로 근사한다.
+ */
+const getRecordKrwPnl = (record = {}, rateByCurrency) => {
+  const exactKrwPnl = Number(record.krwPnl);
+  if (record.krwPnl !== null && record.krwPnl !== undefined && Number.isFinite(exactKrwPnl)) {
+    return exactKrwPnl;
+  }
+  return (Number(record.pnl) || 0) * getRecordKrwRate(record, rateByCurrency);
 };
 
 const withRunningPercent = (items, total, getValue) => {
@@ -80,6 +90,17 @@ export const usePortfolioMetrics = ({
       return 1;
     };
 
+    // 매수 기록에 남은 "그날의 환율"로 원가를 쌓는다.
+    // 환율이 없는 원화 거래는 1, 외화인데 환율을 아직 못 채운 기록은 0을 돌려
+    // 원금을 정확하다고 표시하지 않게 한다.
+    const resolveRecordKrwRate = (record = {}) => {
+      const currency = record.currency || 'KRW';
+      if (!currency || currency === 'KRW') return 1;
+      const storedRate = Number(record.fxRate);
+      return Number.isFinite(storedRate) && storedRate > 0 ? storedRate : 0;
+    };
+    const krwCostBasisByAsset = buildKrwCostBasisByAsset(tradeLedger, resolveRecordKrwRate);
+
     const calculatedAssets = assets.map((a) => {
       const krwRate = toKrwRate(a.currency);
       // quantity가 "1,000" 같은 문자열로 들어오면 곱셈이 통째로 NaN이 되고,
@@ -93,24 +114,66 @@ export const usePortfolioMetrics = ({
       const purchaseNative = safeOrigAvgPrice * quantity;
       const currentNative = safeOrigCurrPrice * quantity;
 
-      const purchaseKRW = purchaseNative * krwRate;
-      const currentKRW = currentNative * krwRate;
+      /**
+       * 투자 원금(원화)은 세 단계로 정한다.
+       * 1) 사용자가 증권사 숫자를 직접 넣었으면 그 값을 그대로 믿는다.
+       * 2) 매수 기록의 시점 환율로 쌓은 실제 투입 원화.
+       * 3) 둘 다 없으면 어쩔 수 없이 오늘 환율로 환산한다.
+       */
+      const manualPurchaseKRW = parseMetricNumber(a.manualPurchaseKRW);
+      const costBasis = krwCostBasisByAsset.get(getTradeAssetKey(a));
+      const hasLedgerCost = Boolean(costBasis?.hasExactKrwCost) && costBasis.krwCost > 0;
+
+      let purchaseKRW = purchaseNative * krwRate;
+      let purchaseKRWSource = 'today-rate';
+      if (manualPurchaseKRW > 0) {
+        purchaseKRW = manualPurchaseKRW;
+        purchaseKRWSource = 'manual';
+      } else if (hasLedgerCost) {
+        purchaseKRW = costBasis.krwCost;
+        purchaseKRWSource = 'trade-date-rate';
+      }
+
+      /**
+       * 원화 표시에 쓰는 환율은 "오늘 환율"이 아니라 "이 종목을 살 때 쓴 환율"로 고정한다.
+       *
+       * 오늘 환율로 평가금액을 환산하면, 주가가 하나도 안 움직인 날에도 총 보유자산이
+       * 환율만큼 오르내린다. 환율 변동을 손익으로 보고 싶지 않다는 요구에 맞춰
+       * 매입도 평가도 같은 환율을 쓰게 해 환차손익이 아예 생기지 않게 한다.
+       * 원금을 아직 확정하지 못한 자산만 어쩔 수 없이 오늘 환율을 쓴다.
+       */
+      const displayKrwRate = purchaseNative > 0 && purchaseKRW > 0
+        ? purchaseKRW / purchaseNative
+        : krwRate;
+      const currentKRW = currentNative * displayKrwRate;
+
       const profitNative = currentNative - purchaseNative;
-      const profitKRW = profitNative * krwRate;
+      // 매입·평가에 같은 환율을 쓰므로 원화 손익은 주가 손익을 환산한 값과 정확히 같다.
+      const profitKRW = currentKRW - purchaseKRW;
 
       const returnPercent = (purchaseNative > 0 && a.category !== '현금') ? ((currentNative - purchaseNative) / purchaseNative) * 100 : 0;
+      const returnPercentKRW = (purchaseKRW > 0 && a.category !== '현금') ? (profitKRW / purchaseKRW) * 100 : 0;
+      // 원화 기준 평단가 = 실제 투입 원화 ÷ 보유 수량.
+      const krwAveragePrice = quantity > 0 ? purchaseKRW / quantity : 0;
 
       return {
         ...a,
+        // 종목 행마다 달러/원화를 바꿔 볼 수 있도록 적용 환율을 그대로 실어 보낸다.
+        krwRate: displayKrwRate,
+        todayKrwRate: krwRate,
+        round: getTradeRound(a),
         nativeAveragePrice: safeOrigAvgPrice,
         nativeCurrentPrice: safeOrigCurrPrice,
+        krwAveragePrice,
         purchaseNative,
         currentNative,
         purchaseKRW,
+        purchaseKRWSource,
         currentKRW,
         profitNative,
         profitKRW,
         returnPercent,
+        returnPercentKRW,
       };
     });
 
@@ -129,7 +192,7 @@ export const usePortfolioMetrics = ({
     });
 
     return calculatedAssets;
-  }, [assets, exchangeRate, jpyKrwRate, currencyRates]);
+  }, [assets, tradeLedger, exchangeRate, jpyKrwRate, currencyRates]);
 
   const totalConvertedKRW = useMemo(() => enhancedAssets.reduce((acc, a) => acc + a.currentKRW, 0), [enhancedAssets]);
   
@@ -180,7 +243,17 @@ export const usePortfolioMetrics = ({
   const fxProfitPercent = totalUsdPurchase > 0 ? ((currentUsdValueForUsd - totalUsdPurchase) / totalUsdPurchase) * 100 : 0;
 
   const canonicalTradeRows = useMemo(() => (
-    buildCanonicalTradeRows({ tradeLedger, trades })
+    // 매수·매도 시점 환율을 함께 넘겨야 원화 실현손익에 환차손익이 제대로 들어간다.
+    buildCanonicalTradeRows({
+      tradeLedger,
+      trades,
+      resolveKrwRate: (record) => {
+        const currency = record?.currency || 'KRW';
+        if (currency === 'KRW') return 1;
+        const storedRate = Number(record?.fxRate);
+        return Number.isFinite(storedRate) && storedRate > 0 ? storedRate : 0;
+      },
+    })
   ), [tradeLedger, trades]);
   const realizedRecords = canonicalTradeRows.filter(record => record.side === 'sell');
   const realizedKrwRate = (currency) => {
@@ -194,7 +267,7 @@ export const usePortfolioMetrics = ({
   const krwNetProfit = krwTrades.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0);
   const usdNetProfit = usdTrades.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0);
   const totalConvertedNetProfit = realizedRecords.reduce((acc, t) => (
-    acc + ((Number(t.pnl) || 0) * getRecordKrwRate(t, realizedKrwRate))
+    acc + getRecordKrwPnl(t, realizedKrwRate)
   ), 0);
 
   const stockPerformanceSummary = useMemo(() => {
@@ -207,26 +280,42 @@ export const usePortfolioMetrics = ({
       return 1;
     };
     const ledgerRows = canonicalTradeRows;
-    const names = [...new Set([
-      ...enhancedAssets.map(asset => asset.name),
-      ...ledgerRows.map(record => record.name),
-      ...autoDividends.map(dividend => dividend.name),
-    ].filter(Boolean))];
 
-    return names.map((name) => {
-      const assetRows = enhancedAssets.filter(asset => asset.name === name);
-      const tradeRows = ledgerRows.filter(record => record.name === name);
+    // 종목명만이 아니라 "종목명 + 보유 회차"로 묶는다.
+    // 매도 후 재매수한 종목은 회차가 다르므로 평가/실현 손익이 서로 섞이지 않는다.
+    const groupKey = (record) => `${record.name}#${getTradeRound(record)}`;
+    const groups = new Map();
+    [...enhancedAssets, ...ledgerRows, ...autoDividends].forEach((record) => {
+      if (!record?.name) return;
+      const key = groupKey(record);
+      if (!groups.has(key)) groups.set(key, { name: record.name, round: getTradeRound(record) });
+    });
+
+    // 회차 정보가 없는 과거 배당 기록은 그 종목의 마지막 회차에만 붙여 중복 합산을 막는다.
+    const latestRoundByName = new Map();
+    groups.forEach(({ name, round }) => {
+      latestRoundByName.set(name, Math.max(latestRoundByName.get(name) ?? 1, round));
+    });
+
+    return [...groups.values()].map(({ name, round }) => {
+      const inGroup = (record) => record.name === name && getTradeRound(record) === round;
+      const assetRows = enhancedAssets.filter(inGroup);
+      const tradeRows = ledgerRows.filter(inGroup);
       const position = buildPositionFromTradeRows(tradeRows);
       const sellRows = position.rows.filter(record => record.side === 'sell');
       const buyRows = position.rows.filter(record => record.side === 'buy');
-      const dividendRows = autoDividends.filter(dividend => dividend.name === name);
+      const dividendRows = autoDividends.filter((dividend) => {
+        if (dividend.name !== name) return false;
+        if (dividend.round !== undefined && dividend.round !== null) return getTradeRound(dividend) === round;
+        return latestRoundByName.get(name) === round;
+      });
       const firstAsset = assetRows[0];
       const firstTrade = tradeRows[0];
       const firstDividend = dividendRows[0];
       const currency = firstAsset?.currency || firstTrade?.currency || firstDividend?.currency || 'KRW';
 
       const unrealizedKRW = assetRows.reduce((sum, asset) => sum + asset.profitKRW, 0);
-      const realizedKRW = sellRows.reduce((sum, trade) => sum + ((Number(trade.pnl) || 0) * getRecordKrwRate(trade, getRecordRate)), 0);
+      const realizedKRW = sellRows.reduce((sum, trade) => sum + getRecordKrwPnl(trade, getRecordRate), 0);
       const dividendKRW = dividendRows.reduce((sum, dividend) => sum + (dividend.amount * getRecordKrwRate(dividend, getRecordRate)), 0);
       const totalKRW = unrealizedKRW + realizedKRW + dividendKRW;
 
@@ -238,16 +327,36 @@ export const usePortfolioMetrics = ({
         .filter(dividend => dividend.currency === currency)
         .reduce((sum, dividend) => sum + dividend.amount, 0);
 
+      const totalSellQuantity = sellRows.reduce((sum, record) => sum + (Number(record.quantity) || 0), 0);
+      const heldQuantity = position.hasBuyRows
+        ? position.quantity
+        : assetRows.reduce((sum, asset) => sum + parseMetricNumber(asset.quantity), 0);
+      // 전량 매도해 이미 정리된 포지션. 손익이 실현손익뿐이므로 매수일이 아니라 매도일이 기준이다.
+      const isClosedPosition = heldQuantity <= 0 && totalSellQuantity > 0;
+      const firstBuyDate = position.firstBuyDate || firstAsset?.buyDate || '';
+      const lastSellDate = sellRows
+        .map(record => record.date)
+        .filter(Boolean)
+        .sort()
+        .slice(-1)[0] || '';
+
       return {
         name,
+        round,
+        key: `${name}#${round}`,
+        // 같은 종목을 팔았다 다시 산 경우 이름만으로는 두 줄이 구분되지 않는다.
+        // 회차 번호를 붙이는 대신 날짜로 갈라 보여준다.
+        firstBuyDate,
+        lastSellDate,
+        isClosedPosition,
+        displayDate: isClosedPosition ? (lastSellDate || firstBuyDate) : firstBuyDate,
+        displayDateLabel: isClosedPosition ? '매도' : '매수',
         ticker: firstAsset?.ticker || firstTrade?.ticker || '',
         category: firstAsset?.category || firstTrade?.category || '',
         currency,
-        quantity: position.hasBuyRows
-          ? position.quantity
-          : assetRows.reduce((sum, asset) => sum + parseMetricNumber(asset.quantity), 0),
+        quantity: heldQuantity,
         totalBuyQuantity: buyRows.reduce((sum, record) => sum + (Number(record.quantity) || 0), 0),
-        totalSellQuantity: sellRows.reduce((sum, record) => sum + (Number(record.quantity) || 0), 0),
+        totalSellQuantity,
         totalBuyAmountKRW: buyRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * getRecordKrwRate(record, getRecordRate)), 0),
         totalSellAmountKRW: sellRows.reduce((sum, record) => sum + ((Number(record.price) || 0) * (Number(record.quantity) || 0) * getRecordKrwRate(record, getRecordRate)), 0),
         unrealizedKRW,
@@ -257,9 +366,15 @@ export const usePortfolioMetrics = ({
         totalNative: currency === 'KRW' ? totalKRW : unrealizedNative + realizedNative + dividendNative,
       };
     }).sort((a, b) => {
-      const categoryDelta = getPerformanceCategoryOrder(a.category) - getPerformanceCategoryOrder(b.category);
-      if (categoryDelta !== 0) return categoryDelta;
-      return Math.abs(b.totalKRW) - Math.abs(a.totalKRW);
+      // 최근 거래가 위로 오도록 날짜 내림차순으로 세운다.
+      // 날짜가 없는 기록은 비교할 기준이 없으므로 맨 뒤로 보낸다.
+      if (a.displayDate !== b.displayDate) {
+        if (!a.displayDate) return 1;
+        if (!b.displayDate) return -1;
+        return a.displayDate > b.displayDate ? -1 : 1;
+      }
+      if (a.name !== b.name) return a.name.localeCompare(b.name);
+      return b.round - a.round;
     });
   }, [enhancedAssets, canonicalTradeRows, autoDividends, exchangeRate, jpyKrwRate, currencyRates]);
 

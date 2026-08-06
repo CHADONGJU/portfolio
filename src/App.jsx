@@ -33,12 +33,20 @@ import {
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { loadJson, removeStoredKeys, saveJson, setStorageErrorHandler } from './utils/storage';
 import { arePortfolioSnapshotsEquivalent } from './utils/portfolioSnapshotComparison';
-import { buildCanonicalTradeRows, reconcileAssetsWithTradeLedger } from './utils/tradeReconciliation';
+import {
+  buildCanonicalTradeRows,
+  getTradeRound,
+  reconcileAssetsWithTradeLedger,
+  resolveNextTradeRound,
+} from './utils/tradeReconciliation';
 import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
 import { buildTradeSummary } from './utils/tradeSummary';
 import { getDividendRefreshState } from './utils/dividendRefresh';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { db } from './firebase';
+
+// 과거 거래의 환율을 거래일 기준으로 한 번 고쳐 받았는지 표시하는 플래그.
+const FX_RATE_REPAIR_STORAGE_KEY = 'portfolio.fxRateRepairedV1';
 
 const isDomesticStockCategory = (category) => category?.includes('국내') && category?.includes('주식');
 const isCommodityCategory = (category) => category?.includes('원자재');
@@ -202,6 +210,8 @@ const buildLedgerEntry = ({ sourceId, asset, side, quantity, price, date, pnl = 
   ticker: asset.ticker || '',
   category: asset.category || '',
   currency: asset.currency || 'KRW',
+  // 보유 회차. 전량 매도 후 재매수한 같은 종목을 구분하는 기준값이다.
+  round: getTradeRound(asset),
   side,
   action: side === 'sell' ? '매도' : '매수',
   quantity: Number(quantity) || 0,
@@ -268,7 +278,38 @@ const buildInitialTradeLedger = ({ assets, trades, memos }) => {
   return entries.sort((a, b) => new Date(b.date) - new Date(a.date));
 };
 
-const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}`;
+// 회차까지 포함한 자산 식별자.
+// 같은 삼성전자라도 "1차 / 2차"는 서로 다른 자산으로 다뤄 평단가가 섞이지 않게 한다.
+const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}#${getTradeRound(asset)}`;
+
+/**
+ * 해외 종목 단가를 달러/원화 중 어느 쪽으로 입력할지 고르는 토글.
+ * 원화를 고르면 매수일 환율로 환산한 결과를 바로 아래에 보여줘서
+ * "원화로 적었는데 달러로 들어갔다"는 사고를 눈으로 막는다.
+ */
+const PriceInputCurrencyToggle = ({ nativeCurrency, value, onChange }) => (
+  <div className="inline-flex items-center p-0.5 rounded-lg bg-canvas border border-line" role="group" aria-label="입력 통화">
+    {[
+      { key: 'NATIVE', label: `${getCurrencySymbol(nativeCurrency)} ${nativeCurrency}` },
+      { key: 'KRW', label: '₩ 원화' },
+    ].map((option) => {
+      const active = (value === 'KRW' ? 'KRW' : 'NATIVE') === option.key;
+      return (
+        <button
+          key={option.key}
+          type="button"
+          onClick={() => onChange(option.key)}
+          aria-pressed={active}
+          className={`px-2.5 py-1 rounded-md text-[11px] md:text-[12px] font-bold leading-none transition-colors ${
+            active ? 'bg-surface text-ink shadow-sm' : 'text-ink-mute hover:text-ink-soft'
+          }`}
+        >
+          {option.label}
+        </button>
+      );
+    })}
+  </div>
+);
 
 const getAssetUpdatedAtTime = (asset = {}) => {
   const timestamp = new Date(asset.updatedAt || asset.createdAt || 0).getTime();
@@ -305,6 +346,7 @@ const mergeUniqueRecords = (primary = [], secondary = []) => {
       record.sourceId || '',
       record.name || '',
       record.ticker || '',
+      getTradeRound(record),
       record.side || record.action || '',
       record.date || record.buyDate || record.sellDate || '',
       record.quantity || '',
@@ -323,6 +365,7 @@ const mergeUniqueDividends = (primary = [], secondary = []) => {
       dividend.id || '',
       dividend.name || '',
       dividend.ticker || '',
+      getTradeRound(dividend),
       dividend.date || '',
       dividend.currency || '',
       dividend.quantity || '',
@@ -386,6 +429,10 @@ const isRecordForAsset = (record, asset) => {
   const recordAssetId = record.assetId === undefined || record.assetId === null ? '' : String(record.assetId);
   if (recordAssetId && recordAssetId === assetId) return true;
   if (record.sourceId === `asset-${asset.id}`) return true;
+
+  // 회차가 다르면 같은 종목명이라도 다른 포지션이다. 여기서 먼저 잘라내지 않으면
+  // 2차 매수 기록이 1차 자산에 딸려 삭제되거나 함께 계산된다.
+  if (getTradeRound(record) !== getTradeRound(asset)) return false;
 
   const sameTicker = asset.ticker && record.ticker && String(record.ticker).toUpperCase() === String(asset.ticker).toUpperCase();
   const sameName = asset.name && record.name && record.name === asset.name;
@@ -504,9 +551,12 @@ const isSameAssetRecord = (asset, record) => {
   const assetTicker = normalizeInputTicker(asset.ticker);
   const recordTicker = normalizeInputTicker(record.ticker);
 
+  // 회차가 다르면 다른 포지션. (id가 정확히 일치할 때만 예외로 인정한다.)
+  if (asset.id && record.assetId && asset.id === record.assetId) return true;
+  if (getTradeRound(asset) !== getTradeRound(record)) return false;
+
   return Boolean(
-    (asset.id && record.assetId && asset.id === record.assetId)
-    || (assetTicker && recordTicker && assetTicker === recordTicker)
+    (assetTicker && recordTicker && assetTicker === recordTicker)
     || (asset.name && record.name && asset.name === record.name)
   );
 };
@@ -598,6 +648,10 @@ const buildAutoDividendRows = ({ asset, ledger = [], dividends = {}, dividendSta
         exDate: dividendDate,
         dateBasis: 'ex-dividend',
         name: asset.name,
+        assetId: asset.id ?? null,
+        ticker: asset.ticker || '',
+        category: asset.category || '',
+        round: getTradeRound(asset),
         quantity: heldQuantity,
         perShareGrossAmount: d.amount,
         perShareNetAmount,
@@ -801,6 +855,8 @@ const App = () => {
   }, [assetPendingRemoval]);
 
   const [selectedCategory, setSelectedCategory] = useState(null);
+  // 자산 ID별 표시 통화. 'KRW'면 원화 환산, 그 외에는 현지 통화로 보여준다.
+  const [assetCurrencyView, setAssetCurrencyView] = useState({});
   const [selectedDividendAsset, setSelectedDividendAsset] = useState(null);
   const [dividendFilter, setDividendFilter] = useState('전체');
   const [calendarMonth, setCalendarMonth] = useState(() => getMonthKey(new Date()));
@@ -841,22 +897,33 @@ const App = () => {
   averagePrice: '',
   quantity: '',
   buyDate: defaultBuyDate,
-  memo: ''
+  memo: '',
+  // 해외 종목의 단가를 어떤 통화로 입력할지. 'NATIVE'는 달러/엔, 'KRW'는 원화.
+  priceInputCurrency: 'NATIVE',
 };
   const [newAsset, setNewAsset] = useState(initialAssetState);
 const initialAddBuyState = {
   quantity: '',
   averagePrice: '',
   buyDate: defaultBuyDate,
-  memo: ''
+  memo: '',
+  priceInputCurrency: 'NATIVE',
 };
 
 const [addBuyForm, setAddBuyForm] = useState(initialAddBuyState);
+
+// 원화로 단가를 입력할 때 쓰는 "매수일 환율" 캐시. key는 `통화::날짜`.
+// status: 'loading' | 'ready' | 'error'
+const [buyDateFxRates, setBuyDateFxRates] = useState({});
+const buyDateFxRatesRef = useRef(buyDateFxRates);
+useEffect(() => { buyDateFxRatesRef.current = buyDateFxRates; }, [buyDateFxRates]);
 
 const [isSellingAsset, setIsSellingAsset] = useState(false);
 const [selectedAssetToSell, setSelectedAssetToSell] = useState(null);
 const [selectedAssetToManageBuys, setSelectedAssetToManageBuys] = useState(null);
 const [buyLotDrafts, setBuyLotDrafts] = useState([]);
+// 증권사 앱의 '투자 원금'을 그대로 넣어 맞추고 싶을 때 쓰는 수동 입력값.
+const [manualPurchaseKrwDraft, setManualPurchaseKrwDraft] = useState('');
 
 const initialSellFormState = {
   sellPrice: '',
@@ -871,10 +938,17 @@ const buyLotDraftSummary = useMemo(() => {
   const totalCost = buyLotDrafts.reduce((sum, lot) => (
     sum + parseNumber(lot.quantity) * parseNumber(lot.price)
   ), 0);
+  // 각 매수 건에 적용된 환율로 계산한 원화 원금. 환율을 모르는 건이 하나라도 있으면 합계를 믿을 수 없다.
+  const totalKrwCost = buyLotDrafts.reduce((sum, lot) => (
+    sum + parseNumber(lot.quantity) * parseNumber(lot.price) * (Number(lot.fxRate) > 0 ? Number(lot.fxRate) : 0)
+  ), 0);
+  const hasMissingRate = buyLotDrafts.some((lot) => !(Number(lot.fxRate) > 0));
 
   return {
     totalQuantity,
     averagePrice: totalQuantity > 0 ? totalCost / totalQuantity : 0,
+    totalKrwCost,
+    hasMissingRate,
   };
 }, [buyLotDrafts]);
 
@@ -2236,7 +2310,12 @@ const buyLotDraftSummary = useMemo(() => {
     return Number(currencyRates[code]) > 0 ? Number(currencyRates[code]) : 0;
   };
 
-  const addLedgerEntry = ({ asset, side, quantity, price, date, pnl = 0, sourceId }) => {
+  const addLedgerEntry = ({ asset, side, quantity, price, date, pnl = 0, sourceId, fxRate: explicitFxRate = 0 }) => {
+    // 과거 날짜로 입력한 거래에 '오늘' 환율을 찍으면 원금이 통째로 틀어진다.
+    // 거래일이 오늘일 때만 지금 환율을 쓰고, 지난 날짜는 0으로 두었다가 그날 환율을 받아 채운다.
+    // 단, 호출한 쪽이 이미 쓴 환율을 알려줬다면(원화로 입력한 경우) 그것을 최우선으로 남긴다.
+    const knownFxRate = Number(explicitFxRate) > 0 ? Number(explicitFxRate) : 0;
+    const isTradedToday = date === new Date().toISOString().split('T')[0];
     const entry = buildLedgerEntry({
       sourceId,
       asset,
@@ -2245,12 +2324,22 @@ const buyLotDraftSummary = useMemo(() => {
       price,
       date,
       pnl,
-      // 기록 시점 환율을 함께 남겨야 과거 실현손익이 오늘 환율에 흔들리지 않는다.
-      // 단, 환율을 아직 못 받아온 상태의 추정치(1350 등)를 각인하면 영영 보정되지 않으므로
-      // 실측값이 있을 때만 남기고, 없으면 0으로 두어 나중에 백필/현재 환율이 처리하게 한다.
-      fxRate: getMeasuredKrwRate(asset.currency),
+      // 환율을 아직 못 받아온 상태의 추정치(1350 등)를 각인하면 영영 보정되지 않으므로
+      // 실측값이 있을 때만 남기고, 없으면 0으로 두어 나중에 백필이 처리하게 한다.
+      fxRate: knownFxRate || (isTradedToday ? getMeasuredKrwRate(asset.currency) : 0),
     });
     setTradeLedger(prevLedger => [entry, ...prevLedger]);
+
+    if (!knownFxRate && !isTradedToday && entry.currency === 'USD' && date) {
+      fetchUsdKrwRateByDate(date)
+        .then((rate) => {
+          if (!(Number(rate) > 0)) return;
+          setTradeLedger(prevLedger => prevLedger.map(row => (
+            row.id === entry.id ? { ...row, fxRate: Number(rate) } : row
+          )));
+        })
+        .catch(() => {});
+    }
   };
 
   /**
@@ -2259,6 +2348,7 @@ const buyLotDraftSummary = useMemo(() => {
    * (한 번 채우면 다시 요청하지 않는다.)
    */
   const fxBackfillDoneRef = useRef(false);
+  const fxRateRepairDoneRef = useRef(loadJson(FX_RATE_REPAIR_STORAGE_KEY, false));
   useEffect(() => {
     // 원장을 deps에 넣으면, 백필 도중 매매를 한 건만 기록해도 cleanup이 걸려
     // 그 세션에서는 다시 시작되지 않는다. 원장은 ref로만 읽는다.
@@ -2266,11 +2356,25 @@ const buyLotDraftSummary = useMemo(() => {
 
     let cancelled = false;
 
+    // 예전 버전은 과거 날짜로 입력한 거래에도 '입력한 날'의 환율을 찍었다.
+    // 거래일과 기록 생성일이 다른 항목은 그 환율을 믿을 수 없으므로 한 번 다시 받아온다.
+    const needsRateRepair = (entry) => {
+      if (entry.currency !== 'USD' || !entry.date) return false;
+      if (!(Number(entry.fxRate) > 0)) return true;
+      if (fxRateRepairDoneRef.current) return false;
+      const createdDate = String(entry.createdAt || '').split('T')[0];
+      return Boolean(createdDate) && createdDate !== entry.date;
+    };
+
     const backfill = async () => {
-      const missing = (tradeLedgerRef.current || []).filter((entry) => (
-        entry.currency === 'USD' && !(Number(entry.fxRate) > 0) && entry.date
-      ));
-      if (missing.length === 0) return;
+      const missing = (tradeLedgerRef.current || []).filter(needsRateRepair);
+      if (missing.length === 0) {
+        if (!fxRateRepairDoneRef.current) {
+          fxRateRepairDoneRef.current = true;
+          saveJson(FX_RATE_REPAIR_STORAGE_KEY, true);
+        }
+        return;
+      }
 
       fxBackfillDoneRef.current = true;
       const uniqueDates = [...new Set(missing.map((entry) => entry.date))];
@@ -2282,14 +2386,18 @@ const buyLotDraftSummary = useMemo(() => {
         if (Number(rate) > 0) rateByDate[date] = Number(rate);
       }
 
-      if (cancelled || Object.keys(rateByDate).length === 0) return;
+      if (cancelled) return;
+      if (Object.keys(rateByDate).length === 0) return;
 
+      const repairIds = new Set(missing.map((entry) => String(entry.id)));
       setTradeLedger(prevLedger => prevLedger.map((entry) => {
-        if (entry.currency !== 'USD' || Number(entry.fxRate) > 0) return entry;
+        if (!repairIds.has(String(entry.id))) return entry;
         const rate = rateByDate[entry.date];
         return rate ? { ...entry, fxRate: rate } : entry;
       }));
-      addLog(`과거 거래 ${Object.keys(rateByDate).length.toLocaleString()}일치 환율을 반영했습니다.`, 'success');
+      fxRateRepairDoneRef.current = true;
+      saveJson(FX_RATE_REPAIR_STORAGE_KEY, true);
+      addLog(`과거 거래 ${Object.keys(rateByDate).length.toLocaleString()}일치 환율을 거래일 기준으로 맞췄습니다.`, 'success');
     };
 
     backfill();
@@ -2438,6 +2546,7 @@ const buyLotDraftSummary = useMemo(() => {
       ticker: asset.ticker,
       category: asset.category,
       currency: asset.currency,
+      round: getTradeRound(asset),
       side: action === '매도' ? 'sell' : 'buy',
       action,
       quantity,
@@ -2508,7 +2617,8 @@ const buyLotDraftSummary = useMemo(() => {
     quantity: '',
     averagePrice: '',
     buyDate: new Date().toISOString().split('T')[0],
-    memo: ''
+    memo: '',
+    priceInputCurrency: 'NATIVE',
   });
   setIsUpdatingAsset(true);
 };
@@ -2543,17 +2653,25 @@ const buyLotDraftSummary = useMemo(() => {
     date: getRecordDate(row) || asset.buyDate || defaultBuyDate,
     quantity: String(row.quantity ?? ''),
     price: String(row.price ?? ''),
+    // 이 매수 건에 실제로 적용된 환율. 0이면 아직 못 받아온 상태다.
+    fxRate: Number(row.fxRate) > 0 ? Number(row.fxRate) : 0,
   }));
 };
 
   const openBuyLotsModal = (asset) => {
   setSelectedAssetToManageBuys(asset);
   setBuyLotDrafts(buildBuyLotDrafts(asset));
+  setManualPurchaseKrwDraft(
+    parseNumber(asset.manualPurchaseKRW) > 0
+      ? formatInputNumber(String(Math.round(parseNumber(asset.manualPurchaseKRW))))
+      : ''
+  );
 };
 
   const closeBuyLotsModal = () => {
   setSelectedAssetToManageBuys(null);
   setBuyLotDrafts([]);
+  setManualPurchaseKrwDraft('');
 };
 
   const updateBuyLotDraft = (draftId, field, value) => {
@@ -2633,6 +2751,7 @@ const buyLotDraftSummary = useMemo(() => {
       ticker: selectedAssetToManageBuys.ticker || '',
       category: selectedAssetToManageBuys.category || '',
       currency: selectedAssetToManageBuys.currency || 'KRW',
+      round: getTradeRound(selectedAssetToManageBuys),
       side: 'buy',
       action: '매수',
       quantity: lot.quantity,
@@ -2653,7 +2772,17 @@ const buyLotDraftSummary = useMemo(() => {
   ].sort((a, b) => new Date(getRecordDate(b)) - new Date(getRecordDate(a)));
 
   setTradeLedger(nextLedger);
-  setAssets(prevAssets => reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), nextLedger));
+  // 원금 수동 입력값은 원장 재계산과 별개로 자산에 직접 붙여 둔다. 비우면 자동 계산으로 돌아간다.
+  const manualPurchaseKRW = parseNumber(manualPurchaseKrwDraft);
+  const manageIdentity = getAssetIdentity(selectedAssetToManageBuys);
+  setAssets(prevAssets => reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), nextLedger).map((asset) => {
+    if (asset.id !== selectedAssetToManageBuys.id && getAssetIdentity(asset) !== manageIdentity) return asset;
+    return {
+      ...asset,
+      manualPurchaseKRW: manualPurchaseKRW > 0 ? manualPurchaseKRW : null,
+      updatedAt: new Date().toISOString(),
+    };
+  }));
   setMemos(prevMemos => {
     const matchedBuyMemos = existingBuyRows
       .map(row => findMatchingMemoForLedger(row, prevMemos))
@@ -2669,6 +2798,7 @@ const buyLotDraftSummary = useMemo(() => {
         ticker: selectedAssetToManageBuys.ticker || '',
         category: selectedAssetToManageBuys.category || '',
         currency: selectedAssetToManageBuys.currency || 'KRW',
+        round: getTradeRound(selectedAssetToManageBuys),
         side: 'buy',
         action: '매수',
         quantity: row.quantity,
@@ -2695,7 +2825,7 @@ const buyLotDraftSummary = useMemo(() => {
   if (!selectedAssetToUpdate) return;
 
   const addedQty = parseNumber(addBuyForm.quantity);
-  const addedAvgNative = parseNumber(addBuyForm.averagePrice);
+  const enteredPrice = parseNumber(addBuyForm.averagePrice);
   const selectedAssetIdentity = getAssetIdentity(selectedAssetToUpdate);
   const updatedAt = new Date().toISOString();
 
@@ -2704,10 +2834,29 @@ const buyLotDraftSummary = useMemo(() => {
     return;
   }
 
-  if (isNaN(addedAvgNative) || addedAvgNative <= 0) {
+  if (isNaN(enteredPrice) || enteredPrice <= 0) {
     addLog("추가 매수 단가를 올바르게 입력해주세요.", "error");
     return;
   }
+
+  // 원화로 입력했다면 매수일 환율로 현지 통화 단가를 되돌린다. (자산 추가와 같은 규칙)
+  const addBuyCurrency = selectedAssetToUpdate.currency || 'KRW';
+  const isKrwPriceInput = addBuyCurrency !== 'KRW' && addBuyForm.priceInputCurrency === 'KRW';
+  const addBuyFx = getBuyDateFxState(addBuyCurrency, addBuyForm.buyDate);
+
+  if (isKrwPriceInput && !(addBuyFx.rate > 0)) {
+    addLog(
+      addBuyFx.status === 'loading'
+        ? '매수일 환율을 받아오는 중입니다. 잠시 후 다시 눌러주세요.'
+        : '매수일 환율을 받아오지 못했습니다. 달러로 입력하거나 매수일을 확인해주세요.',
+      'error',
+    );
+    return;
+  }
+
+  const appliedFxRate = isKrwPriceInput ? addBuyFx.rate : 0;
+  const addedAvgNative = isKrwPriceInput ? enteredPrice / appliedFxRate : enteredPrice;
+  const addedPurchaseKRW = isKrwPriceInput ? enteredPrice * addedQty : 0;
 
   setAssets(prevAssets =>
     mergeUniqueAssets(prevAssets.map(asset => {
@@ -2732,11 +2881,18 @@ const buyLotDraftSummary = useMemo(() => {
           ? addBuyForm.buyDate
           : currentFirstBuyDate;
 
+      // 기존 원금도 직접 확정돼 있을 때만 더한다. 아니면 자동 계산으로 되돌린다.
+      const existingManual = parseNumber(asset.manualPurchaseKRW);
+      const nextManualPurchaseKRW = (existingManual > 0 && addedPurchaseKRW > 0)
+        ? existingManual + addedPurchaseKRW
+        : (existingManual > 0 ? null : asset.manualPurchaseKRW ?? null);
+
       return {
         ...asset,
         quantity: totalQty,
         averagePrice: nextOriginalAveragePrice,
         originalAveragePrice: nextOriginalAveragePrice,
+        manualPurchaseKRW: nextManualPurchaseKRW,
         buyDate: nextBuyDate,
         updatedAt,
       };
@@ -2757,6 +2913,7 @@ const buyLotDraftSummary = useMemo(() => {
     quantity: addedQty,
     price: addedAvgNative,
     date: addBuyForm.buyDate,
+    fxRate: appliedFxRate,
   });
 
   addLog(`'${selectedAssetToUpdate.name}' 추가 매수 반영 완료`, "success");
@@ -2799,6 +2956,7 @@ const buyLotDraftSummary = useMemo(() => {
     ticker: selectedAssetToSell.ticker,
     category: selectedAssetToSell.category,
     currency: selectedAssetToSell.currency,
+    round: getTradeRound(selectedAssetToSell),
     buyDate: selectedAssetToSell.buyDate,
     sellDate: sellForm.sellDate,
     buyPrice: avgBuyNative,
@@ -2852,6 +3010,75 @@ const buyLotDraftSummary = useMemo(() => {
 };
 
   // 자산 추가 처리
+  /**
+   * 원화로 입력한 단가를 현지 통화로 바꾸려면 "그날의 환율"이 필요하다.
+   * 오늘 환율로 나누면 과거 매수건의 수량·평단이 통째로 어긋나므로
+   * 매수일 환율을 받아올 때까지 저장을 막고, 받아온 값을 화면에도 보여준다.
+   */
+  const getBuyDateFxKey = (currency, date) => `${currency || ''}::${date || ''}`;
+  const getBuyDateFxState = (currency, date) => {
+    if (!currency || currency === 'KRW') return { rate: 1, status: 'ready' };
+    if (!date) return { rate: 0, status: 'idle' };
+    return buyDateFxRates[getBuyDateFxKey(currency, date)] || { rate: 0, status: 'idle' };
+  };
+
+  // 원화 입력이 켜져 있는 폼들이 필요로 하는 (통화, 날짜) 조합.
+  const pendingBuyDateFxLookups = useMemo(() => {
+    const lookups = [];
+    const push = (currency, date) => {
+      if (!currency || currency === 'KRW' || !date) return;
+      lookups.push({ currency, date });
+    };
+
+    if (isAdding && newAsset.priceInputCurrency === 'KRW' && newAsset.category !== '현금') {
+      push(getAssetInputCurrency(newAsset.category, newAsset.ticker, newAsset.currency), newAsset.buyDate);
+    }
+    if (isUpdatingAsset && selectedAssetToUpdate && addBuyForm.priceInputCurrency === 'KRW') {
+      push(selectedAssetToUpdate.currency, addBuyForm.buyDate);
+    }
+
+    return lookups;
+  }, [
+    isAdding, newAsset.priceInputCurrency, newAsset.category, newAsset.ticker,
+    newAsset.currency, newAsset.buyDate,
+    isUpdatingAsset, selectedAssetToUpdate, addBuyForm.priceInputCurrency, addBuyForm.buyDate,
+  ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    pendingBuyDateFxLookups.forEach(({ currency, date }) => {
+      const key = getBuyDateFxKey(currency, date);
+      const cached = buyDateFxRatesRef.current[key];
+      if (cached && (cached.status === 'loading' || cached.status === 'ready')) return;
+
+      setBuyDateFxRates(prev => ({ ...prev, [key]: { rate: 0, status: 'loading' } }));
+
+      const resolve = async () => {
+        // USD만 날짜별 과거 환율을 받아올 수 있다. 나머지는 현재 환율로 대신한다.
+        if (currency === 'USD') {
+          const rate = await fetchUsdKrwRateByDate(date);
+          if (Number(rate) > 0) return { rate: Number(rate), status: 'ready' };
+        }
+        const fallback = getCachedKrwRate(currency, currencyRates, exchangeRate || 0, jpyKrwRate || 0);
+        if (Number(fallback) > 0) return { rate: Number(fallback), status: 'ready' };
+        return { rate: 0, status: 'error' };
+      };
+
+      resolve()
+        .then((result) => {
+          if (cancelled) return;
+          setBuyDateFxRates(prev => ({ ...prev, [key]: result }));
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setBuyDateFxRates(prev => ({ ...prev, [key]: { rate: 0, status: 'error' } }));
+        });
+    });
+
+    return () => { cancelled = true; };
+  }, [pendingBuyDateFxLookups, currencyRates, exchangeRate, jpyKrwRate]);
+
   const handleAddAsset = () => {
     if (!newAsset.name || !newAsset.quantity) return;
     if (newAsset.category !== '현금' && !newAsset.averagePrice) return;
@@ -2859,31 +3086,98 @@ const buyLotDraftSummary = useMemo(() => {
     const ticker = normalizeInputTicker(newAsset.ticker);
     const assetCurrency = getAssetInputCurrency(newAsset.category, ticker, newAsset.currency);
     const parsedQty = parseNumber(newAsset.quantity);
-  const parsedAvgPrice = newAsset.category === '현금'
-    ? 1
-    : parseNumber(newAsset.averagePrice);
-    let krwAveragePrice = parsedAvgPrice;
-    if (assetCurrency === 'USD' || assetCurrency === 'JPY') krwAveragePrice = parsedAvgPrice;
+    const enteredPrice = newAsset.category === '현금' ? 1 : parseNumber(newAsset.averagePrice);
+
+    /**
+     * 해외 종목의 단가를 원화로 입력한 경우.
+     * 입력값은 원화이므로 매수일 환율로 나눠 현지 통화 단가로 되돌린다.
+     * 이때 사용자가 적은 원화 금액이 곧 실제 투자 원금이므로 그대로 확정해 둔다
+     * (환율을 되돌리는 과정에서 생기는 소수점 오차로 원금이 흔들리지 않게).
+     */
+    const isKrwPriceInput = assetCurrency !== 'KRW'
+      && newAsset.category !== '현금'
+      && newAsset.priceInputCurrency === 'KRW';
+    const buyDateFx = getBuyDateFxState(assetCurrency, newAsset.buyDate);
+
+    if (isKrwPriceInput && !(buyDateFx.rate > 0)) {
+      addLog(
+        buyDateFx.status === 'loading'
+          ? '매수일 환율을 받아오는 중입니다. 잠시 후 다시 눌러주세요.'
+          : '매수일 환율을 받아오지 못했습니다. 달러로 입력하거나 매수일을 확인해주세요.',
+        'error',
+      );
+      return;
+    }
+
+    const appliedFxRate = isKrwPriceInput ? buyDateFx.rate : 0;
+    const parsedAvgPrice = isKrwPriceInput ? enteredPrice / appliedFxRate : enteredPrice;
+    const manualPurchaseKRW = isKrwPriceInput ? enteredPrice * parsedQty : null;
+    const krwAveragePrice = parsedAvgPrice;
+
+    // 이미 보유 중이면 그 회차에 합산(추가 매수)하고,
+    // 전량 매도되어 남은 수량이 없으면 새 회차를 열어 이전 기록과 분리한다.
+    const assetRound = newAsset.category === '현금'
+      ? 1
+      : resolveNextTradeRound({
+        record: { ticker, name: newAsset.name, category: newAsset.category },
+        assets,
+        tradeLedger,
+      });
 
     const asset = {
-      id: Date.now(), 
-      name: newAsset.name, 
+      id: Date.now(),
+      name: newAsset.name,
       ticker,
-      category: newAsset.category, 
+      category: newAsset.category,
       currency: assetCurrency,
+      round: assetRound,
       averagePrice: krwAveragePrice, 
       quantity: parsedQty, 
       currentPrice: krwAveragePrice, 
       originalCurrency: assetCurrency, 
       originalAveragePrice: parsedAvgPrice, 
       originalCurrentPrice: parsedAvgPrice, 
+      manualPurchaseKRW,
       buyDate: newAsset.buyDate,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       color: getCategoryDetailColor(newAsset.category, assets.filter(asset => asset.category === newAsset.category).length)
     };
 
-    setAssets(prevAssets => mergeUniqueAssets([...prevAssets, asset]));
+    // 같은 회차가 이미 있으면(= 보유 중인 종목을 또 추가한 경우) 평단가를 합산한다.
+    // 회차가 새로 열렸다면 아래 find는 비어 있으므로 별도 자산으로 추가된다.
+    setAssets(prevAssets => {
+      const assetIdentity = getAssetIdentity(asset);
+      const existing = prevAssets.find(candidate => getAssetIdentity(candidate) === assetIdentity);
+      if (!existing) return mergeUniqueAssets([...prevAssets, asset]);
+
+      const oldQty = parseNumber(existing.quantity);
+      const oldAvg = parseNumber(existing.originalAveragePrice || existing.averagePrice);
+      const totalQty = oldQty + parsedQty;
+      const mergedAvg = totalQty > 0
+        ? ((oldQty * oldAvg) + (parsedQty * parsedAvgPrice)) / totalQty
+        : parsedAvgPrice;
+
+      // 원금을 직접 확정한 매수끼리만 합산한다.
+      // 한쪽이라도 자동 계산이면 합계가 반쪽짜리가 되므로 자동으로 되돌린다.
+      const existingManual = parseNumber(existing.manualPurchaseKRW);
+      const mergedManualPurchaseKRW = (existingManual > 0 && manualPurchaseKRW > 0)
+        ? existingManual + manualPurchaseKRW
+        : null;
+
+      return mergeUniqueAssets(prevAssets.map(candidate => (
+        getAssetIdentity(candidate) === assetIdentity
+          ? {
+            ...candidate,
+            quantity: totalQty,
+            averagePrice: mergedAvg,
+            originalAveragePrice: mergedAvg,
+            manualPurchaseKRW: mergedManualPurchaseKRW,
+            updatedAt: new Date().toISOString(),
+          }
+          : candidate
+      )));
+    });
     addTradeMemo({
       asset,
       action: '매수',
@@ -2898,10 +3192,17 @@ const buyLotDraftSummary = useMemo(() => {
       quantity: parsedQty,
       price: parsedAvgPrice,
       date: newAsset.buyDate,
+      // 원화로 입력했다면 그때 쓴 환율을 그대로 원장에 남긴다. 원금이 두 번 계산되지 않는다.
+      fxRate: appliedFxRate,
     });
     setNewAsset(initialAssetState);
     setIsAdding(false);
-    addLog(`'${asset.name}' 자산 추가됨. 다음 동기화 때 최신가가 반영됩니다.`, "info");
+    addLog(
+      assetRound > 1
+        ? `'${asset.name}' ${assetRound}차 매수로 추가됨. 이전 회차와 평단가·손익이 분리됩니다.`
+        : `'${asset.name}' 자산 추가됨. 다음 동기화 때 최신가가 반영됩니다.`,
+      "info",
+    );
     
   };
 
@@ -3123,7 +3424,45 @@ const buyLotDraftSummary = useMemo(() => {
                       </tr>
                     </thead>
                     <tbody className="block md:table-row-group divide-y divide-line">
-                      {visibleDetailAssets.map((asset) => (
+                      {visibleDetailAssets.map((asset) => {
+                        // 해외(외화) 종목은 행마다 $ / ₩ 를 눌러 바꿔 볼 수 있다.
+                        const nativeCurrency = asset.originalCurrency || asset.currency || 'KRW';
+                        const canToggleCurrency = nativeCurrency !== 'KRW';
+                        const isKrwView = canToggleCurrency && assetCurrencyView[asset.id] === 'KRW';
+                        const viewCurrency = isKrwView ? 'KRW' : nativeCurrency;
+                        const rate = Number(asset.krwRate) > 0 ? Number(asset.krwRate) : 1;
+                        const nativeAveragePrice = asset.nativeAveragePrice
+                          || Number(asset.originalAveragePrice)
+                          || Number(asset.averagePrice)
+                          || 0;
+
+                        /**
+                         * ₩ 보기는 증권사 앱과 같은 기준이다.
+                         * 원금은 매수 시점 환율로 실제 낸 원화, 평가금액은 오늘 환율.
+                         * 그래서 손익에 환차손익이 함께 들어간다.
+                         * $ 보기는 환율을 걷어낸 순수 주가 손익만 보여준다.
+                         */
+                        const view = isKrwView
+                          ? {
+                            purchase: asset.purchaseKRW,
+                            averagePrice: asset.krwAveragePrice,
+                            current: asset.currentKRW,
+                            price: asset.nativeCurrentPrice * rate,
+                            profit: asset.profitKRW,
+                            returnPercent: asset.returnPercentKRW,
+                          }
+                          : {
+                            purchase: asset.purchaseNative,
+                            averagePrice: nativeAveragePrice,
+                            current: asset.currentNative,
+                            price: asset.nativeCurrentPrice,
+                            profit: asset.profitNative,
+                            returnPercent: asset.returnPercent,
+                          };
+                        // 매수 시점 환율을 다 모르면 원금이 오늘 환율로 환산된 근사값이다.
+                        const isApproxKrwPrincipal = isKrwView && asset.purchaseKRWSource === 'today-rate';
+
+                        return (
                         <tr key={asset.id} className="block md:table-row px-4 py-5 md:p-0 hover:bg-canvas/60 transition-all group">
                           <td className="block md:table-cell px-0 py-0 md:px-5 md:py-4 whitespace-nowrap align-middle">
                             <div className="flex items-center gap-3">
@@ -3144,23 +3483,56 @@ const buyLotDraftSummary = useMemo(() => {
                             </div>
                           </td>
                           <td className="block md:table-cell px-0 py-4 md:px-5 md:py-4 align-middle">
+                            {canToggleCurrency && (
+                              <div className="flex items-center justify-end gap-1 mb-2 px-4 md:px-0">
+                                <div className="inline-flex items-center p-0.5 rounded-lg bg-canvas border border-line" role="group" aria-label="통화 전환">
+                                  {[
+                                    { key: 'NATIVE', label: nativeCurrency === 'JPY' ? '¥' : '$' },
+                                    { key: 'KRW', label: '₩' },
+                                  ].map((option) => {
+                                    const active = option.key === 'KRW' ? isKrwView : !isKrwView;
+                                    return (
+                                      <button
+                                        key={option.key}
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setAssetCurrencyView(prev => ({ ...prev, [asset.id]: option.key }));
+                                        }}
+                                        aria-pressed={active}
+                                        title={option.key === 'KRW' ? '원화로 보기' : '현지 통화로 보기'}
+                                        className={`px-2.5 py-1 rounded-md text-[12px] md:text-[13px] font-bold leading-none transition-colors ${
+                                          active ? 'bg-surface text-ink shadow-sm' : 'text-ink-mute hover:text-ink-soft'
+                                        }`}
+                                      >
+                                        {option.label}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
                             <div className="grid grid-cols-2 gap-x-4 md:gap-x-5 gap-y-3 md:gap-y-1.5 bg-canvas/80 md:bg-transparent px-4 py-3.5 md:p-0 rounded-xl md:rounded-none group-transition-colors w-full min-w-0">
                               <div className="flex flex-col">
-                                <span className="text-[11px] md:text-[11px] text-ink-mute font-bold">{asset.category === '현금' ? '보유 원금' : '총 매입'}</span>
-                                <span className="font-bold text-ink-soft text-xs md:text-[14px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.purchaseNative, asset.currency)}</span>
+                                <span className="text-[11px] md:text-[11px] text-ink-mute font-bold whitespace-nowrap overflow-hidden text-ellipsis">
+                                  {asset.category === '현금' ? '보유 원금' : '총 매입'}
+                                  {isKrwView && asset.purchaseKRWSource === 'manual' && ' · 직접 입력'}
+                                  {isApproxKrwPrincipal && ' · 오늘 환율'}
+                                </span>
+                                <span className="font-bold text-ink-soft text-xs md:text-[14px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(view.purchase, viewCurrency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[11px] md:text-[11px] text-ink-mute font-bold">평단가</span><span className="font-bold text-ink-soft text-xs md:text-[14px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.originalAveragePrice || asset.averagePrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[11px] md:text-[11px] text-ink-mute font-bold">평단가</span><span className="font-bold text-ink-soft text-xs md:text-[14px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(view.averagePrice, viewCurrency)}</span></>
                                 )}
                               </div>
                               <div className="flex flex-col">
                                 <span className="text-[11px] md:text-[11px] text-ink-soft font-bold">총 가치</span>
-                                <span className="font-bold text-ink text-xs md:text-[14px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.currentNative, asset.currency)}</span>
+                                <span className="font-bold text-ink text-xs md:text-[14px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(view.current, viewCurrency)}</span>
                               </div>
                               <div className="flex flex-col text-right">
                                 {asset.category !== '현금' && (
-                                  <><span className="text-[11px] md:text-[11px] text-ink-soft font-bold">현재가</span><span className="font-bold text-ink text-xs md:text-[14px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(asset.nativeCurrentPrice, asset.originalCurrency || asset.currency)}</span></>
+                                  <><span className="text-[11px] md:text-[11px] text-ink-soft font-bold">현재가</span><span className="font-bold text-ink text-xs md:text-[14px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(view.price, viewCurrency)}</span></>
                                 )}
                               </div>
                             </div>
@@ -3168,11 +3540,11 @@ const buyLotDraftSummary = useMemo(() => {
                           <td className="block md:table-cell px-0 pb-4 md:px-4 md:py-4 text-left md:text-right whitespace-nowrap align-middle">
                             {asset.category === '현금' ? <span className="text-[12px] md:text-xs font-bold text-ink-mute">-</span> : (
                               <div className="flex flex-row md:flex-col items-stretch md:items-end gap-2">
-                                <div className={`inline-flex items-center justify-center gap-1.5 flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[14px] font-bold ${asset.returnPercent >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
-                                  {asset.returnPercent >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {Math.abs(asset.returnPercent).toFixed(2)}%
+                                <div className={`inline-flex items-center justify-center gap-1.5 flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[14px] font-bold ${view.returnPercent >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
+                                  {view.returnPercent >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {Math.abs(view.returnPercent).toFixed(2)}%
                                 </div>
-                                <div className={`inline-flex items-center justify-center flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[14px] font-bold ${asset.profitNative >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
-                                  {asset.profitNative > 0 ? '+' : ''}{formatMoney(asset.profitNative, asset.currency)}
+                                <div className={`inline-flex items-center justify-center flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[14px] font-bold ${view.profit >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
+                                  {view.profit > 0 ? '+' : ''}{formatMoney(view.profit, viewCurrency)}
                                 </div>
                               </div>
                             )}
@@ -3229,7 +3601,8 @@ const buyLotDraftSummary = useMemo(() => {
                           </div>
                         </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                   {enhancedAssets.length === 0 && (
@@ -3298,7 +3671,7 @@ const buyLotDraftSummary = useMemo(() => {
                   <thead className="bg-canvas/50 text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.2em]">
                     <tr>
                       <th className="px-4 py-4 md:px-8 md:py-5">종목</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">누적 매수/매도</th>
+                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">보유/매도</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">평가 손익</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">실현 손익</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">세후 배당</th>
@@ -3309,17 +3682,28 @@ const buyLotDraftSummary = useMemo(() => {
                     {filteredPerformanceSummary.map((summary) => {
                       const totalTone = summary.totalKRW >= 0 ? 'text-up bg-up-soft' : 'text-down bg-down-soft';
                       return (
-                        <tr key={summary.name} className="hover:bg-canvas/50 transition-colors">
+                        <tr key={summary.key || summary.name} className="hover:bg-canvas/50 transition-colors">
                           <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
                             <p className="text-sm md:text-base font-bold text-ink">{summary.name}</p>
                             <p className="text-[11px] md:text-[12px] font-bold text-ink-mute mt-1">
                               {summary.ticker || summary.category || '기록 종목'}
-                              {summary.quantity > 0 && ` • 보유 ${summary.quantity.toLocaleString()}주`}
+                              {summary.displayDate && ` • ${summary.displayDate} ${summary.displayDateLabel}`}
                             </p>
                           </td>
                           <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
-                            <div>매수 {summary.totalBuyQuantity.toLocaleString()}주</div>
-                            <div className="text-ink-mute mt-1">매도 {summary.totalSellQuantity.toLocaleString()}주</div>
+                            {/* 이미 정리된 포지션은 매도 수량이 주인공이므로 위로 올린다.
+                                보유 중인 종목은 반대로 보유 수량이 먼저다. */}
+                            {summary.isClosedPosition ? (
+                              <>
+                                <div>매도 {summary.totalSellQuantity.toLocaleString()}주</div>
+                                <div className="text-ink-mute mt-1">보유 {summary.quantity.toLocaleString()}주</div>
+                              </>
+                            ) : (
+                              <>
+                                <div>보유 {summary.quantity.toLocaleString()}주</div>
+                                <div className="text-ink-mute mt-1">매도 {summary.totalSellQuantity.toLocaleString()}주</div>
+                              </>
+                            )}
                           </td>
                           <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
                             {summary.unrealizedKRW > 0 ? '+' : ''}{formatMoney(summary.unrealizedKRW, 'KRW')}
@@ -4122,6 +4506,18 @@ const buyLotDraftSummary = useMemo(() => {
               <option value="USD">달러 (USD)</option>
               <option value="JPY">엔화 (JPY)</option>
             </select>
+            {/* 해외주식·원자재는 티커를 보고 통화가 자동으로 정해진다.
+                여기서 원화를 골라도 달러로 저장되므로, 실제로 쓰일 통화를 분명히 알려준다. */}
+            {(() => {
+              const resolvedCurrency = getAssetInputCurrency(newAsset.category, newAsset.ticker, newAsset.currency);
+              if (resolvedCurrency === newAsset.currency) return null;
+              return (
+                <p className="mt-1.5 ml-1 text-[11px] font-bold text-ink-mute leading-relaxed">
+                  {newAsset.category}은 {getCurrencySymbol(resolvedCurrency)} {resolvedCurrency}로 저장됩니다.
+                  단가는 아래에서 원화로도 입력할 수 있어요.
+                </p>
+              );
+            })()}
           </div>
         </div>
 
@@ -4154,25 +4550,42 @@ const buyLotDraftSummary = useMemo(() => {
           </div>
         )}
 
-        {newAsset.category !== '현금' && (
-          <div>
-            <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-              평균 단가 ({getCurrencySymbol(newAsset.currency)})
-            </label>
-            <input
-              type="text"
-              inputMode="decimal"
-              className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-              value={formatInputNumber(newAsset.averagePrice)}
-              onChange={(e) =>
-                setNewAsset({
-                  ...newAsset,
-                  averagePrice: sanitizeNumericInput(e.target.value)
-                })
-              }
-            />
-          </div>
-        )}
+        {newAsset.category !== '현금' && (() => {
+          // 실제로 저장될 통화. 해외주식/원자재는 사용자가 통화 칸에서 무엇을 골랐든 달러(또는 엔)로 잡힌다.
+          const nativeCurrency = getAssetInputCurrency(newAsset.category, newAsset.ticker, newAsset.currency);
+          const isForeign = nativeCurrency !== 'KRW';
+          const isKrwInput = isForeign && newAsset.priceInputCurrency === 'KRW';
+          const inputCurrency = isKrwInput ? 'KRW' : nativeCurrency;
+
+          return (
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-1.5 ml-1">
+                <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute">
+                  평균 단가 ({getCurrencySymbol(inputCurrency)})
+                </label>
+                {isForeign && (
+                  <PriceInputCurrencyToggle
+                    nativeCurrency={nativeCurrency}
+                    value={newAsset.priceInputCurrency}
+                    onChange={(next) => setNewAsset({ ...newAsset, priceInputCurrency: next })}
+                  />
+                )}
+              </div>
+              <input
+                type="text"
+                inputMode="decimal"
+                className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+                value={formatInputNumber(newAsset.averagePrice)}
+                onChange={(e) =>
+                  setNewAsset({
+                    ...newAsset,
+                    averagePrice: sanitizeNumericInput(e.target.value)
+                  })
+                }
+              />
+            </div>
+          );
+        })()}
 
         <div className={newAsset.category === '현금' ? 'col-span-2' : ''}>
           <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
@@ -4232,7 +4645,10 @@ const buyLotDraftSummary = useMemo(() => {
 )}
 
 {/* 매수 기록 관리 모달 */}
-{selectedAssetToManageBuys && (
+{selectedAssetToManageBuys && (() => {
+  const isForeignManagedAsset = (selectedAssetToManageBuys.currency || 'KRW') !== 'KRW';
+
+  return (
   <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[105] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
     <div className="bg-surface w-full max-w-4xl max-h-[88vh] rounded-t-[24px] md:rounded-[24px] p-6 md:p-7 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-7 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise flex flex-col">
       <div className="flex justify-between items-start gap-4 mb-5 md:mb-6">
@@ -4272,6 +4688,55 @@ const buyLotDraftSummary = useMemo(() => {
           </p>
         </div>
       </div>
+
+      {/* 외화 종목만: 증권사가 보여주는 원화 투자 원금을 직접 맞출 수 있게 한다.
+          자동 계산은 매수일 종가 환율이라 실제 체결 환율과 몇천 원 차이가 날 수 있다. */}
+      {isForeignManagedAsset && (
+        <div className="rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">매수 시점 환율로 계산한 원금</p>
+            <p className="text-sm md:text-base font-bold text-ink">
+              {buyLotDraftSummary.hasMissingRate ? '-' : formatMoney(buyLotDraftSummary.totalKrwCost, 'KRW')}
+            </p>
+          </div>
+          <p className="mt-2 text-[11px] md:text-[12px] font-bold text-ink-mute leading-relaxed">
+            {buyLotDraftSummary.hasMissingRate
+              ? '환율을 아직 못 받아온 매수 건이 있습니다. 잠시 후 다시 열어보세요.'
+              : '증권사 숫자와 다르면 매수 건이 실제보다 뭉쳐 있거나(여러 날 매수를 한 줄로 입력), 증권사 환전 스프레드·수수료가 빠진 것입니다. 아래에서 매수 건을 날짜별로 나누거나 원금을 직접 입력하세요.'}
+          </p>
+        </div>
+      )}
+
+      {isForeignManagedAsset && (
+        <div className="rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5">
+          <label className="block text-[11px] md:text-[11px] font-bold text-ink-mute mb-2">
+            원화 투자 원금 직접 입력 (선택)
+          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-bold text-ink-mute shrink-0">₩</span>
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="비워두면 매수 시점 환율로 자동 계산"
+              className="flex-1 min-w-0 px-3 py-2.5 bg-surface rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+              value={manualPurchaseKrwDraft}
+              onChange={(e) => setManualPurchaseKrwDraft(formatInputNumber(sanitizeNumericInput(e.target.value)))}
+            />
+            {manualPurchaseKrwDraft && (
+              <button
+                type="button"
+                onClick={() => setManualPurchaseKrwDraft('')}
+                className="shrink-0 px-3 py-2.5 rounded-xl text-[12px] font-bold text-ink-mute hover:text-ink hover:bg-line-soft transition-colors"
+              >
+                자동으로
+              </button>
+            )}
+          </div>
+          <p className="mt-2 text-[11px] md:text-[12px] font-bold text-ink-mute leading-relaxed">
+            증권사 앱의 투자 원금을 그대로 넣으면 원화 보기의 원금·손익·수익률이 그 값에 맞춰집니다.
+          </p>
+        </div>
+      )}
 
       <div className="min-h-0 overflow-y-auto pr-1">
         <div className="hidden md:grid grid-cols-[1.05fr_1fr_1fr_1fr_44px] gap-3 px-2 pb-2 text-[11px] font-bold text-ink-mute">
@@ -4323,6 +4788,15 @@ const buyLotDraftSummary = useMemo(() => {
                   <p className="font-bold text-ink text-xs md:text-sm">
                     {formatMoney(lotAmount, selectedAssetToManageBuys.currency)}
                   </p>
+                  {isForeignManagedAsset && (
+                    // 이 한 건이 원화로 얼마였는지, 그리고 어떤 환율을 썼는지 그대로 보여준다.
+                    // 증권사 숫자와 어긋날 때 어느 줄이 문제인지 바로 짚을 수 있다.
+                    <p className="text-[11px] font-bold text-ink-mute mt-1">
+                      {Number(lot.fxRate) > 0
+                        ? `${formatMoney(lotAmount * Number(lot.fxRate), 'KRW')} · 환율 ${Number(lot.fxRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+                        : '환율 미확인'}
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => removeBuyLotDraft(lot.draftId)}
@@ -4354,7 +4828,8 @@ const buyLotDraftSummary = useMemo(() => {
       </div>
     </div>
   </div>
-)}
+  );
+})()}
 
 {/* 추가 매수 모달 */}
 {isUpdatingAsset && selectedAssetToUpdate && (
@@ -4376,23 +4851,41 @@ const buyLotDraftSummary = useMemo(() => {
       </div>
 
       <div className="space-y-4">
-        <div>
-          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            추가 매수 단가 ({getCurrencySymbol(selectedAssetToUpdate.currency)})
-          </label>
-          <input
-            type="text"
-            inputMode="decimal"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-            value={formatInputNumber(addBuyForm.averagePrice)}
-            onChange={(e) =>
-              setAddBuyForm((prev) => ({
-                ...prev,
-                averagePrice: sanitizeNumericInput(e.target.value)
-              }))
-            }
-          />
-        </div>
+        {(() => {
+          const nativeCurrency = selectedAssetToUpdate.currency || 'KRW';
+          const isForeign = nativeCurrency !== 'KRW';
+          const isKrwInput = isForeign && addBuyForm.priceInputCurrency === 'KRW';
+          const inputCurrency = isKrwInput ? 'KRW' : nativeCurrency;
+
+          return (
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-1.5 ml-1">
+                <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute">
+                  추가 매수 단가 ({getCurrencySymbol(inputCurrency)})
+                </label>
+                {isForeign && (
+                  <PriceInputCurrencyToggle
+                    nativeCurrency={nativeCurrency}
+                    value={addBuyForm.priceInputCurrency}
+                    onChange={(next) => setAddBuyForm((prev) => ({ ...prev, priceInputCurrency: next }))}
+                  />
+                )}
+              </div>
+              <input
+                type="text"
+                inputMode="decimal"
+                className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+                value={formatInputNumber(addBuyForm.averagePrice)}
+                onChange={(e) =>
+                  setAddBuyForm((prev) => ({
+                    ...prev,
+                    averagePrice: sanitizeNumericInput(e.target.value)
+                  }))
+                }
+              />
+            </div>
+          );
+        })()}
 
         <div>
           <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
