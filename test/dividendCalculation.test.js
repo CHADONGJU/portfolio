@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateDividendAmounts } from '../src/utils/dividendCalculation.js';
+import {
+  calculateDividendAmounts,
+  isKoreanDividendSmallWithholdingApplicable,
+  KOREAN_DIVIDEND_INCOME_TAX_RATE,
+  KOREAN_DIVIDEND_SMALL_WITHHOLDING_THRESHOLD,
+} from '../src/utils/dividendCalculation.js';
 
 test('calculates US withholding from official per-share distribution and eligible shares', () => {
   const result = calculateDividendAmounts({
@@ -74,15 +79,49 @@ test('taxes only the smaller taxable base when a source supplies it', () => {
   assert.equal(result.amount, 938.4);
 });
 
-test('TIGER 코스피 공식 주당 60원 기준 계산값은 실제 입금과 별도로 유지한다', () => {
+test('2024년 7월 이후 국내 소액 배당은 일반계좌도 원천징수하지 않는다', () => {
   const result = calculateDividendAmounts({
     perShareGrossAmount: 60,
     taxableBasePerShare: 60,
     quantity: 17,
     withholdingRate: 0.154,
+    smallWithholdingThreshold: KOREAN_DIVIDEND_SMALL_WITHHOLDING_THRESHOLD,
+    smallWithholdingIncomeTaxRate: KOREAN_DIVIDEND_INCOME_TAX_RATE,
   });
 
   assert.equal(result.grossAmount, 1020);
-  assert.ok(Math.abs(result.taxAmount - 157.08) < 0.0000001);
-  assert.ok(Math.abs(result.amount - 862.92) < 0.0000001);
+  assert.equal(result.taxAmount, 0);
+  assert.equal(result.amount, 1020);
+  assert.equal(result.withholdingWaived, true);
+});
+
+test('국내 배당 소득세가 1천원 이상이면 일반계좌 원천징수를 적용한다', () => {
+  const result = calculateDividendAmounts({
+    perShareGrossAmount: 100,
+    taxableBasePerShare: 100,
+    quantity: 100,
+    withholdingRate: 0.154,
+    smallWithholdingThreshold: KOREAN_DIVIDEND_SMALL_WITHHOLDING_THRESHOLD,
+    smallWithholdingIncomeTaxRate: KOREAN_DIVIDEND_INCOME_TAX_RATE,
+  });
+
+  assert.equal(result.grossAmount, 10000);
+  assert.equal(result.taxAmount, 1540);
+  assert.equal(result.amount, 8460);
+  assert.equal(result.withholdingWaived, false);
+});
+
+test('국내 배당 소액부징수는 2024년 7월 이후 지급분에만 적용한다', () => {
+  assert.equal(isKoreanDividendSmallWithholdingApplicable({
+    currency: 'KRW',
+    paymentDate: '2024-07-01',
+  }), true);
+  assert.equal(isKoreanDividendSmallWithholdingApplicable({
+    currency: 'KRW',
+    paymentDate: '2024-06-30',
+  }), false);
+  assert.equal(isKoreanDividendSmallWithholdingApplicable({
+    currency: 'USD',
+    paymentDate: '2026-08-04',
+  }), false);
 });

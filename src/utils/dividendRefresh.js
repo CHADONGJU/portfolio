@@ -2,10 +2,10 @@ import { isRecordForAsset } from './assetIdentity.js';
 import { getDividendLedgerRows, getDividendTradeSide } from './dividendHoldings.js';
 
 export const DIVIDEND_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
-export const DIVIDEND_REFRESH_VERSION = 10;
+export const DIVIDEND_REFRESH_VERSION = 11;
 
 const DIVIDEND_SOURCE_REFRESH_VERSION_BY_TICKER = new Map([
-  ['277630', 11],
+  ['277630', 12],
   ['453810', 11],
   ['477730', 11],
   // Force one clean rebuild for historical sold-position and monthly histories.

@@ -51,7 +51,12 @@ import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync'
 import { buildTradeSummary } from './utils/tradeSummary';
 import { getDividendRefreshState, getDividendRefreshVersion } from './utils/dividendRefresh';
 import { isRecordForAsset } from './utils/assetIdentity';
-import { calculateDividendAmounts } from './utils/dividendCalculation';
+import {
+  calculateDividendAmounts,
+  isKoreanDividendSmallWithholdingApplicable,
+  KOREAN_DIVIDEND_INCOME_TAX_RATE,
+  KOREAN_DIVIDEND_SMALL_WITHHOLDING_THRESHOLD,
+} from './utils/dividendCalculation';
 import {
   ACCOUNT_TYPE_GENERAL,
   ACCOUNT_TYPE_OPTIONS,
@@ -727,6 +732,11 @@ const buildAutoDividendRows = ({
       const withholdingRate = getDividendWithholdingRate(currency, asset.category);
       const accountType = normalizeAccountType(asset.accountType);
       const skipsCalculatedWithholding = isDividendTaxDeferredAccount(accountType);
+      const appliesKoreanSmallWithholdingRule = isKoreanDividendSmallWithholdingApplicable({
+        currency,
+        paymentDate: d.paymentDate,
+        exDate,
+      });
       const calculation = calculateDividendAmounts({
         perShareGrossAmount: d.amount,
         perShareNetAmount: d.netAmount,
@@ -735,6 +745,12 @@ const buildAutoDividendRows = ({
         withholdingRate,
         sourceAmountIsNet: Boolean(d.sourceAmountIsNet),
         skipCalculatedWithholding: skipsCalculatedWithholding,
+        smallWithholdingThreshold: appliesKoreanSmallWithholdingRule
+          ? KOREAN_DIVIDEND_SMALL_WITHHOLDING_THRESHOLD
+          : 0,
+        smallWithholdingIncomeTaxRate: appliesKoreanSmallWithholdingRule
+          ? KOREAN_DIVIDEND_INCOME_TAX_RATE
+          : 0,
       });
 
       return {
@@ -764,7 +780,11 @@ const buildAutoDividendRows = ({
         sourceCheckedAt,
         sourceAmountIsNet: Boolean(d.sourceAmountIsNet),
         accountType,
-        taxTreatment: skipsCalculatedWithholding ? 'tax-deferred-account' : 'withholding-applied',
+        taxTreatment: skipsCalculatedWithholding
+          ? 'tax-deferred-account'
+          : calculation.withholdingWaived
+            ? 'small-amount-no-withholding'
+            : 'withholding-applied',
         entitlementVerified: true,
         currency,
       };

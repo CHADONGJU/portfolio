@@ -31,7 +31,7 @@ test('scopes source migrations without refreshing unrelated USD assets', () => {
   assert.equal(getDividendRefreshVersion({ ticker: 'JEPI' }), 9);
   assert.equal(getDividendRefreshVersion({ ticker: 'SPY' }), DIVIDEND_REFRESH_VERSION);
   assert.equal(getDividendRefreshVersion({ ticker: 'QCOM' }), 9);
-  assert.equal(getDividendRefreshVersion({ ticker: '277630' }), 11);
+  assert.equal(getDividendRefreshVersion({ ticker: '277630' }), 12);
   assert.equal(getDividendRefreshVersion({ ticker: '453810.KS' }), 11);
   assert.equal(getDividendRefreshVersion({ ticker: '477730' }), 11);
   assert.equal(getDividendRefreshVersion({ ticker: 'V' }), 9);
