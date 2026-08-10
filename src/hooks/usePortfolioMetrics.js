@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
 import { getCategoryColor, getCategoryDetailColor } from '../constants';
+import { getDividendExDate, getDividendReportingDate } from '../utils/dividendDates';
+import { sortDividendRecordsNewestFirst } from '../utils/dividendRecords';
 import {
   buildCanonicalTradeRows,
   buildKrwCostBasisByAsset,
@@ -73,6 +75,7 @@ export const usePortfolioMetrics = ({
   trades,
   tradeLedger = [],
   autoDividends,
+  receivedDividends = [],
   dividendAssetRegistry = [],
   exchangeRate,
   jpyKrwRate,
@@ -285,7 +288,7 @@ export const usePortfolioMetrics = ({
     // 매도 후 재매수한 종목은 회차가 다르므로 평가/실현 손익이 서로 섞이지 않는다.
     const groupKey = (record) => `${record.name}#${getTradeRound(record)}`;
     const groups = new Map();
-    [...enhancedAssets, ...ledgerRows, ...autoDividends].forEach((record) => {
+    [...enhancedAssets, ...ledgerRows, ...receivedDividends].forEach((record) => {
       if (!record?.name) return;
       const key = groupKey(record);
       if (!groups.has(key)) groups.set(key, { name: record.name, round: getTradeRound(record) });
@@ -304,7 +307,7 @@ export const usePortfolioMetrics = ({
       const position = buildPositionFromTradeRows(tradeRows);
       const sellRows = position.rows.filter(record => record.side === 'sell');
       const buyRows = position.rows.filter(record => record.side === 'buy');
-      const dividendRows = autoDividends.filter((dividend) => {
+      const dividendRows = receivedDividends.filter((dividend) => {
         if (dividend.name !== name) return false;
         if (dividend.round !== undefined && dividend.round !== null) return getTradeRound(dividend) === round;
         return latestRoundByName.get(name) === round;
@@ -376,7 +379,7 @@ export const usePortfolioMetrics = ({
       if (a.name !== b.name) return a.name.localeCompare(b.name);
       return b.round - a.round;
     });
-  }, [enhancedAssets, canonicalTradeRows, autoDividends, exchangeRate, jpyKrwRate, currencyRates]);
+  }, [enhancedAssets, canonicalTradeRows, receivedDividends, exchangeRate, jpyKrwRate, currencyRates]);
 
   // 5. 배당금 그룹화
   const dividendSummary = useMemo(() => {
@@ -395,12 +398,25 @@ export const usePortfolioMetrics = ({
     });
 
     assets.forEach(asset => {
-      const assetDivs = autoDividends.filter(d => d.name === asset.name);
+      const assetDivs = sortDividendRecordsNewestFirst(
+        autoDividends.filter(d => d.name === asset.name),
+      );
       if (assetDivs.length > 0) activeDividendAssets.set(asset.name, { asset, registry: null });
     });
 
+    receivedDividends.forEach((dividend) => {
+      if (!dividend?.name || activeDividendAssets.has(dividend.name)) return;
+      activeDividendAssets.set(dividend.name, {
+        asset: assets.find((candidate) => candidate.name === dividend.name) || dividend,
+        registry: null,
+      });
+    });
+
     activeDividendAssets.forEach(({ asset, registry }) => {
-      const assetDivs = autoDividends.filter(d => d.name === asset.name);
+      const assetDivs = sortDividendRecordsNewestFirst(
+        autoDividends.filter(d => d.name === asset.name),
+      );
+      const receivedAssetDivs = receivedDividends.filter(d => d.name === asset.name);
       if (assetDivs.length === 0) {
         summary[asset.name] = {
           name: asset.name,
@@ -415,12 +431,14 @@ export const usePortfolioMetrics = ({
         return;
       }
 
-      const totalAmount = assetDivs.reduce((sum, d) => sum + d.amount, 0);
+      const totalAmount = receivedAssetDivs.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
       let status = '';
       let expectedAmount = 0;
 
       const lastDiv = assetDivs[0];
-      const lastDate = new Date(lastDiv.date);
+      const lastDate = new Date(`${getDividendExDate(lastDiv)}T00:00:00`);
+      const lastReportingDateKey = getDividendReportingDate(lastDiv);
+      const lastReportingDate = new Date(`${lastReportingDateKey}T00:00:00`);
       const currentQuantity = parseMetricNumber(asset.quantity);
       const lastDividendQuantity = Number(lastDiv.quantity) || 0;
       const perShareNetAmount = Number(lastDiv.perShareNetAmount)
@@ -429,7 +447,7 @@ export const usePortfolioMetrics = ({
 
       let monthDiff = 3; 
       if (assetDivs.length > 1) {
-        const prevDate = new Date(assetDivs[1].date);
+        const prevDate = new Date(`${getDividendExDate(assetDivs[1])}T00:00:00`);
         const daysDiff = (lastDate - prevDate) / (1000 * 60 * 60 * 24);
         if (daysDiff >= 20 && daysDiff <= 45) monthDiff = 1;
         else if (daysDiff >= 80 && daysDiff <= 110) monthDiff = 3;
@@ -442,7 +460,11 @@ export const usePortfolioMetrics = ({
       const nextMonth = nextDate.getMonth() + 1;
       const nextYear = nextDate.getFullYear();
 
-      if (lastDate.getMonth() + 1 === currentMonth && lastDate.getFullYear() === currentYear) {
+      if (
+        Number.isFinite(lastReportingDate.getTime())
+        && lastReportingDate.getMonth() + 1 === currentMonth
+        && lastReportingDate.getFullYear() === currentYear
+      ) {
         status = '이번 달 배당 반영';
       } else if (nextMonth === currentMonth && nextYear === currentYear) {
         status = '이번 달 배당락 예상';
@@ -458,7 +480,9 @@ export const usePortfolioMetrics = ({
         totalAmount,
         status,
         expectedAmount,
-        history: assetDivs,
+        // Detail history is a receipt ledger, not a forecast. Keep future events in
+        // assetDivs for the next-dividend estimate, but never list them as received.
+        history: sortDividendRecordsNewestFirst(receivedAssetDivs),
       };
     });
     
@@ -467,7 +491,7 @@ export const usePortfolioMetrics = ({
       if (categoryDelta !== 0) return categoryDelta;
       return b.totalAmount - a.totalAmount;
     });
-  }, [autoDividends, assets, dividendAssetRegistry]);
+  }, [autoDividends, receivedDividends, assets, dividendAssetRegistry]);
 
   const filteredHistory = useMemo(() => {
     if (!selectedDividendAsset) return [];
@@ -477,12 +501,12 @@ export const usePortfolioMetrics = ({
     const currentYear = today.getFullYear();
     const currentMonth = today.getMonth();
 
-    return summary.history.filter(d => {
-      const divDate = new Date(d.date);
-      if (dividendFilter === '이번 달') return divDate.getFullYear() === currentYear && divDate.getMonth() === currentMonth;
+      return sortDividendRecordsNewestFirst(summary.history.filter(d => {
+        const divDate = new Date(`${getDividendReportingDate(d)}T00:00:00`);
+        if (dividendFilter === '이번 달') return divDate.getFullYear() === currentYear && divDate.getMonth() === currentMonth;
       if (dividendFilter === '올해') return divDate.getFullYear() === currentYear;
-      return true;
-    });
+        return true;
+      }));
   }, [dividendSummary, selectedDividendAsset, dividendFilter]);
 
   // 자산 및 기록 삭제 로직 강화 

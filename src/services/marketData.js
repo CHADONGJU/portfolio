@@ -69,6 +69,7 @@ const DIRECT_TIMEOUT_MS = 4000;
 const PROXY_BATCH_SIZE = 3;
 const MAX_QUOTE_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const DOMESTIC_QUOTE_TOLERANCE = 0.2;
+const JINA_MARKDOWN_MARKER = 'Markdown Content:';
 // 모든 배치가 실제로 시도될 수 있는 예산이어야 마지막 폴백(r.jina.ai)이 사문화되지 않는다.
 // 직접 호출 4초 + 프록시 배치 3개 × 7초.
 const PROXY_BUDGET_MS = DIRECT_TIMEOUT_MS + (PROXY_TIMEOUT_MS * 3);
@@ -167,11 +168,11 @@ const fetchWithTimeout = async (url, options = {}, timeoutMs = PROXY_TIMEOUT_MS)
 
 const buildProxyList = (url, { jinaFirst = false } = {}) => {
   const encodedUrl = encodeURIComponent(url);
-  // r.jina.ai로 감쌀 때도 상위 구간을 https로 유지한다(평문 다운그레이드 방지).
   const bareUrl = url.replace(/^https?:\/\//, '');
-  const jinaUrl = `https://r.jina.ai/https://${bareUrl}`;
+  const jinaUrl = `https://r.jina.ai/http://${bareUrl}`;
 
   const rest = [
+    jinaUrl,
     `https://api.allorigins.win/raw?url=${encodedUrl}`,
     `https://api.allorigins.win/get?url=${encodedUrl}`,
     `https://api.codetabs.com/v1/proxy?quest=${encodedUrl}`,
@@ -180,7 +181,7 @@ const buildProxyList = (url, { jinaFirst = false } = {}) => {
     `https://thingproxy.freeboard.io/fetch/${url}`,
   ];
 
-  return jinaFirst ? [url, jinaUrl, ...rest] : [url, ...rest, jinaUrl];
+  return jinaFirst ? [url, jinaUrl, ...rest.slice(1)] : [url, ...rest];
 };
 
 /**
@@ -231,12 +232,29 @@ const fetchViaProxies = async (urls, parseText, budgetMs = PROXY_BUDGET_MS) => {
   return null;
 };
 
-const parseProxyJson = (text) => {
+const unwrapJinaResponseText = (text = '') => {
+  const source = String(text || '').trim();
+  const markerIndex = source.indexOf(JINA_MARKDOWN_MARKER);
+  return markerIndex >= 0
+    ? source.slice(markerIndex + JINA_MARKDOWN_MARKER.length).trim()
+    : source;
+};
+
+export const parseProxyJson = (text) => {
   let data;
   try {
-    data = JSON.parse(text);
+    data = JSON.parse(unwrapJinaResponseText(text));
   } catch {
-    return null;
+    const content = unwrapJinaResponseText(text);
+    const jsonStart = content.indexOf('{');
+    const jsonEnd = content.lastIndexOf('}');
+    if (jsonStart < 0 || jsonEnd <= jsonStart) return null;
+
+    try {
+      data = JSON.parse(content.slice(jsonStart, jsonEnd + 1));
+    } catch {
+      return null;
+    }
   }
 
   if (data?.contents) {
@@ -259,7 +277,7 @@ const parseProxyText = (text) => {
     return typeof data?.contents === 'string' ? data.contents : null;
   } catch {
     // JSON이 아니면 원문 그대로가 우리가 원하던 텍스트(CSV 등)다.
-    return text;
+    return unwrapJinaResponseText(text);
   }
 };
 
@@ -316,6 +334,208 @@ const normalizeCategory = (category = '') => String(category || '').trim();
 const isDomesticCategory = (category = '') => normalizeCategory(category) === '국내주식';
 
 const isOverseasCategory = (category = '') => normalizeCategory(category) === '해외주식';
+
+const TRADINGVIEW_SCANNER_URL = 'https://scanner.tradingview.com/global/scan';
+const TRADINGVIEW_COLUMNS = [
+  'name',
+  'close',
+  'rtc',
+  'currency',
+  'exchange',
+  'type',
+  'update_mode',
+  'premarket_close',
+  'postmarket_close',
+  'premarket_time',
+  'postmarket_time',
+];
+const TRADINGVIEW_US_EXCHANGES = ['NASDAQ', 'NYSE', 'AMEX', 'CBOE', 'BATS', 'OTC'];
+const TRADINGVIEW_EXCHANGE_ALIASES = {
+  ARCA: 'AMEX',
+  NYSEARCA: 'AMEX',
+  NASDAQGS: 'NASDAQ',
+  NASDAQGM: 'NASDAQ',
+  NASDAQCM: 'NASDAQ',
+  TYO: 'TSE',
+};
+const TRADINGVIEW_SUFFIX_MARKETS = [
+  { suffix: '.T', exchange: 'TSE' },
+  { suffix: '.L', exchange: 'LSE' },
+  { suffix: '.TO', exchange: 'TSX' },
+  { suffix: '.V', exchange: 'TSXV' },
+  { suffix: '.AX', exchange: 'ASX' },
+  { suffix: '.HK', exchange: 'HKEX' },
+  { suffix: '.KS', exchange: 'KRX' },
+  { suffix: '.KQ', exchange: 'KRX' },
+  { suffix: '.DE', exchange: 'XETR' },
+  { suffix: '.PA', exchange: 'EURONEXT' },
+  { suffix: '.AS', exchange: 'EURONEXT' },
+  { suffix: '.SW', exchange: 'SIX' },
+];
+const TRADINGVIEW_BATCH_SIZE = 240;
+
+const normalizeTradingViewExchange = (exchange = '') => {
+  const normalized = String(exchange || '').toUpperCase().trim();
+  return TRADINGVIEW_EXCHANGE_ALIASES[normalized] || normalized;
+};
+
+export const getTradingViewSymbolCandidates = (asset = {}) => {
+  const rawTicker = String(asset.ticker || '').toUpperCase().trim().replace(/\s+/g, '');
+  const explicitMarket = rawTicker.match(/^([A-Z0-9_]+):(.+)$/);
+  if (explicitMarket) {
+    const exchange = normalizeTradingViewExchange(explicitMarket[1]);
+    return exchange ? [`${exchange}:${explicitMarket[2]}`] : [];
+  }
+
+  const ticker = normalizeTicker(rawTicker).replace(/\.US$/, '');
+  if (!ticker) return [];
+
+  const suffixMarket = TRADINGVIEW_SUFFIX_MARKETS.find(({ suffix }) => ticker.endsWith(suffix));
+  if (suffixMarket) {
+    return [`${suffixMarket.exchange}:${ticker.slice(0, -suffixMarket.suffix.length)}`];
+  }
+
+  if (
+    isDomesticCategory(asset.category)
+    || (!isOverseasCategory(asset.category) && asset.currency === 'KRW')
+    || /^\d{5,6}$/.test(ticker)
+  ) {
+    return [`KRX:${ticker}`];
+  }
+
+  if (
+    asset.currency === 'JPY'
+    || (/^\d{4}$/.test(ticker) && isOverseasCategory(asset.category))
+  ) {
+    return [`TSE:${ticker}`];
+  }
+
+  return TRADINGVIEW_US_EXCHANGES.map((exchange) => `${exchange}:${ticker}`);
+};
+
+export const readTradingViewQuote = (row) => {
+  const values = row?.d;
+  if (!row?.s || !Array.isArray(values)) return null;
+
+  const [
+    name,
+    close,
+    realtimeClose,
+    currency,
+    exchange,
+    securityType,
+    updateMode,
+    premarketClose,
+    postmarketClose,
+    premarketTime,
+    postmarketTime,
+  ] = values;
+  const regularPrice = Number(close);
+  const realtimePrice = Number(realtimeClose);
+  const premarketPrice = Number(premarketClose);
+  const postmarketPrice = Number(postmarketClose);
+  const safeRealtimePrice = Number.isFinite(realtimePrice) && realtimePrice > 0
+    ? realtimePrice
+    : null;
+  const price = safeRealtimePrice
+    ?? (Number.isFinite(regularPrice) && regularPrice > 0 ? regularPrice : null);
+  if (price === null) return null;
+
+  const delaySeconds = Number(String(updateMode || '').match(/_(\d+)$/)?.[1]) || 0;
+  const premarketTimestamp = Number(premarketTime) || 0;
+  const postmarketTimestamp = Number(postmarketTime) || 0;
+  const pricesMatch = (left, right) => (
+    Number.isFinite(left)
+    && left > 0
+    && Math.abs(left - right) <= Math.max(0.000001, Math.abs(right) * 0.0000001)
+  );
+  let marketSession = 'REGULAR';
+
+  if (
+    safeRealtimePrice !== null
+    && pricesMatch(premarketPrice, safeRealtimePrice)
+    && premarketTimestamp > postmarketTimestamp
+  ) {
+    marketSession = 'PRE_MARKET';
+  } else if (
+    safeRealtimePrice !== null
+    && pricesMatch(postmarketPrice, safeRealtimePrice)
+    && postmarketTimestamp >= premarketTimestamp
+  ) {
+    marketSession = 'POST_MARKET';
+  }
+
+  const delayMinutes = delaySeconds > 0 ? Math.round(delaySeconds / 60) : 0;
+  const session = delayMinutes > 0
+    ? `${marketSession}_DELAYED_${delayMinutes}_MIN`
+    : marketSession;
+
+  return {
+    price,
+    currency: currency || undefined,
+    symbol: row.s,
+    source: 'tradingview',
+    market: exchange || row.s.split(':')[0] || '',
+    securityType: securityType || '',
+    marketSession: session,
+    delaySeconds,
+    validation: 'direct-market-feed',
+    name: name || '',
+  };
+};
+
+const fetchTradingViewRows = async (symbols = []) => {
+  const uniqueSymbols = [...new Set(symbols.filter(Boolean))];
+  if (uniqueSymbols.length === 0) return [];
+
+  const rows = [];
+  for (let start = 0; start < uniqueSymbols.length; start += TRADINGVIEW_BATCH_SIZE) {
+    const chunk = uniqueSymbols.slice(start, start + TRADINGVIEW_BATCH_SIZE);
+    try {
+      const response = await fetchWithTimeout(TRADINGVIEW_SCANNER_URL, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'text/plain;charset=UTF-8',
+        },
+        body: JSON.stringify({
+          symbols: {
+            tickers: chunk,
+            query: { types: [] },
+          },
+          columns: TRADINGVIEW_COLUMNS,
+        }),
+        cache: 'no-store',
+      });
+      if (!response.ok) continue;
+
+      const data = await response.json();
+      if (Array.isArray(data?.data)) rows.push(...data.data);
+    } catch {
+      continue;
+    }
+  }
+
+  return rows;
+};
+
+export const fetchTradingViewQuotes = async (assets = []) => {
+  const candidatesByAsset = assets.map((asset) => getTradingViewSymbolCandidates(asset));
+  const rows = await fetchTradingViewRows(candidatesByAsset.flat());
+  const quoteBySymbol = new Map(
+    rows
+      .map((row) => [row.s, readTradingViewQuote(row)])
+      .filter(([, quote]) => quote !== null),
+  );
+
+  return candidatesByAsset.map((candidates) => (
+    candidates.map((candidate) => quoteBySymbol.get(candidate)).find(Boolean) || null
+  ));
+};
+
+const fetchTradingViewQuote = async (asset) => (
+  (await fetchTradingViewQuotes([asset]))[0] || null
+);
 
 const getUsTickerAliases = (ticker) => {
   const cleanTicker = normalizeTicker(ticker);
@@ -579,6 +799,9 @@ export const fetchStockQuote = async (asset) => {
   const ticker = normalizeTicker(asset.ticker);
   if (!ticker) return null;
 
+  const tradingViewQuote = await fetchTradingViewQuote(asset);
+  if (tradingViewQuote !== null) return tradingViewQuote;
+
   if (isDomesticStock(asset, ticker)) {
     const cleanTicker = ticker.replace(/[^0-9]/g, '');
     const naverPromise = cleanTicker
@@ -667,8 +890,383 @@ const getDividendTickers = (input) => {
   ]);
 };
 
+const KNOWN_ETF_TICKERS = new Set(['JEPI', 'SPY']);
+const dividendRequests = new Map();
+const KNOWN_JPM_ADR_CUSIPS = new Map([
+  ['NVO', '670100205'],
+]);
+const KNOWN_KODEX_FUND_IDS = new Map([
+  ['453810', '2ETFJ1'],
+  ['477730', '2ETFM6'],
+]);
+const KNOWN_TIGER_KSD_FUNDS = new Map([
+  ['277630', 'KR7277630000'],
+]);
+
+export const getKnownKodexFundId = (ticker = '') => (
+  KNOWN_KODEX_FUND_IDS.get(normalizeTicker(ticker).replace(/[^0-9]/g, '')) || ''
+);
+
+export const getKnownTigerKsdFund = (ticker = '') => (
+  KNOWN_TIGER_KSD_FUNDS.get(normalizeTicker(ticker).replace(/[^0-9]/g, '')) || ''
+);
+
+export const requiresPaymentDateDividendSource = (input = {}) => (
+  String(input?.originalCurrency || input?.currency || '').toUpperCase() === 'USD'
+);
+
+const normalizeCompactPublicDate = (value = '') => {
+  const digits = String(value || '').replace(/[^0-9]/g, '');
+  if (digits.length !== 8) return '';
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+};
+
+export const parseKodexDividends = (data = {}) => {
+  const dividends = {};
+
+  (Array.isArray(data?.dividList) ? data.dividList : []).forEach((row) => {
+    const exDate = normalizeCompactPublicDate(row.basicD);
+    const paymentDate = normalizeCompactPublicDate(row.payD);
+    const amount = Number(row.dividA);
+    if (!exDate || !Number.isFinite(amount) || amount <= 0) return;
+
+    const timestamp = Math.floor(new Date(`${exDate}T00:00:00Z`).getTime() / 1000);
+    dividends[timestamp] = {
+      date: timestamp,
+      amount,
+      paymentDate,
+      taxableBasePerShare: Math.max(0, Number(row.taxDividA) || 0),
+      // 공식 분배금은 세전 현금분배금이다. 실제 즉시 원천징수 여부는
+      // 자산에 저장된 일반계좌/ISA/연금계좌 유형으로 계산한다.
+      sourceAmountIsNet: false,
+      source: 'kodex',
+    };
+  });
+
+  return dividends;
+};
+
+const fetchKodexDividends = async (input = {}, ticker = '') => {
+  const currency = String(input?.originalCurrency || input?.currency || '').toUpperCase();
+  const cleanTicker = normalizeTicker(ticker).replace(/[^0-9]/g, '');
+  if (currency !== 'KRW' || !/^\d{6}$/.test(cleanTicker)) return null;
+
+  const requestKey = `kodex:${cleanTicker}`;
+  let request = dividendRequests.get(requestKey);
+  if (!request) {
+    request = (async () => {
+      let fundId = getKnownKodexFundId(cleanTicker);
+      if (!fundId) {
+        const searchUrl = `https://www.samsungfund.com/api/v1/kodex/product.do?ordrColm=NAV&ordrSort=DESC&pageNo=1&srchTerm=w&srchVal=${cleanTicker}`;
+        const products = await fetchWithSafeProxy(searchUrl);
+        const product = (Array.isArray(products) ? products : [])
+          .find((candidate) => String(candidate?.stkTicker || '') === cleanTicker);
+        fundId = product?.fId || '';
+      }
+      if (!fundId) return null;
+
+      const distributionUrl = `https://www.samsungfund.com/api/v1/kodex/divid-info.do?id=${encodeURIComponent(fundId)}`;
+      let data = null;
+      try {
+        const jinaUrl = `https://r.jina.ai/http://${distributionUrl.replace(/^https?:\/\//, '')}`;
+        const response = await fetchWithTimeout(jinaUrl, {
+          cache: 'no-store',
+          headers: { Accept: 'text/plain' },
+        }, 20000);
+        if (response.ok) data = parseProxyJson(await response.text());
+      } catch {
+        data = null;
+      }
+      if (!data) data = await fetchWithSafeProxy(distributionUrl);
+      const dividends = parseKodexDividends(data);
+      return Object.keys(dividends).length > 0 ? dividends : null;
+    })().finally(() => dividendRequests.delete(requestKey));
+    dividendRequests.set(requestKey, request);
+  }
+
+  return request;
+};
+
+const normalizeTigerDividendDate = (value = '') => {
+  const normalized = String(value || '').trim().replace(/[./]/g, '-');
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : '';
+};
+
+const parseTigerDividendRow = (cells = [], dividends = {}) => {
+  if (cells.length < 4) return;
+  const recordDate = normalizeTigerDividendDate(cells[0]);
+  const paymentDate = normalizeTigerDividendDate(cells[1]);
+  const amount = Number(String(cells[2] || '').replace(/[^0-9.-]/g, ''));
+  const taxableBasePerShare = Number(String(cells[3] || '').replace(/[^0-9.-]/g, ''));
+  if (!recordDate || !paymentDate || !Number.isFinite(amount) || amount <= 0) return;
+
+  const timestamp = Math.floor(new Date(`${recordDate}T00:00:00Z`).getTime() / 1000);
+  dividends[timestamp] = {
+    date: timestamp,
+    recordDate,
+    paymentDate,
+    amount,
+    taxableBasePerShare: Math.max(0, taxableBasePerShare || 0),
+    // 공식 표의 분배금과 과세표준을 그대로 전달하고, 계좌 유형에 따른
+    // 즉시 원천징수 여부는 포트폴리오 계산기가 결정한다.
+    sourceAmountIsNet: false,
+    source: 'tiger',
+  };
+};
+
+export const parseTigerDividends = (text = '') => {
+  const source = unwrapJinaResponseText(text);
+  const dividends = {};
+
+  // The official endpoint returns an HTML table directly. Jina's safe proxy can
+  // also turn the same table into Markdown, so accept both representations.
+  const rowPattern = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch = rowPattern.exec(source);
+  while (rowMatch) {
+    const cells = [...rowMatch[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)]
+      .map((match) => match[1].replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').trim());
+    parseTigerDividendRow(cells, dividends);
+    rowMatch = rowPattern.exec(source);
+  }
+
+  source.split(/\r?\n/).forEach((line) => {
+    if (!line.trim().startsWith('|')) return;
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    parseTigerDividendRow(cells, dividends);
+  });
+
+  return dividends;
+};
+
+const fetchTigerDividends = async (input = {}, ticker = '') => {
+  const currency = String(input?.originalCurrency || input?.currency || '').toUpperCase();
+  const cleanTicker = normalizeTicker(ticker).replace(/[^0-9]/g, '');
+  const ksdFund = getKnownTigerKsdFund(cleanTicker);
+  if (currency !== 'KRW' || !ksdFund) return null;
+
+  const requestKey = `tiger:${cleanTicker}`;
+  let request = dividendRequests.get(requestKey);
+  if (!request) {
+    request = (async () => {
+      const sourceUrl = 'https://investments.miraeasset.com/tigeretf/ko/product/search/detail/refDivAjax.ajax'
+        + `?pageIndex=1&firstIndex=0&listCnt=100&ksdFund=${encodeURIComponent(ksdFund)}`
+        + `&jongName=${encodeURIComponent(input?.name || 'TIGER 코스피')}`;
+      const content = await fetchTextWithSafeProxy(sourceUrl);
+      if (!content) return null;
+      const dividends = parseTigerDividends(content);
+      return Object.keys(dividends).length > 0 ? dividends : null;
+    })().finally(() => dividendRequests.delete(requestKey));
+    dividendRequests.set(requestKey, request);
+  }
+
+  return request;
+};
+
+const normalizePublicDividendDate = (value = '') => {
+  const rawDate = String(value || '').trim();
+  if (!rawDate || rawDate === '—' || rawDate === '-') return '';
+  const parsedDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate)
+    ? new Date(`${rawDate}T00:00:00Z`)
+    : new Date(`${rawDate} UTC`);
+  return Number.isFinite(parsedDate.getTime())
+    ? parsedDate.toISOString().slice(0, 10)
+    : '';
+};
+
+export const parseStockAnalysisDividends = (text = '') => {
+  const dividends = {};
+  let columnIndexes = null;
+
+  unwrapJinaResponseText(text).split(/\r?\n/).forEach((line) => {
+    if (!line.trim().startsWith('|')) return;
+    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
+    if (cells.length < 4) return;
+
+    const normalizedHeaders = cells.map((cell) => cell.toLowerCase().replace(/[^a-z]/g, ''));
+    const exDateIndex = normalizedHeaders.findIndex((header) => header.includes('exdividenddate'));
+    const amountIndex = normalizedHeaders.findIndex((header) => (
+      header.includes('cashamount') || header.includes('dividendamount')
+    ));
+    if (exDateIndex >= 0 && amountIndex >= 0) {
+      columnIndexes = {
+        exDate: exDateIndex,
+        amount: amountIndex,
+        recordDate: normalizedHeaders.findIndex((header) => header.includes('recorddate')),
+        paymentDate: normalizedHeaders.findIndex((header) => (
+          header.includes('paydate') || header.includes('paymentdate')
+        )),
+      };
+      return;
+    }
+
+    if (cells.every((cell) => /^:?-{3,}:?$/.test(cell))) return;
+
+    const indexes = columnIndexes || {
+      exDate: 0,
+      amount: 1,
+      recordDate: 2,
+      paymentDate: 3,
+    };
+
+    const exDate = normalizePublicDividendDate(cells[indexes.exDate]);
+    const amount = Number(String(cells[indexes.amount] || '').replace(/[^0-9.-]/g, ''));
+    if (!exDate || !Number.isFinite(amount) || amount <= 0) return;
+
+    const timestamp = Math.floor(new Date(`${exDate}T00:00:00Z`).getTime() / 1000);
+    dividends[timestamp] = {
+      date: timestamp,
+      amount,
+      recordDate: normalizePublicDividendDate(cells[indexes.recordDate]),
+      paymentDate: normalizePublicDividendDate(cells[indexes.paymentDate]),
+      source: 'stockanalysis',
+    };
+  });
+
+  return dividends;
+};
+
+const normalizeJpmAdrDate = (value = '') => {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : '';
+};
+
+const getJpmAdrStatusPriority = (status = '') => ({
+  final: 4,
+  amended: 3,
+  initial: 2,
+  tba: 1,
+}[String(status || '').toLowerCase()] || 0);
+
+export const parseJpmAdrDividends = (payload = {}) => {
+  const byEvent = new Map();
+
+  (Array.isArray(payload?.data?.items) ? payload.data.items : []).forEach((row) => {
+    const recordDate = normalizeJpmAdrDate(row.recordDate);
+    const paymentDate = normalizeJpmAdrDate(row.paymentDate);
+    const grossRate = Number(row.ratePerDr);
+    const withholdingAmount = Math.max(0, Number(row.withHoldingAmount) || 0);
+    const taxReclaimFee = Math.max(0, Number(row.taxReclaimFee) || 0);
+    if (!recordDate || !paymentDate || !(grossRate > 0)) return;
+
+    const eventKey = `${recordDate}::${paymentDate}`;
+    const existing = byEvent.get(eventKey);
+    if (
+      existing
+      && getJpmAdrStatusPriority(existing.sourceStatus) >= getJpmAdrStatusPriority(row.status)
+    ) return;
+
+    const timestamp = Math.floor(new Date(`${recordDate}T00:00:00Z`).getTime() / 1000);
+    byEvent.set(eventKey, {
+      date: timestamp,
+      amount: grossRate,
+      // Korean broker receipts show the foreign withholding separately from the
+      // ADR administration fee. Use the depositary's gross-minus-withholding rate;
+      // do not apply the generic US 15% tax again and do not bake a receipt total in.
+      netAmount: Math.max(0, grossRate - withholdingAmount - taxReclaimFee),
+      recordDate,
+      paymentDate,
+      source: 'jpm-adr',
+      sourceStatus: row.status || '',
+      withholdingAmountPerShare: withholdingAmount,
+      dividendFeePerShare: Math.max(0, Number(row.dividendFee) || 0),
+    });
+  });
+
+  return Object.fromEntries([...byEvent.values()].map((row) => [row.date, row]));
+};
+
+const fetchJpmAdrDividends = async (input = {}, ticker = '') => {
+  const currency = String(input?.originalCurrency || input?.currency || '').toUpperCase();
+  const cleanTicker = normalizeTicker(ticker).replace(/\.US$/, '');
+  const cusip = KNOWN_JPM_ADR_CUSIPS.get(cleanTicker);
+  if (currency !== 'USD' || !cusip) return null;
+
+  const requestKey = `jpm-adr:${cusip}`;
+  let request = dividendRequests.get(requestKey);
+  if (!request) {
+    request = (async () => {
+      const url = 'https://adr.api.wsod.com/jpmadr-public/v1/dr/dividends/'
+        + `${cusip}?currentPosition=0&pageSize=100&announcementFilter=full`;
+      const payload = await fetchWithSafeProxy(url);
+      const dividends = parseJpmAdrDividends(payload);
+      return Object.keys(dividends).length > 0 ? dividends : null;
+    })().finally(() => dividendRequests.delete(requestKey));
+    dividendRequests.set(requestKey, request);
+  }
+
+  return request;
+};
+
+const getStockAnalysisPathCandidates = (input = {}, ticker = '') => {
+  const securityType = String(input?.securityType || '').toUpperCase();
+  const name = String(input?.name || '').toUpperCase();
+  const isLikelyEtf = (
+    securityType.includes('ETF')
+    || securityType.includes('FUND')
+    || securityType.includes('TRUST')
+    || KNOWN_ETF_TICKERS.has(ticker)
+    || /\bETF\b/.test(name)
+  );
+  return isLikelyEtf ? ['etf', 'stocks'] : ['stocks', 'etf'];
+};
+
+const fetchStockAnalysisDividends = async (input, ticker) => {
+  const currency = String(input?.originalCurrency || input?.currency || '').toUpperCase();
+  const cleanTicker = normalizeTicker(ticker).replace(/\.US$/, '');
+  if (currency !== 'USD' || !/^[A-Z0-9./-]+$/.test(cleanTicker)) return null;
+
+  const requestKey = `stockanalysis:${cleanTicker}`;
+  let request = dividendRequests.get(requestKey);
+  if (!request) {
+    request = (async () => {
+      for (const pathType of getStockAnalysisPathCandidates(input, cleanTicker)) {
+        const sourceUrl = `https://stockanalysis.com/${pathType}/${cleanTicker.toLowerCase()}/dividend/`;
+        try {
+          const content = await fetchTextWithSafeProxy(sourceUrl);
+          if (!content) continue;
+          if (!/Dividend (Information|History)/i.test(content)) continue;
+          const dividends = parseStockAnalysisDividends(content);
+          if (Object.keys(dividends).length > 0) return dividends;
+        } catch {
+          continue;
+        }
+      }
+
+      return null;
+    })().finally(() => dividendRequests.delete(requestKey));
+    dividendRequests.set(requestKey, request);
+  }
+
+  return request;
+};
+
 export const fetchDividends = async (input) => {
-  for (const yfTicker of getDividendTickers(input)) {
+  const tickers = getDividendTickers(input);
+  const currency = String(input?.originalCurrency || input?.currency || '').toUpperCase();
+  const kodexDividends = await fetchKodexDividends(input, tickers[0] || '');
+  if (kodexDividends) return kodexDividends;
+  // A failed official KODEX lookup must stay failed. Treating Yahoo's
+  // payment-date-free history as success suppresses retries and hides KRW.
+  if (getKnownKodexFundId(tickers[0] || '')) return null;
+
+  const tigerDividends = await fetchTigerDividends(input, tickers[0] || '');
+  if (tigerDividends) return tigerDividends;
+  // Keep the last verified official history when the TIGER endpoint is down.
+  // A generic quote feed cannot supply its actual payment dates.
+  if (getKnownTigerKsdFund(tickers[0] || '')) return null;
+
+  const jpmAdrDividends = await fetchJpmAdrDividends(input, tickers[0] || '');
+  if (jpmAdrDividends) return jpmAdrDividends;
+
+  const stockAnalysisDividends = await fetchStockAnalysisDividends(input, tickers[0] || '');
+  if (stockAnalysisDividends) return stockAnalysisDividends;
+  // Yahoo's dividend event feed does not include payment dates. Received USD
+  // totals are payment-date based, so treating that incomplete feed as a
+  // successful refresh would erase valid received rows whenever the primary
+  // source is temporarily unavailable. Keep the previous rows and retry.
+  if (requiresPaymentDateDividendSource({ currency })) return null;
+
+  for (const yfTicker of tickers) {
     const urls = [
       `https://query2.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1mo&range=5y&events=div`,
       `https://query1.finance.yahoo.com/v8/finance/chart/${yfTicker}?interval=1mo&range=5y&events=div`,

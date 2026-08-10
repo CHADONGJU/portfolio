@@ -1,0 +1,15 @@
+{
+  "name": "주식 포트폴리오",
+  "short_name": "Portfolio",
+  "description": "국내·해외 자산과 배당을 한 화면에서 관리합니다.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#15181D",
+  "theme_color": "#15181D",
+  "icons": [
+    { "src": "/app-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/app-icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/app-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

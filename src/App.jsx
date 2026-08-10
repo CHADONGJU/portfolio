@@ -12,6 +12,7 @@ import { useAuth } from './context/useAuth';
 import {
   AUTO_DIVIDENDS_STORAGE_KEY,
   ASSETS_STORAGE_KEY,
+  CONFIRMED_DIVIDENDS_STORAGE_KEY,
   DEFAULT_PORTFOLIO_NAME,
   DIVIDEND_ASSET_REGISTRY_STORAGE_KEY,
   getCategoryColor,
@@ -23,7 +24,14 @@ import {
   TRADE_LEDGER_STORAGE_KEY,
   TRADES_STORAGE_KEY,
 } from './constants';
-import { fetchDividends, fetchKrwRate, fetchStockQuote, fetchUsdKrwRate, fetchUsdKrwRateByDate } from './services/marketData';
+import {
+  fetchDividends,
+  fetchKrwRate,
+  fetchStockQuote,
+  fetchTradingViewQuotes,
+  fetchUsdKrwRate,
+  fetchUsdKrwRateByDate,
+} from './services/marketData';
 import {
   loadPortfolioState,
   migratePortfolioState,
@@ -41,7 +49,41 @@ import {
 } from './utils/tradeReconciliation';
 import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
 import { buildTradeSummary } from './utils/tradeSummary';
-import { getDividendRefreshState } from './utils/dividendRefresh';
+import { getDividendRefreshState, getDividendRefreshVersion } from './utils/dividendRefresh';
+import { isRecordForAsset } from './utils/assetIdentity';
+import { calculateDividendAmounts } from './utils/dividendCalculation';
+import {
+  ACCOUNT_TYPE_GENERAL,
+  ACCOUNT_TYPE_OPTIONS,
+  getAccountTypeLabel,
+  isDividendTaxDeferredAccount,
+  migrateUserConfirmedAccountTypes,
+  normalizeAccountType,
+} from './utils/accountTypes';
+import {
+  buildDividendCalculationAssets,
+  getDividendHeldQuantityOnDate,
+  getDividendLedgerRows,
+  getDividendTradeSide,
+} from './utils/dividendHoldings';
+import {
+  getDividendEligibilityDate,
+  getDividendExDate,
+  getDividendOfficialPaymentDate,
+  getDividendReportingDate,
+  isDividendReportingDateShifted,
+} from './utils/dividendDates';
+import {
+  isConfirmedDividendRecord,
+  getAutomaticDividendEventKey,
+  mergeAutomaticDividendRecords,
+  mergeDividendRecords,
+  normalizeDividendValidationRecords,
+  selectFormulaDividendRecords,
+  selectReportedDividendRecords,
+  selectReceivedDividendRecords,
+  selectUserEnteredDividendRecords,
+} from './utils/dividendRecords';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { db } from './firebase';
 
@@ -59,6 +101,7 @@ const PORTFOLIO_STORAGE_KEYS = [
   MEMOS_STORAGE_KEY,
   TRADE_LEDGER_STORAGE_KEY,
   AUTO_DIVIDENDS_STORAGE_KEY,
+  CONFIRMED_DIVIDENDS_STORAGE_KEY,
   DIVIDEND_ASSET_REGISTRY_STORAGE_KEY,
   PORTFOLIO_NAME_STORAGE_KEY,
   TARGET_PORTFOLIO_STORAGE_KEY,
@@ -248,6 +291,8 @@ const buildLedgerEntry = ({
   ticker: asset.ticker || '',
   category: asset.category || '',
   currency: asset.currency || 'KRW',
+  accountType: normalizeAccountType(asset.accountType),
+  accountTypeSource: asset.accountTypeSource || '',
   // 보유 회차. 전량 매도 후 재매수한 같은 종목을 구분하는 기준값이다.
   round: getTradeRound(asset),
   side,
@@ -435,33 +480,56 @@ const mergeUniqueDividends = (primary = [], secondary = []) => {
   });
 };
 
-const mergeDividendResultsByAsset = (previousDividends = [], nextDividends = [], assets = [], refreshedAssetNames = null) => {
-  const nextAssetNames = new Set(nextDividends.map((dividend) => dividend.name).filter(Boolean));
-  const replaceNames = refreshedAssetNames
-    ? refreshedAssetNames.filter((name) => nextAssetNames.has(name))
-    : [...nextAssetNames];
-  const refreshedNames = new Set(replaceNames.filter(Boolean));
-  const activeAssetNames = new Set(assets.map((asset) => asset.name).filter(Boolean));
-  const preserved = previousDividends.filter((dividend) => (
-    activeAssetNames.has(dividend.name) && !refreshedNames.has(dividend.name)
-  ));
+const getDividendAssetKey = (record = {}) => (
+  String(record.ticker || '').trim().toUpperCase()
+  || String(record.name || '').trim().toUpperCase()
+);
 
-  return mergeUniqueDividends(nextDividends, preserved)
-    .sort((a, b) => new Date(b.date) - new Date(a.date));
+const mergeDividendResultsByAsset = (
+  previousDividends = [],
+  nextDividends = [],
+  assets = [],
+  invalidatedEventKeys = [],
+) => {
+  const activeAssetKeys = new Set(assets.map(getDividendAssetKey).filter(Boolean));
+  return mergeAutomaticDividendRecords(nextDividends, previousDividends, {
+    activeAssetKeys,
+    invalidatedEventKeys,
+  });
 };
 
 const mergeDividendAssetRegistry = (previousRegistry = [], nextRegistry = [], assets = []) => {
-  const activeAssetNames = new Set(assets.map((asset) => asset.name).filter(Boolean));
-  const registryByName = new Map(
-    previousRegistry
-      .filter((entry) => activeAssetNames.has(entry.name))
-      .map((entry) => [entry.name, entry])
+  const getRegistryKey = (entry = {}) => (
+    String(entry.ticker || '').trim().toUpperCase()
+    || (entry.assetId !== undefined && entry.assetId !== null ? `id:${entry.assetId}` : '')
+    || String(entry.name || '').trim().toUpperCase()
   );
+  const activeAssetKeys = new Set(assets.map(getRegistryKey).filter(Boolean));
+  const registryByKey = new Map();
+
+  previousRegistry
+    .filter((entry) => activeAssetKeys.has(getRegistryKey(entry)))
+    .forEach((entry) => {
+      const key = getRegistryKey(entry);
+      const existing = registryByKey.get(key);
+      const existingVersion = Number(existing?.refreshVersion) || 0;
+      const entryVersion = Number(entry.refreshVersion) || 0;
+      const existingCheckedAt = new Date(existing?.checkedAt || 0).getTime() || 0;
+      const entryCheckedAt = new Date(entry.checkedAt || 0).getTime() || 0;
+      if (
+        !existing
+        || entryVersion > existingVersion
+        || (entryVersion === existingVersion && entryCheckedAt >= existingCheckedAt)
+      ) {
+        registryByKey.set(key, { ...existing, ...entry });
+      }
+    });
 
   nextRegistry.forEach((entry) => {
-    if (!entry.name) return;
-    const previous = registryByName.get(entry.name);
-    registryByName.set(entry.name, {
+    const key = getRegistryKey(entry);
+    if (!key) return;
+    const previous = registryByKey.get(key);
+    registryByKey.set(key, {
       ...previous,
       ...entry,
       hasDividends: Boolean(previous?.hasDividends || entry.hasDividends),
@@ -476,23 +544,7 @@ const mergeDividendAssetRegistry = (previousRegistry = [], nextRegistry = [], as
     });
   });
 
-  return [...registryByName.values()].sort((a, b) => a.name.localeCompare(b.name));
-};
-
-const isRecordForAsset = (record, asset) => {
-  if (!record || !asset) return false;
-  const assetId = String(asset.id);
-  const recordAssetId = record.assetId === undefined || record.assetId === null ? '' : String(record.assetId);
-  if (recordAssetId && recordAssetId === assetId) return true;
-  if (record.sourceId === `asset-${asset.id}`) return true;
-
-  // 회차가 다르면 같은 종목명이라도 다른 포지션이다. 여기서 먼저 잘라내지 않으면
-  // 2차 매수 기록이 1차 자산에 딸려 삭제되거나 함께 계산된다.
-  if (getTradeRound(record) !== getTradeRound(asset)) return false;
-
-  const sameTicker = asset.ticker && record.ticker && String(record.ticker).toUpperCase() === String(asset.ticker).toUpperCase();
-  const sameName = asset.name && record.name && record.name === asset.name;
-  return Boolean(sameTicker || sameName);
+  return [...registryByKey.values()].sort((a, b) => getRegistryKey(a).localeCompare(getRegistryKey(b)));
 };
 
 const isTradeLinkedToLedger = (trade, ledger = []) => ledger.some((entry) => (
@@ -532,7 +584,9 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
   const trades = tradeLedger.length > 0
     ? rawTrades.filter((trade) => isTradeLinkedToLedger(trade, tradeLedger))
     : rawTrades;
-  const assets = mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []);
+  const assets = migrateUserConfirmedAccountTypes(
+    mergeUniqueAssets(Array.isArray(snapshot.assets) ? snapshot.assets : []),
+  );
   return {
     ...snapshot,
     assets,
@@ -540,6 +594,9 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     memos: mergeUniqueRecords(Array.isArray(snapshot.memos) ? snapshot.memos : []),
     tradeLedger,
     autoDividends: mergeUniqueDividends(Array.isArray(snapshot.autoDividends) ? snapshot.autoDividends : []),
+    confirmedDividends: normalizeDividendValidationRecords(
+      mergeUniqueDividends(Array.isArray(snapshot.confirmedDividends) ? snapshot.confirmedDividends : []),
+    ),
     dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], assets),
     targetPortfolio: pruneTargetPortfolio(snapshot.targetPortfolio),
     portfolioName: normalizePortfolioName(snapshot.portfolioName),
@@ -603,27 +660,15 @@ const getAssetInputCurrency = (category, ticker = '', savedCurrency = '') => {
   return 'KRW';
 };
 
-const isSameAssetRecord = (asset, record) => {
-  const assetTicker = normalizeInputTicker(asset.ticker);
-  const recordTicker = normalizeInputTicker(record.ticker);
-
-  // 회차가 다르면 다른 포지션. (id가 정확히 일치할 때만 예외로 인정한다.)
-  if (asset.id && record.assetId && asset.id === record.assetId) return true;
-  if (getTradeRound(asset) !== getTradeRound(record)) return false;
-
-  return Boolean(
-    (assetTicker && recordTicker && assetTicker === recordTicker)
-    || (asset.name && record.name && asset.name === record.name)
-  );
-};
+const isSameAssetRecord = (asset, record) => isRecordForAsset(record, asset);
 
 const getAssetLedgerRows = (asset, ledger = []) => ledger
   .filter((entry) => entry.date && isSameAssetRecord(asset, entry))
   .sort((a, b) => new Date(a.date) - new Date(b.date));
 
 const getDividendStartDate = (asset, ledger = []) => {
-  const firstBuy = getAssetLedgerRows(asset, ledger)
-    .filter((entry) => getTradeSide(entry) === 'buy')
+  const firstBuy = getDividendLedgerRows(asset, ledger)
+    .filter((entry) => getDividendTradeSide(entry) === 'buy')
     .map((entry) => entry.date)
     .sort()[0];
 
@@ -657,76 +702,145 @@ const getDateTimestampSeconds = (date = '') => {
   return Number.isFinite(timestamp) ? timestamp / 1000 : 0;
 };
 
-const getHeldQuantityOnDate = (asset, ledger = [], date = '') => {
-  const targetTimestamp = getDateTimestampSeconds(date);
-  const relatedLedger = getAssetLedgerRows(asset, ledger).filter((entry) => {
-    const entryTimestamp = getDateTimestampSeconds(entry.date);
-    return entryTimestamp > 0 && targetTimestamp > 0 && entryTimestamp <= targetTimestamp;
-  });
-  const currentAssetQuantity = parseNumber(asset.quantity);
-  if (relatedLedger.length === 0) return currentAssetQuantity;
-
-  const ledgerQuantity = relatedLedger.reduce((sum, entry) => {
-    const quantity = Number(entry.quantity) || 0;
-    return getTradeSide(entry) === 'sell' ? sum - quantity : sum + quantity;
-  }, 0);
-
-  if (ledgerQuantity > 0) return ledgerQuantity;
-  if (
-    currentAssetQuantity > 0
-    && getDateTimestampSeconds(asset.buyDate) > 0
-    && targetTimestamp >= getDateTimestampSeconds(asset.buyDate)
-  ) return currentAssetQuantity;
-  return 0;
-};
-
-const buildAutoDividendRows = ({ asset, ledger = [], dividends = {}, dividendStartDate = '' }) => {
+const buildAutoDividendRows = ({
+  asset,
+  ledger = [],
+  dividends = {},
+  dividendStartDate = '',
+  sourceCheckedAt = '',
+}) => {
   const buyTimestamp = getDateTimestampSeconds(dividendStartDate || asset.buyDate);
   const dividendEvents = Object.values(dividends || {});
   const currentQuantity = parseNumber(asset.quantity);
+  const hasLedgerHistory = getDividendLedgerRows(asset, ledger).length > 0;
   const buildRows = (startTimestamp, useCurrentQuantityFallback = false) => dividendEvents
-    .filter(d => d.date >= startTimestamp)
     .map((d) => {
       const currency = asset.originalCurrency || asset.currency;
-      const dividendDate = new Date(d.date * 1000).toISOString().split('T')[0];
+      const exDate = new Date(d.date * 1000).toISOString().split('T')[0];
+      const eligibilityDate = getDividendEligibilityDate({ exDate, currency });
+      if (getDateTimestampSeconds(eligibilityDate) < startTimestamp) return null;
       const heldQuantity = useCurrentQuantityFallback
         ? currentQuantity
-        : getHeldQuantityOnDate(asset, ledger, dividendDate);
+        : getDividendHeldQuantityOnDate(asset, ledger, eligibilityDate);
       if (heldQuantity <= 0) return null;
 
-      const grossAmount = d.amount * heldQuantity;
-      const taxRate = getDividendWithholdingRate(currency, asset.category);
-      const perShareNetAmount = d.amount * (1 - taxRate);
+      const withholdingRate = getDividendWithholdingRate(currency, asset.category);
+      const accountType = normalizeAccountType(asset.accountType);
+      const skipsCalculatedWithholding = isDividendTaxDeferredAccount(accountType);
+      const calculation = calculateDividendAmounts({
+        perShareGrossAmount: d.amount,
+        perShareNetAmount: d.netAmount,
+        taxableBasePerShare: d.taxableBasePerShare,
+        quantity: heldQuantity,
+        withholdingRate,
+        sourceAmountIsNet: Boolean(d.sourceAmountIsNet),
+        skipCalculatedWithholding: skipsCalculatedWithholding,
+      });
 
       return {
         id: `${asset.id}-${d.date}`,
-        date: dividendDate,
-        exDate: dividendDate,
-        dateBasis: 'ex-dividend',
+        assetId: asset.id,
+        date: exDate,
+        exDate,
+        eligibilityDate,
+        recordDate: d.recordDate || '',
+        paymentDate: d.paymentDate || '',
+        actualPaymentDate: '',
+        dateBasis: d.paymentDate ? 'payment' : 'ex-dividend',
         name: asset.name,
-        assetId: asset.id ?? null,
         ticker: asset.ticker || '',
         category: asset.category || '',
         round: getTradeRound(asset),
-        quantity: heldQuantity,
-        perShareGrossAmount: d.amount,
-        perShareNetAmount,
-        grossAmount,
-        taxAmount: grossAmount * taxRate,
-        taxRate,
-        amount: perShareNetAmount * heldQuantity,
+        quantity: calculation.quantity,
+        perShareGrossAmount: calculation.perShareGrossAmount,
+        perShareNetAmount: calculation.perShareNetAmount,
+        grossAmount: calculation.grossAmount,
+        taxableAmount: calculation.taxableAmount,
+        taxableBasePerShare: d.taxableBasePerShare,
+        taxAmount: calculation.taxAmount,
+        taxRate: calculation.effectiveTaxRate,
+        amount: calculation.amount,
+        calculationSource: d.source || 'market-dividend-feed',
+        sourceCheckedAt,
+        sourceAmountIsNet: Boolean(d.sourceAmountIsNet),
+        accountType,
+        taxTreatment: skipsCalculatedWithholding ? 'tax-deferred-account' : 'withholding-applied',
+        entitlementVerified: true,
         currency,
       };
     })
     .filter(Boolean);
 
   let rows = buildRows(buyTimestamp);
-  if (rows.length === 0 && currentQuantity > 0) {
+  if (rows.length === 0 && currentQuantity > 0 && !hasLedgerHistory) {
     const assetBuyTimestamp = getDateTimestampSeconds(asset.buyDate);
     rows = buildRows(assetBuyTimestamp || buyTimestamp, true);
   }
 
   return rows;
+};
+
+const createDividendRefreshTask = ({ asset, ledger = [], registry = [], now = '' }) => {
+  if (!asset?.ticker || isCommodityCategory(asset.category)) return null;
+
+  const dividendStartDate = getDividendStartDate(asset, ledger);
+  if (!dividendStartDate) return null;
+
+  const dividendRefreshState = getDividendRefreshState({
+    asset,
+    ledger,
+    registry,
+    now,
+  });
+  if (!dividendRefreshState.shouldRefresh) return null;
+
+  let dividendTicker = asset.ticker.toUpperCase().trim();
+  if (isDomesticStockCategory(asset.category) && !dividendTicker.includes('.')) {
+    dividendTicker = `${dividendTicker}.KS`;
+  }
+
+  return fetchDividends({
+    ...asset,
+    ticker: dividendTicker,
+  }).then((dividends) => {
+    const sourceDividendCount = dividends ? Object.keys(dividends).length : 0;
+    if (!dividends) return {
+      asset,
+      holdingRevision: dividendRefreshState.holdingRevision,
+      error: true,
+      hasDividends: false,
+      sourceDividendCount: 0,
+      rows: [],
+    };
+
+    const rows = buildAutoDividendRows({
+      asset,
+      ledger,
+      dividends,
+      dividendStartDate,
+      sourceCheckedAt: now,
+    });
+    const sourceEventDates = Object.values(dividends).map((dividend) => (
+      new Date(dividend.date * 1000).toISOString().split('T')[0]
+    ));
+
+    return {
+      asset,
+      holdingRevision: dividendRefreshState.holdingRevision,
+      error: false,
+      hasDividends: sourceDividendCount > 0,
+      sourceDividendCount,
+      sourceEventDates,
+      rows,
+    };
+  }).catch(() => ({
+    asset,
+    holdingRevision: dividendRefreshState.holdingRevision,
+    error: true,
+    hasDividends: false,
+    sourceDividendCount: 0,
+    rows: [],
+  }));
 };
 
 const getAssetIdentityKey = (asset = {}) => {
@@ -819,11 +933,12 @@ const purgeCryptoData = (snapshot = {}) => {
     memos: keepRecords(snapshot.memos),
     tradeLedger: keepRecords(snapshot.tradeLedger),
     autoDividends: keepRecords(snapshot.autoDividends),
+    confirmedDividends: keepRecords(snapshot.confirmedDividends),
     dividendAssetRegistry: keepRecords(snapshot.dividendAssetRegistry),
     targetPortfolio: nextTargetPortfolio,
   };
 
-  const removedCount = ['assets', 'trades', 'memos', 'tradeLedger', 'autoDividends', 'dividendAssetRegistry']
+  const removedCount = ['assets', 'trades', 'memos', 'tradeLedger', 'autoDividends', 'confirmedDividends', 'dividendAssetRegistry']
     .reduce((sum, key) => sum + ((snapshot[key] || []).length - (next[key] || []).length), 0);
 
   return { snapshot: next, removedCount };
@@ -852,6 +967,7 @@ const emptyPortfolioSnapshot = () => ({
   memos: [],
   tradeLedger: [],
   autoDividends: [],
+  confirmedDividends: [],
   dividendAssetRegistry: [],
   targetPortfolio: DEFAULT_TARGET_PORTFOLIO,
 });
@@ -920,6 +1036,18 @@ const App = () => {
 
   const [isAdding, setIsAdding] = useState(false);
   const defaultBuyDate = new Date().toISOString().split('T')[0];
+  const [isAddingDividend, setIsAddingDividend] = useState(false);
+  const dividendImportInputRef = useRef(null);
+  const [actualDividendForm, setActualDividendForm] = useState({
+    assetId: '',
+    name: '',
+    ticker: '',
+    category: '국내주식',
+    date: defaultBuyDate,
+    amount: '',
+    quantity: '',
+    currency: 'KRW',
+  });
   const [tradeSortMode, setTradeSortMode] = useState('newest');
   const [tradeStockFilter, setTradeStockFilter] = useState('all');
   const [tradeVisibleCount, setTradeVisibleCount] = useState(TRADE_PAGE_SIZE);
@@ -954,6 +1082,7 @@ const App = () => {
   quantity: '',
   buyDate: defaultBuyDate,
   memo: '',
+  accountType: ACCOUNT_TYPE_GENERAL,
   // 해외 종목의 단가를 어떤 통화로 입력할지. 'NATIVE'는 달러/엔, 'KRW'는 원화.
   priceInputCurrency: 'NATIVE',
 };
@@ -978,6 +1107,7 @@ const [isSellingAsset, setIsSellingAsset] = useState(false);
 const [selectedAssetToSell, setSelectedAssetToSell] = useState(null);
 const [selectedAssetToManageBuys, setSelectedAssetToManageBuys] = useState(null);
 const [buyLotDrafts, setBuyLotDrafts] = useState([]);
+const [accountTypeDraft, setAccountTypeDraft] = useState(ACCOUNT_TYPE_GENERAL);
 // 증권사 앱의 '투자 원금'을 그대로 넣어 맞추고 싶을 때 쓰는 수동 입력값.
 const [manualPurchaseKrwDraft, setManualPurchaseKrwDraft] = useState('');
 
@@ -1043,7 +1173,9 @@ const buyLotDraftSummary = useMemo(() => {
     }
   }, [newAsset.category, newAsset.ticker]);
 
-  const [assets, setAssets] = useState(() => loadJson(ASSETS_STORAGE_KEY, []));
+  const [assets, setAssets] = useState(() => (
+    migrateUserConfirmedAccountTypes(loadJson(ASSETS_STORAGE_KEY, []))
+  ));
   const [trades, setTrades] = useState(() => loadJson(TRADES_STORAGE_KEY, []));
   const [memos, setMemos] = useState(() => loadJson(MEMOS_STORAGE_KEY, []));
   const [tradeLedger, setTradeLedger] = useState(() => loadJson(TRADE_LEDGER_STORAGE_KEY, []));
@@ -1056,6 +1188,7 @@ const buyLotDraftSummary = useMemo(() => {
   ), [targetPortfolio]);
 
   const [autoDividends, setAutoDividends] = useState(() => loadJson(AUTO_DIVIDENDS_STORAGE_KEY, []));
+  const [confirmedDividends, setConfirmedDividends] = useState(() => loadJson(CONFIRMED_DIVIDENDS_STORAGE_KEY, []));
   const initialLedgerMigrationDoneRef = useRef(false);
 
   const portfolioSnapshot = useMemo(() => ({
@@ -1065,9 +1198,10 @@ const buyLotDraftSummary = useMemo(() => {
     memos,
     tradeLedger,
     autoDividends,
+    confirmedDividends,
     dividendAssetRegistry,
     targetPortfolio,
-  }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, dividendAssetRegistry, targetPortfolio]);
+  }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, confirmedDividends, dividendAssetRegistry, targetPortfolio]);
   const portfolioSnapshotRef = useRef(portfolioSnapshot);
   const cloudSnapshotRef = useRef(null);
   const cloudRevisionRef = useRef('');
@@ -1078,6 +1212,7 @@ const buyLotDraftSummary = useMemo(() => {
   useEffect(() => { saveJson(MEMOS_STORAGE_KEY, memos); }, [memos]);
   useEffect(() => { saveJson(TRADE_LEDGER_STORAGE_KEY, tradeLedger); }, [tradeLedger]);
   useEffect(() => { saveJson(AUTO_DIVIDENDS_STORAGE_KEY, autoDividends); }, [autoDividends]);
+  useEffect(() => { saveJson(CONFIRMED_DIVIDENDS_STORAGE_KEY, confirmedDividends); }, [confirmedDividends]);
   useEffect(() => { saveJson(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY, dividendAssetRegistry); }, [dividendAssetRegistry]);
   useEffect(() => { saveJson(PORTFOLIO_NAME_STORAGE_KEY, portfolioName); }, [portfolioName]);
   useEffect(() => { saveJson(TARGET_PORTFOLIO_STORAGE_KEY, targetPortfolio); }, [targetPortfolio]);
@@ -1090,6 +1225,7 @@ const buyLotDraftSummary = useMemo(() => {
     setMemos([]);
     setTradeLedger([]);
     setAutoDividends([]);
+    setConfirmedDividends([]);
     setDividendAssetRegistry([]);
     setPortfolioName(DEFAULT_PORTFOLIO_NAME);
     setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
@@ -1139,6 +1275,7 @@ const buyLotDraftSummary = useMemo(() => {
     setMemos(purged.memos);
     setTradeLedger(purged.tradeLedger);
     setAutoDividends(purged.autoDividends);
+    setConfirmedDividends(purged.confirmedDividends);
     setDividendAssetRegistry(purged.dividendAssetRegistry);
     setTargetPortfolio(purged.targetPortfolio);
     addLog(`가상화폐 관련 기록 ${removedCount.toLocaleString()}건을 정리했습니다.`, 'success');
@@ -1172,23 +1309,64 @@ const buyLotDraftSummary = useMemo(() => {
 
         if (cloudState.exists) {
           const compactedData = compactPortfolioSnapshot(cloudState.data);
+          const persistedCompactedData = {
+            ...compactedData,
+            assets: mergeUniqueAssets(Array.isArray(cloudState.data.assets) ? cloudState.data.assets : []),
+          };
+          const migratedAccountTypes = JSON.stringify(persistedCompactedData.assets)
+            !== JSON.stringify(compactedData.assets);
+          const localData = compactPortfolioSnapshot(
+            (!isAccountSwitch && portfolioSnapshotRef.current) || emptyPortfolioSnapshot(),
+          );
+          const protectedData = {
+            ...compactedData,
+            autoDividends: mergeAutomaticDividendRecords(
+              compactedData.autoDividends,
+              localData.autoDividends,
+            ),
+            confirmedDividends: mergeDividendRecords(
+              localData.confirmedDividends,
+              compactedData.confirmedDividends,
+            ),
+          };
+          const restoredLocalDividends = protectedData.confirmedDividends.length
+            > compactedData.confirmedDividends.length;
+          const restoredLocalAutoDividends = protectedData.autoDividends.length
+            > compactedData.autoDividends.length;
+          const removedDuplicateAutoDividends = protectedData.autoDividends.length
+            < compactedData.autoDividends.length;
           if (cloudState.needsMigration) {
-            await migratePortfolioState(db, userId, compactedData, userEmail);
+            await migratePortfolioState(db, userId, protectedData, userEmail);
             if (cancelled) return;
             addLog('클라우드 저장 구조를 안전하게 최신 버전으로 이전했습니다.', 'success');
+          } else if (
+            restoredLocalDividends
+            || restoredLocalAutoDividends
+            || removedDuplicateAutoDividends
+            || migratedAccountTypes
+          ) {
+            await savePortfolioStateDiff(db, userId, protectedData, persistedCompactedData, userEmail);
+            if (cancelled) return;
+            addLog(
+              migratedAccountTypes
+                ? '확인된 계좌 유형과 배당 내역을 클라우드에 반영했습니다.'
+                : '이 기기에 남아 있던 배당 내역을 클라우드에 복구했습니다.',
+              'success',
+            );
           }
 
-          cloudSnapshotRef.current = compactedData;
+          cloudSnapshotRef.current = protectedData;
           cloudRevisionRef.current = cloudState.revision || '';
           applyingCloudSnapshotRef.current = true;
-          setAssets(compactedData.assets);
-          setTrades(compactedData.trades);
-          setMemos(compactedData.memos);
-          setTradeLedger(compactedData.tradeLedger);
-          setAutoDividends(compactedData.autoDividends);
-          setDividendAssetRegistry(compactedData.dividendAssetRegistry);
-          setPortfolioName(compactedData.portfolioName);
-          setTargetPortfolio(compactedData.targetPortfolio);
+          setAssets(protectedData.assets);
+          setTrades(protectedData.trades);
+          setMemos(protectedData.memos);
+          setTradeLedger(protectedData.tradeLedger);
+          setAutoDividends(protectedData.autoDividends);
+          setConfirmedDividends(protectedData.confirmedDividends);
+          setDividendAssetRegistry(protectedData.dividendAssetRegistry);
+          setPortfolioName(protectedData.portfolioName);
+          setTargetPortfolio(protectedData.targetPortfolio);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
         } else {
           // 원격 문서가 없다고 해서 로컬을 지우면, 로그인 없이 쓰던 기록이 통째로 날아간다.
@@ -1258,21 +1436,54 @@ const buyLotDraftSummary = useMemo(() => {
         if (cancelled || !cloudState.exists) return;
 
         const compactedData = compactPortfolioSnapshot(cloudState.data);
+        const persistedCompactedData = {
+          ...compactedData,
+          assets: mergeUniqueAssets(Array.isArray(cloudState.data.assets) ? cloudState.data.assets : []),
+        };
+        const migratedAccountTypes = JSON.stringify(persistedCompactedData.assets)
+          !== JSON.stringify(compactedData.assets);
         const currentData = compactPortfolioSnapshot(portfolioSnapshotRef.current);
-        cloudSnapshotRef.current = compactedData;
+        const protectedData = {
+          ...compactedData,
+          autoDividends: mergeAutomaticDividendRecords(
+            compactedData.autoDividends,
+            currentData.autoDividends,
+          ),
+          confirmedDividends: mergeDividendRecords(
+            currentData.confirmedDividends,
+            compactedData.confirmedDividends,
+          ),
+        };
+        const restoredLocalDividends = protectedData.confirmedDividends.length
+          > compactedData.confirmedDividends.length;
+        const restoredLocalAutoDividends = protectedData.autoDividends.length
+          > compactedData.autoDividends.length;
+        const removedDuplicateAutoDividends = protectedData.autoDividends.length
+          < compactedData.autoDividends.length;
+        if (
+          restoredLocalDividends
+          || restoredLocalAutoDividends
+          || removedDuplicateAutoDividends
+          || migratedAccountTypes
+        ) {
+          await savePortfolioStateDiff(db, userId, protectedData, persistedCompactedData, userEmail);
+          if (cancelled) return;
+        }
+        cloudSnapshotRef.current = protectedData;
         cloudRevisionRef.current = cloudState.revision || revision;
 
-        if (arePortfolioSnapshotsEquivalent(currentData, compactedData)) return;
+        if (arePortfolioSnapshotsEquivalent(currentData, protectedData)) return;
 
         applyingCloudSnapshotRef.current = true;
-        setAssets(compactedData.assets);
-        setTrades(compactedData.trades);
-        setMemos(compactedData.memos);
-        setTradeLedger(compactedData.tradeLedger);
-        setAutoDividends(compactedData.autoDividends);
-        setDividendAssetRegistry(compactedData.dividendAssetRegistry);
-        setPortfolioName(compactedData.portfolioName);
-        setTargetPortfolio(compactedData.targetPortfolio);
+        setAssets(protectedData.assets);
+        setTrades(protectedData.trades);
+        setMemos(protectedData.memos);
+        setTradeLedger(protectedData.tradeLedger);
+        setAutoDividends(protectedData.autoDividends);
+        setConfirmedDividends(protectedData.confirmedDividends);
+        setDividendAssetRegistry(protectedData.dividendAssetRegistry);
+        setPortfolioName(protectedData.portfolioName);
+        setTargetPortfolio(protectedData.targetPortfolio);
         addLog('다른 기기에서 변경된 포트폴리오를 반영했습니다.', 'success');
       } catch (error) {
         console.error('Realtime cloud portfolio reload failed:', error);
@@ -1282,7 +1493,7 @@ const buyLotDraftSummary = useMemo(() => {
     }, (error) => {
       console.error('Realtime cloud portfolio subscription failed:', error);
     });
-  }, [userId, isCloudPortfolioLoaded, cloudLoadFailed, cloudPortfolioUserId]);
+  }, [userId, userEmail, isCloudPortfolioLoaded, cloudLoadFailed, cloudPortfolioUserId]);
 
   useEffect(() => {
     if (!userId || !db || !isCloudPortfolioLoaded || cloudLoadFailed || cloudPortfolioUserId !== userId) return undefined;
@@ -1401,11 +1612,13 @@ const buyLotDraftSummary = useMemo(() => {
 
         const currentTradeLedger = tradeLedgerRef.current;
         const currentDividendRegistry = dividendAssetRegistryRef.current;
+        const dividendCalculationAssets = buildDividendCalculationAssets(currentAssets, currentTradeLedger);
         const dividendTasks = [];
         const quoteStatuses = [];
         const quoteCheckedAt = new Date().toISOString();
+        const tradingViewQuotes = await fetchTradingViewQuotes(currentAssets);
 
-        const updatedAssets = await Promise.all(currentAssets.map(async (asset) => {
+        const updatedAssets = await Promise.all(currentAssets.map(async (asset, assetIndex) => {
           let newCurrentPrice = asset.currentPrice;
           let newOriginalCurrentPrice = asset.originalCurrentPrice || asset.originalAveragePrice;
           let nextAssetCurrency = asset.currency;
@@ -1414,11 +1627,13 @@ const buyLotDraftSummary = useMemo(() => {
           if (asset.category === '현금') {
             newCurrentPrice = 1; newOriginalCurrentPrice = 1;
           } else if (asset.ticker) {
-            let stockQuote = null;
-            try {
-              stockQuote = await fetchStockQuote(asset);
-            } catch {
-              stockQuote = null;
+            let stockQuote = tradingViewQuotes[assetIndex] || null;
+            if (!stockQuote) {
+              try {
+                stockQuote = await fetchStockQuote(asset);
+              } catch {
+                stockQuote = null;
+              }
             }
 
             const quoteCurrency = stockQuote?.currency
@@ -1455,67 +1670,6 @@ const buyLotDraftSummary = useMemo(() => {
               addLog(`[${asset.name}] 비정상 시세 응답을 차단했습니다.`, "error");
             }
 
-            // 배당 갱신 실행 
-            if (!isCommodityCategory(asset.category)) {
-              const dividendStartDate = getDividendStartDate(asset, currentTradeLedger);
-              if (!dividendStartDate) return {
-                ...asset,
-                currency: nextAssetCurrency,
-                originalCurrency: nextAssetCurrency,
-                currentPrice: newCurrentPrice,
-                originalCurrentPrice: newOriginalCurrentPrice,
-                ...quoteMetadata,
-              };
-
-              const dividendRefreshState = getDividendRefreshState({
-                asset,
-                ledger: currentTradeLedger,
-                registry: currentDividendRegistry,
-                now: quoteCheckedAt,
-              });
-
-              if (dividendRefreshState.shouldRefresh) {
-                let yfTicker = asset.ticker.toUpperCase().trim();
-                if (isDomesticStockCategory(asset.category) && !yfTicker.includes('.')) yfTicker = `${yfTicker}.KS`;
-
-                dividendTasks.push(
-                  fetchDividends({ ...asset, ticker: yfTicker }).then((divs) => {
-                    const sourceDividendCount = divs ? Object.keys(divs).length : 0;
-                    if (!divs) return {
-                      asset,
-                      holdingRevision: dividendRefreshState.holdingRevision,
-                      error: false,
-                      hasDividends: false,
-                      sourceDividendCount: 0,
-                      rows: [],
-                    };
-
-                    const rows = buildAutoDividendRows({
-                      asset,
-                      ledger: currentTradeLedger,
-                      dividends: divs,
-                      dividendStartDate,
-                    });
-
-                    return {
-                      asset,
-                      holdingRevision: dividendRefreshState.holdingRevision,
-                      error: false,
-                      hasDividends: sourceDividendCount > 0,
-                      sourceDividendCount,
-                      rows,
-                    };
-                  }).catch(() => ({
-                    asset,
-                    holdingRevision: dividendRefreshState.holdingRevision,
-                    error: true,
-                    hasDividends: false,
-                    sourceDividendCount: 0,
-                    rows: [],
-                  }))
-                );
-              }
-            }
           }
           return {
             ...asset,
@@ -1526,6 +1680,16 @@ const buyLotDraftSummary = useMemo(() => {
             ...quoteMetadata,
           };
         }));
+
+        dividendCalculationAssets.forEach((asset) => {
+          const task = createDividendRefreshTask({
+            asset,
+            ledger: currentTradeLedger,
+            registry: currentDividendRegistry,
+            now: quoteCheckedAt,
+          });
+          if (task) dividendTasks.push(task);
+        });
 
         if (!isLatestRun()) return;
 
@@ -1553,10 +1717,17 @@ const buyLotDraftSummary = useMemo(() => {
             if (!isLatestRun()) return;
 
             const successfulResults = dividendResults.filter((result) => !result.error);
-            const refreshedAssetNames = successfulResults.map((result) => result.asset.name).filter(Boolean);
             const nextAutoDividends = successfulResults
               .flatMap((result) => result.rows)
               .sort((a, b) => new Date(b.date) - new Date(a.date));
+            const refreshedSourceEventKeys = successfulResults.flatMap((result) => (
+              (result.sourceEventDates || []).map((date) => getAutomaticDividendEventKey({
+                ticker: result.asset.ticker,
+                name: result.asset.name,
+                round: getTradeRound(result.asset),
+                date,
+              }))
+            ));
 
             const registryCheckedAt = new Date().toISOString();
             const nextRegistry = dividendResults.map((result) => ({
@@ -1569,24 +1740,38 @@ const buyLotDraftSummary = useMemo(() => {
               sourceDividendCount: result.sourceDividendCount,
               earnedDividendCount: result.rows.length,
               holdingRevision: result.holdingRevision,
-              dateBasis: 'ex-dividend',
+              refreshVersion: getDividendRefreshVersion(result.asset),
+              dateBasis: result.rows.some((row) => row.paymentDate) ? 'payment' : 'ex-dividend',
               syncStatus: result.error ? 'error' : 'success',
               checkedAt: registryCheckedAt,
             }));
 
             setDividendAssetRegistry(prevRegistry => (
-              mergeDividendAssetRegistry(prevRegistry, nextRegistry, currentAssets)
+              mergeDividendAssetRegistry(prevRegistry, nextRegistry, dividendCalculationAssets)
             ));
 
             setAutoDividends(prevDividends => (
               successfulResults.length > 0
-                ? mergeDividendResultsByAsset(prevDividends, nextAutoDividends, currentAssets, refreshedAssetNames)
-                : prevDividends.filter(dividend => currentAssets.some(asset => asset.name === dividend.name))
+                ? mergeDividendResultsByAsset(
+                  prevDividends,
+                  nextAutoDividends,
+                  dividendCalculationAssets,
+                  refreshedSourceEventKeys,
+                )
+                : prevDividends.filter((dividend) => (
+                  dividendCalculationAssets.some((asset) => (
+                    getDividendAssetKey(asset) === getDividendAssetKey(dividend)
+                  ))
+                ))
             ));
           });
         } else {
           setAutoDividends(prevDividends => (
-            prevDividends.filter(dividend => currentAssets.some(asset => asset.name === dividend.name))
+            prevDividends.filter((dividend) => (
+              dividendCalculationAssets.some((asset) => (
+                getDividendAssetKey(asset) === getDividendAssetKey(dividend)
+              ))
+            ))
           ));
         }
 
@@ -1611,6 +1796,24 @@ const buyLotDraftSummary = useMemo(() => {
     };
   }, [isLiveMode, refreshTrigger, isCloudPortfolioLoaded]);
 
+  const dividendEntryAssets = useMemo(() => (
+    buildDividendCalculationAssets(assets, tradeLedger)
+      .filter((asset) => asset.category !== '현금')
+      .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')))
+  ), [assets, tradeLedger]);
+
+  // Photo/imported receipts remain validation-only. Only a receipt explicitly
+  // entered by the user can replace its matching formula row in displayed cash.
+  const reportedDividends = useMemo(() => (
+    selectReportedDividendRecords(
+      selectFormulaDividendRecords(autoDividends),
+      selectUserEnteredDividendRecords(confirmedDividends),
+    )
+  ), [autoDividends, confirmedDividends]);
+  const receivedDividends = useMemo(() => (
+    selectReceivedDividendRecords(reportedDividends)
+  ), [reportedDividends]);
+
   const {
     enhancedAssets,
     totalConvertedKRW,
@@ -1631,7 +1834,8 @@ const buyLotDraftSummary = useMemo(() => {
     assets,
     trades,
     tradeLedger,
-    autoDividends,
+    autoDividends: reportedDividends,
+    receivedDividends,
     dividendAssetRegistry,
     exchangeRate,
     jpyKrwRate,
@@ -1640,6 +1844,21 @@ const buyLotDraftSummary = useMemo(() => {
     selectedDividendAsset,
     dividendFilter,
   });
+
+  const dividendSummaryGroups = useMemo(() => ([
+    {
+      id: 'domestic',
+      label: '국내 주식 배당',
+      description: '원화 · 국내 지급일 기준',
+      items: dividendSummary.filter((summary) => summary.currency === 'KRW'),
+    },
+    {
+      id: 'overseas',
+      label: '해외 주식 배당',
+      description: '현지 통화 · 한국 집계일 기준',
+      items: dividendSummary.filter((summary) => summary.currency !== 'KRW'),
+    },
+  ].filter((group) => group.items.length > 0)), [dividendSummary]);
 
   const isDomesticStockChart = selectedCategory?.includes('국내') && selectedCategory?.includes('주식');
   const isOverseasStockChart = selectedCategory?.includes('해외') && selectedCategory?.includes('주식');
@@ -1695,10 +1914,10 @@ const buyLotDraftSummary = useMemo(() => {
     const investedPurchaseKRW = investedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
     const evaluationProfitKRW = enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
     const investedProfitKRW = investedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
-    const dividendKRW = autoDividends.reduce((sum, dividend) => (
+    const dividendKRW = receivedDividends.reduce((sum, dividend) => (
       sum + (Number(dividend.amount) || 0) * getCachedKrwRate(dividend.currency, currencyRates, exchangeRate || 1350, jpyKrwRate || 9.5)
     ), 0);
-    const dividendByCurrency = autoDividends.reduce((summary, dividend) => {
+    const dividendByCurrency = receivedDividends.reduce((summary, dividend) => {
       const currency = dividend.currency || 'KRW';
       summary[currency] = (summary[currency] || 0) + (Number(dividend.amount) || 0);
       return summary;
@@ -1714,7 +1933,7 @@ const buyLotDraftSummary = useMemo(() => {
       dividendKRW,
       dividendByCurrency,
     };
-  }, [enhancedAssets, autoDividends, exchangeRate, jpyKrwRate, currencyRates]);
+  }, [enhancedAssets, receivedDividends, exchangeRate, jpyKrwRate, currencyRates]);
   const dividendCurrencyParts = useMemo(() => (
     Object.entries(dashboardSummary.dividendByCurrency || {})
       .filter(([, amount]) => Math.abs(Number(amount) || 0) > 0.000001)
@@ -1740,15 +1959,44 @@ const buyLotDraftSummary = useMemo(() => {
     const today = new Date();
 
     return dividendSummary
-      .map((summary) => {
+      .flatMap((summary) => {
         const history = Array.isArray(summary.history) ? summary.history : [];
+        const asset = enhancedAssets.find(candidate => candidate.name === summary.name);
+        const paymentEvents = history.map((dividend) => {
+          const officialPaymentDate = getDividendOfficialPaymentDate(dividend);
+          if (!officialPaymentDate) return null;
+
+          const dateKey = getDividendReportingDate(dividend);
+          if (!dateKey.startsWith(monthPrefix)) return null;
+
+          const quantity = Number(dividend.quantity) || parseNumber(asset?.quantity);
+          const grossAmount = Number(dividend.grossAmount)
+            || (Number(dividend.perShareGrossAmount) || 0) * quantity;
+          const netAmount = Number(dividend.amount) || 0;
+          if (quantity <= 0 || (grossAmount <= 0 && netAmount <= 0)) return null;
+
+          return {
+            id: `${dividend.id || summary.name}-payment-${dateKey}`,
+            date: dateKey,
+            dateLabel: isDividendReportingDateShifted(dividend) ? '한국시간 지급일' : '지급일',
+            officialPaymentDate,
+            exDate: getDividendExDate(dividend),
+            name: summary.name,
+            ticker: dividend.ticker || asset?.ticker || summary.ticker || summary.name,
+            currency: dividend.currency || asset?.currency || summary.currency || 'KRW',
+            grossAmount,
+            netAmount,
+            quantity,
+            isEstimated: false,
+          };
+        }).filter(Boolean);
+
         const nextDate = getNextEstimatedExDividendDate(history, today);
-        if (!nextDate) return null;
+        if (!nextDate) return paymentEvents;
 
         const dateKey = formatDateKey(nextDate);
-        if (!dateKey.startsWith(monthPrefix)) return null;
+        if (!dateKey.startsWith(monthPrefix)) return paymentEvents;
 
-        const asset = enhancedAssets.find(candidate => candidate.name === summary.name);
         const latestDividend = history[0] || {};
         const quantity = parseNumber(asset?.quantity || latestDividend.quantity);
         const perShareGrossAmount = Number(latestDividend.perShareGrossAmount) || 0;
@@ -1759,20 +2007,21 @@ const buyLotDraftSummary = useMemo(() => {
         const currency = asset?.currency || summary.currency || latestDividend.currency || 'KRW';
         const ticker = asset?.ticker || summary.ticker || summary.name;
 
-        if (quantity <= 0 || (grossAmount <= 0 && netAmount <= 0)) return null;
+        if (quantity <= 0 || (grossAmount <= 0 && netAmount <= 0)) return paymentEvents;
 
-        return {
-          id: `${summary.name}-${dateKey}`,
+        return [...paymentEvents, {
+          id: `${summary.name}-estimated-ex-${dateKey}`,
           date: dateKey,
+          dateLabel: '예상 배당락일',
           name: summary.name,
           ticker,
           currency,
           grossAmount,
           netAmount,
           quantity,
-        };
+          isEstimated: true,
+        }];
       })
-      .filter(Boolean)
       .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
   }, [calendarMonth, dividendSummary, enhancedAssets]);
   const dividendCalendarEventsByDate = useMemo(() => (
@@ -2789,6 +3038,7 @@ const buyLotDraftSummary = useMemo(() => {
   const openBuyLotsModal = (asset) => {
   setSelectedAssetToManageBuys(asset);
   setBuyLotDrafts(buildBuyLotDrafts(asset));
+  setAccountTypeDraft(normalizeAccountType(asset.accountType));
   setManualPurchaseKrwDraft(
     parseNumber(asset.manualPurchaseKRW) > 0
       ? formatInputNumber(String(Math.round(parseNumber(asset.manualPurchaseKRW))))
@@ -2799,6 +3049,7 @@ const buyLotDraftSummary = useMemo(() => {
   const closeBuyLotsModal = () => {
   setSelectedAssetToManageBuys(null);
   setBuyLotDrafts([]);
+  setAccountTypeDraft(ACCOUNT_TYPE_GENERAL);
   setManualPurchaseKrwDraft('');
 };
 
@@ -2879,6 +3130,8 @@ const buyLotDraftSummary = useMemo(() => {
       ticker: selectedAssetToManageBuys.ticker || '',
       category: selectedAssetToManageBuys.category || '',
       currency: selectedAssetToManageBuys.currency || 'KRW',
+      accountType: normalizeAccountType(accountTypeDraft),
+      accountTypeSource: 'user',
       round: getTradeRound(selectedAssetToManageBuys),
       side: 'buy',
       action: '매수',
@@ -2907,6 +3160,8 @@ const buyLotDraftSummary = useMemo(() => {
     if (asset.id !== selectedAssetToManageBuys.id && getAssetIdentity(asset) !== manageIdentity) return asset;
     return {
       ...asset,
+      accountType: normalizeAccountType(accountTypeDraft),
+      accountTypeSource: 'user',
       manualPurchaseKRW: manualPurchaseKRW > 0 ? manualPurchaseKRW : null,
       updatedAt: new Date().toISOString(),
     };
@@ -2926,6 +3181,8 @@ const buyLotDraftSummary = useMemo(() => {
         ticker: selectedAssetToManageBuys.ticker || '',
         category: selectedAssetToManageBuys.category || '',
         currency: selectedAssetToManageBuys.currency || 'KRW',
+        accountType: normalizeAccountType(accountTypeDraft),
+        accountTypeSource: 'user',
         round: getTradeRound(selectedAssetToManageBuys),
         side: 'buy',
         action: '매수',
@@ -3162,6 +3419,118 @@ const buyLotDraftSummary = useMemo(() => {
 
 };
 
+  const openActualDividendForm = () => {
+    const firstAsset = dividendEntryAssets[0];
+    setActualDividendForm({
+      assetId: firstAsset ? String(firstAsset.id) : '',
+      name: firstAsset?.name || '',
+      ticker: firstAsset?.ticker || '',
+      category: firstAsset?.category || '국내주식',
+      date: defaultBuyDate,
+      amount: '',
+      quantity: firstAsset?.quantity || '',
+      currency: firstAsset?.currency || 'KRW',
+    });
+    setIsAddingDividend(true);
+  };
+
+  const handleActualDividendAssetChange = (assetId) => {
+    const asset = dividendEntryAssets.find((candidate) => String(candidate.id) === String(assetId));
+    setActualDividendForm((previous) => ({
+      ...previous,
+      assetId,
+      name: assetId === '__manual__' ? '' : asset?.name || previous.name,
+      ticker: assetId === '__manual__' ? '' : asset?.ticker || previous.ticker,
+      category: assetId === '__manual__'
+        ? (previous.currency === 'KRW' ? '국내주식' : '해외주식')
+        : asset?.category || previous.category,
+      quantity: asset?.quantity || '',
+      currency: asset?.currency || previous.currency,
+    }));
+  };
+
+  const handleAddActualDividend = () => {
+    const selectedAsset = dividendEntryAssets.find((candidate) => (
+      String(candidate.id) === String(actualDividendForm.assetId)
+    ));
+    const manualName = String(actualDividendForm.name || actualDividendForm.ticker || '').trim();
+    const asset = selectedAsset || (actualDividendForm.assetId === '__manual__' && manualName ? {
+      id: `manual-dividend-${String(actualDividendForm.ticker || manualName).trim().toUpperCase()}`,
+      name: manualName,
+      ticker: String(actualDividendForm.ticker || '').trim().toUpperCase(),
+      category: actualDividendForm.category || (actualDividendForm.currency === 'KRW' ? '국내주식' : '해외주식'),
+      currency: actualDividendForm.currency || 'KRW',
+    } : null);
+    const amount = parseNumber(actualDividendForm.amount);
+    const quantity = parseNumber(actualDividendForm.quantity);
+    if (!asset || !actualDividendForm.date || amount <= 0) {
+      addLog('종목·입금일·실제 입금액을 확인해주세요.', 'error');
+      return;
+    }
+
+    const dividend = {
+      id: `actual-${Date.now()}`,
+      assetId: asset.id,
+      name: asset.name,
+      ticker: asset.ticker || '',
+      category: asset.category || '',
+      currency: actualDividendForm.currency || asset.currency || 'KRW',
+      quantity: quantity > 0 ? quantity : undefined,
+      perShareNetAmount: quantity > 0 ? amount / quantity : undefined,
+      amount,
+      date: actualDividendForm.date,
+      actualPaymentDate: actualDividendForm.date,
+      period: actualDividendForm.date.slice(0, 7),
+      dateBasis: 'payment',
+      status: 'actual',
+      recordType: 'actual',
+      confirmationSource: 'user-entry',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    setConfirmedDividends((previous) => mergeUniqueDividends([dividend], previous));
+    setIsAddingDividend(false);
+    addLog(`'${asset.name}' 실제 입금 배당을 반영했습니다.`, 'success');
+  };
+
+  const handleConfirmedDividendImport = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      const parsed = JSON.parse(await file.text());
+      const sourceRows = parsed?.data?.confirmedDividends || parsed?.confirmedDividends;
+      if (!Array.isArray(sourceRows)) throw new Error('confirmedDividends array not found');
+
+      const validRows = sourceRows.filter((row) => (
+        row
+        && row.name
+        && row.currency
+        && Number(row.amount) >= 0
+        && (row.actualPaymentDate || row.paymentDate || row.date || row.period)
+      ));
+      if (validRows.length === 0) throw new Error('no valid dividend records');
+
+      setConfirmedDividends((previous) => mergeDividendRecords(validRows, previous));
+      addLog(`실제 입금 배당 ${validRows.length.toLocaleString()}건을 복구 파일에서 불러왔습니다.`, 'success');
+    } catch (error) {
+      console.error('Confirmed dividend import failed:', error);
+      addLog('실제 배당 복구 파일을 읽지 못했습니다.', 'error');
+    }
+  };
+
+  const removeConfirmedDividend = (dividendId) => {
+    const deletedAt = new Date().toISOString();
+    setConfirmedDividends((previous) => previous.map((dividend) => (
+      dividend.id === dividendId
+        ? { ...dividend, status: 'deleted', deletedAt, updatedAt: deletedAt }
+        : dividend
+    )));
+    addLog('실제 입금 배당 기록을 삭제했습니다.', 'success');
+  };
+
   // 자산 추가 처리
   /**
    * 원화로 입력한 단가를 현지 통화로 바꾸려면 "그날의 환율"이 필요하다.
@@ -3283,6 +3652,8 @@ const buyLotDraftSummary = useMemo(() => {
       ticker,
       category: newAsset.category,
       currency: assetCurrency,
+      accountType: normalizeAccountType(newAsset.accountType),
+      accountTypeSource: 'user',
       round: assetRound,
       averagePrice: krwAveragePrice, 
       quantity: parsedQty, 
@@ -3325,6 +3696,8 @@ const buyLotDraftSummary = useMemo(() => {
             quantity: totalQty,
             averagePrice: mergedAvg,
             originalAveragePrice: mergedAvg,
+            accountType: normalizeAccountType(newAsset.accountType),
+            accountTypeSource: 'user',
             manualPurchaseKRW: mergedManualPurchaseKRW,
             updatedAt: new Date().toISOString(),
           }
@@ -3453,7 +3826,7 @@ const buyLotDraftSummary = useMemo(() => {
                     label: '배당 수익',
                     value: dividendCurrencyParts.length > 0 ? dividendCurrencyParts.join(' / ') : formatMoney(0, 'KRW'),
                     tone: dashboardSummary.dividendKRW >= 0 ? 'text-ink' : 'text-down',
-                    helper: '세후 누적',
+                    helper: '실제 입금 + 지급 완료 계산분',
                   },
                 ].map((item) => (
                   <div key={item.label} className="bg-surface rounded-[20px] p-4 lg:p-5 flex flex-col justify-center">
@@ -3819,9 +4192,9 @@ const buyLotDraftSummary = useMemo(() => {
                   />
                 </div>
               </div>
-              <div className="overflow-x-auto">
+              <div className="max-h-[480px] overflow-auto scroll-soft">
                 <table className="w-full text-left table-auto">
-                  <thead className="bg-canvas/50 text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.2em]">
+                  <thead className="sticky top-0 z-10 bg-canvas text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.2em]">
                     <tr>
                       <th className="px-4 py-4 md:px-8 md:py-5">종목</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">보유/매도</th>
@@ -3904,8 +4277,30 @@ const buyLotDraftSummary = useMemo(() => {
                   {selectedDividendAsset ? `${selectedDividendAsset} 배당 상세 기록` : '종목별 누적 배당 요약'}
                 </h3>
                 
-                {selectedDividendAsset ? (
-                  <div className="flex items-center gap-2 md:gap-3">
+                <div className="flex flex-wrap items-center gap-2 md:gap-3">
+                  <input
+                    ref={dividendImportInputRef}
+                    type="file"
+                    accept="application/json,.json"
+                    onChange={handleConfirmedDividendImport}
+                    className="hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => dividendImportInputRef.current?.click()}
+                    className="text-[11px] md:text-[12px] font-bold text-ink-soft bg-line-soft px-3 py-1.5 md:px-4 md:py-2 rounded-full flex items-center gap-1 hover:bg-line transition-all"
+                  >
+                    <ArrowRightLeft size={12} /> 복구 파일 불러오기
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openActualDividendForm}
+                    className="text-[11px] md:text-[12px] font-bold text-white bg-brand px-3 py-1.5 md:px-4 md:py-2 rounded-full flex items-center gap-1 hover:opacity-90 transition-all"
+                  >
+                    <Plus size={12} /> 실제 입금 추가
+                  </button>
+                  {selectedDividendAsset ? (
+                    <>
                     <select 
                       value={dividendFilter} 
                       onChange={e => setDividendFilter(e.target.value)}
@@ -3918,27 +4313,41 @@ const buyLotDraftSummary = useMemo(() => {
                     <button onClick={() => { setSelectedDividendAsset(null); setDividendFilter('전체'); }} className="text-[11px] md:text-[12px] font-bold text-ink-soft bg-line-soft px-3 py-1.5 md:px-4 md:py-2 rounded-full flex items-center gap-1 hover:bg-line transition-all">
                       <ArrowLeft size={12} /> 전체 보기
                     </button>
-                  </div>
-                ) : (
-                  <span className="text-[11px] md:text-[12px] bg-line-soft text-ink-soft px-2 py-1 md:px-3 md:py-1.5 rounded-full font-bold">
-                    배당락일 기준 세후 자동 계산
-                  </span>
-                )}
+                    </>
+                  ) : (
+                    <span className="text-[11px] md:text-[12px] bg-line-soft text-ink-soft px-2 py-1 md:px-3 md:py-1.5 rounded-full font-bold">
+                      실제 입금 우선 · 나머지는 공식 분배금·기준일 보유수량으로 계산
+                    </span>
+                  )}
+                </div>
               </div>
 
               {!selectedDividendAsset ? (
                 <div className="max-h-[620px] overflow-y-auto pr-1 md:pr-2">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                  {dividendSummary.length > 0 ? dividendSummary.map(summary => (
+                  {dividendSummaryGroups.length > 0 ? dividendSummaryGroups.flatMap((group) => [
+                    <div key={`${group.id}-heading`} className="col-span-full flex items-center justify-between pt-1 md:pt-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className={`w-9 h-9 rounded-xl flex items-center justify-center ${group.id === 'domestic' ? 'bg-up-soft text-up' : 'bg-brand-soft text-brand'}`}>
+                          {group.id === 'domestic' ? <Banknote size={17} /> : <DollarSign size={17} />}
+                        </span>
+                        <div>
+                          <h4 className="text-sm md:text-base font-bold text-ink">{group.label}</h4>
+                          <p className="text-[11px] font-bold text-ink-mute mt-0.5">{group.description}</p>
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-bold text-ink-mute">{group.items.length}종목</span>
+                    </div>,
+                    ...group.items.map((summary) => (
                     <div 
                       key={summary.name} 
                       onClick={() => setSelectedDividendAsset(summary.name)} 
-                      className="p-5 md:p-6 bg-canvas rounded-[20px] cursor-pointer hover:bg-surface transition-all group"
+                      className={`p-5 md:p-6 bg-canvas rounded-[20px] border-l-4 cursor-pointer hover:bg-surface transition-all group ${group.id === 'domestic' ? 'border-up' : 'border-brand'}`}
                     >
                       <div className="flex justify-between items-start mb-4 md:mb-6">
                         <div className="whitespace-nowrap overflow-hidden pr-3 md:pr-4">
                           <h4 className="font-bold text-ink text-base md:text-lg group-hover:text-ink transition-colors truncate">{summary.name}</h4>
-                          <p className="text-[11px] md:text-[12px] text-ink-mute font-bold mt-1">상세 보기</p>
+                          <p className="text-[11px] md:text-[12px] text-ink-mute font-bold mt-1">{group.id === 'domestic' ? '국내 · KRW' : `해외 · ${summary.currency}`} · 상세 보기</p>
                         </div>
                         <div className="text-right whitespace-nowrap shrink-0">
                           <p className="text-[11px] md:text-[12px] text-ink-mute font-bold mb-0.5 md:mb-1">세후 누적 배당금</p>
@@ -3950,7 +4359,8 @@ const buyLotDraftSummary = useMemo(() => {
                         {summary.status} {summary.status.includes('예상') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
                       </div>
                     </div>
-                  )) : (
+                    )),
+                  ]) : (
                     <div className="col-span-full py-8 md:py-12 text-center text-ink-mute font-bold text-xs md:text-sm">
                       {isFetching ? '배당 데이터를 갱신 중입니다...' : '매수일 이후 배당 내역이 없거나 데이터를 불러올 수 없습니다.'}
                     </div>
@@ -3965,32 +4375,57 @@ const buyLotDraftSummary = useMemo(() => {
                         <tr>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">기준 수량</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">주당 세후</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5">배당락 일자</th>
+                          <th className="px-4 py-4 md:px-8 md:py-5">지급 기준 일자</th>
                           <th className="px-4 py-4 md:px-8 md:py-5">종목명</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">세전</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">세금</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">세후</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-center">상태</th>
+                          <th className="px-4 py-4 md:px-8 md:py-5 text-center">관리</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-line/50">
                         {filteredHistory.length > 0 ? filteredHistory.map(div => (
                           <tr key={div.id} className="hover:bg-surface transition-colors group">
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number(div.quantity || 0).toLocaleString()}주</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{formatMoney(div.perShareNetAmount ?? 0, div.currency)}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{div.date}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number(div.quantity) > 0 ? `${Number(div.quantity).toLocaleString()}주` : '-'}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number(div.perShareNetAmount) > 0 ? formatMoney(div.perShareNetAmount, div.currency) : '-'}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
+                              {getDividendReportingDate(div)}
+                              {getDividendOfficialPaymentDate(div) && (
+                                <span className="block mt-1 text-[11px] text-ink-mute">
+                                  공식 지급 {getDividendOfficialPaymentDate(div)}
+                                </span>
+                              )}
+                              <span className="block mt-1 text-[11px] text-ink-mute">배당락 {getDividendExDate(div)}</span>
+                            </td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-bold text-ink whitespace-nowrap">{div.name}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{formatMoney(div.grossAmount ?? div.amount, div.currency)}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-down whitespace-nowrap">-{formatMoney(div.taxAmount ?? 0, div.currency)}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number.isFinite(Number(div.grossAmount)) ? formatMoney(div.grossAmount, div.currency) : '-'}</td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-down whitespace-nowrap">{Number.isFinite(Number(div.taxAmount)) ? `-${formatMoney(div.taxAmount, div.currency)}` : '-'}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-bold text-ink whitespace-nowrap">{formatMoney(div.amount, div.currency)}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-center whitespace-nowrap">
-                              <span className="text-[11px] md:text-[12px] bg-up-soft text-up px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-bold">배당 반영</span>
+                              <span className="text-[11px] md:text-[12px] bg-up-soft text-up px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-bold">
+                                {isConfirmedDividendRecord(div)
+                                  ? '실제 입금·확정'
+                                  : `${getAccountTypeLabel(div.accountType)} · 자동 계산`}
+                              </span>
+                            </td>
+                            <td className="px-4 py-4 md:px-8 md:py-5 text-center whitespace-nowrap">
+                              {isConfirmedDividendRecord(div) ? (
+                                <button
+                                  type="button"
+                                  onClick={() => removeConfirmedDividend(div.id)}
+                                  className="p-2 text-ink-mute hover:text-danger hover:bg-danger-soft rounded-xl transition-colors"
+                                  title="실제 입금 기록 삭제"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              ) : '-'}
                             </td>
                           </tr>
                         )) : (
                           <tr>
-                            <td colSpan="8" className="px-4 py-12 md:px-8 md:py-16 text-center">
-                              <p className="text-ink-mute font-bold mb-2 text-xs md:text-sm">해당하는 배당락 내역이 없습니다.</p>
+                              <td colSpan="9" className="px-4 py-12 md:px-8 md:py-16 text-center">
+                              <p className="text-ink-mute font-bold mb-2 text-xs md:text-sm">해당하는 배당 지급 내역이 없습니다.</p>
                             </td>
                           </tr>
                         )}
@@ -4528,10 +4963,10 @@ const buyLotDraftSummary = useMemo(() => {
               <div>
                 <h3 className="text-base md:text-lg font-bold text-ink flex items-center gap-2">
                   <CalendarDays size={18} className="text-ink-soft" />
-                  예상 배당락 캘린더
+                  배당 캘린더
                 </h3>
                 <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">
-                  Yahoo 배당락일 기준 예상치 · 실제 지급일과 다를 수 있습니다.
+                  공시 지급일은 한국시간 기준 · 향후 배당락일은 최근 주기로 추정
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -4578,7 +5013,7 @@ const buyLotDraftSummary = useMemo(() => {
                             key={event.id}
                             onClick={() => setSelectedCalendarEventId(event.id)}
                             title={`${event.name} 세전 ${formatMoney(event.grossAmount, event.currency)} / 세후 ${formatMoney(event.netAmount, event.currency)}`}
-                            className={`w-full truncate rounded-lg px-2 py-1 text-[12px] md:text-xs font-bold text-left transition-colors ${selectedCalendarEvent?.id === event.id ? 'bg-brand text-surface' : 'bg-brand-soft text-brand hover:bg-brand-soft/70'}`}
+                            className={`w-full truncate rounded-lg px-2 py-1 text-[12px] md:text-xs font-bold text-left transition-colors ${selectedCalendarEvent?.id === event.id ? 'bg-brand text-surface' : event.isEstimated ? 'bg-brand-soft text-brand hover:bg-brand-soft/70' : 'bg-up-soft text-up hover:bg-up-soft/70'}`}
                           >
                             {event.name}
                           </button>
@@ -4596,29 +5031,164 @@ const buyLotDraftSummary = useMemo(() => {
                 {selectedCalendarEvent ? (
                   <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                     <div>
-                      <p className="text-[12px] md:text-xs font-bold text-ink-mute mb-1">예상 배당락일 {selectedCalendarEvent.date}</p>
+                      <p className="text-[12px] md:text-xs font-bold text-ink-mute mb-1">{selectedCalendarEvent.dateLabel} {selectedCalendarEvent.date}</p>
                       <h4 className="text-lg md:text-xl font-bold text-ink">{selectedCalendarEvent.name}</h4>
                       <p className="text-xs md:text-sm font-bold text-ink-soft mt-1">{selectedCalendarEvent.ticker} · {selectedCalendarEvent.quantity.toLocaleString()}주 기준</p>
+                      {!selectedCalendarEvent.isEstimated && selectedCalendarEvent.officialPaymentDate !== selectedCalendarEvent.date && (
+                        <p className="text-[11px] md:text-xs font-bold text-ink-mute mt-1">
+                          미국 공시 지급일 {selectedCalendarEvent.officialPaymentDate} · 배당락일 {selectedCalendarEvent.exDate}
+                        </p>
+                      )}
                     </div>
                     <div className="grid grid-cols-2 gap-3 min-w-full md:min-w-80">
                       <div className="bg-canvas rounded-xl p-4">
-                        <p className="text-[12px] font-bold text-ink-mute mb-1">세전 예상</p>
+                        <p className="text-[12px] font-bold text-ink-mute mb-1">{selectedCalendarEvent.isEstimated ? '세전 예상' : '세전'}</p>
                         <p className="text-base md:text-lg font-bold text-ink">{formatMoney(selectedCalendarEvent.grossAmount, selectedCalendarEvent.currency)}</p>
                       </div>
                       <div className="bg-canvas rounded-xl p-4">
-                        <p className="text-[12px] font-bold text-ink-mute mb-1">세후 예상</p>
+                        <p className="text-[12px] font-bold text-ink-mute mb-1">{selectedCalendarEvent.isEstimated ? '세후 예상' : '세후'}</p>
                         <p className="text-base md:text-lg font-bold text-up">{formatMoney(selectedCalendarEvent.netAmount, selectedCalendarEvent.currency)}</p>
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <p className="text-center text-xs md:text-sm font-bold text-ink-mute">이번 달에 표시할 예상 배당락 종목이 없습니다.</p>
+                  <p className="text-center text-xs md:text-sm font-bold text-ink-mute">이번 달에 표시할 배당 일정이 없습니다.</p>
                 )}
               </div>
             </div>
           </div>
         )}
       </div>
+
+      {isAddingDividend && (
+        <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[110] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
+          <div className="bg-surface w-full max-w-[440px] max-h-[90vh] overflow-y-auto scroll-soft rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise">
+            <div className="flex justify-between items-center mb-6">
+              <div>
+                <h3 className="text-lg md:text-xl font-bold text-ink">실제 입금 배당 추가</h3>
+                <p className="text-[11px] md:text-xs font-bold text-ink-mute mt-1">증권사에 들어온 세후 금액을 그대로 입력합니다.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddingDividend(false)}
+                className="p-2 bg-canvas hover:bg-line-soft rounded-full transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">종목</label>
+                <select
+                  value={actualDividendForm.assetId}
+                  onChange={(event) => handleActualDividendAssetChange(event.target.value)}
+                  className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                >
+                  <option value="">종목 선택</option>
+                  {dividendEntryAssets.map((asset) => (
+                    <option key={asset.id} value={String(asset.id)}>{asset.name} · {asset.ticker || asset.currency}</option>
+                  ))}
+                  <option value="__manual__">목록에 없는 종목 직접 입력</option>
+                </select>
+              </div>
+
+              {actualDividendForm.assetId === '__manual__' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">종목명</label>
+                    <input
+                      value={actualDividendForm.name}
+                      onChange={(event) => setActualDividendForm((previous) => ({ ...previous, name: event.target.value }))}
+                      placeholder="예: QUALCOMM"
+                      className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">티커</label>
+                    <input
+                      value={actualDividendForm.ticker}
+                      onChange={(event) => setActualDividendForm((previous) => ({ ...previous, ticker: event.target.value.toUpperCase() }))}
+                      placeholder="예: QCOM"
+                      className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink uppercase"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">입금일</label>
+                  <input
+                    type="date"
+                    value={actualDividendForm.date}
+                    onChange={(event) => setActualDividendForm((previous) => ({ ...previous, date: event.target.value }))}
+                    className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">통화</label>
+                  <select
+                    value={actualDividendForm.currency}
+                    onChange={(event) => setActualDividendForm((previous) => ({
+                      ...previous,
+                      currency: event.target.value,
+                      category: previous.assetId === '__manual__'
+                        ? (event.target.value === 'KRW' ? '국내주식' : '해외주식')
+                        : previous.category,
+                    }))}
+                    className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                  >
+                    <option value="KRW">KRW</option>
+                    <option value="USD">USD</option>
+                    <option value="JPY">JPY</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">실제 입금액</label>
+                  <input
+                    inputMode="decimal"
+                    value={formatInputNumber(actualDividendForm.amount)}
+                    onChange={(event) => setActualDividendForm((previous) => ({ ...previous, amount: sanitizeNumericInput(event.target.value) }))}
+                    placeholder="0"
+                    className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">기준 수량</label>
+                  <input
+                    inputMode="decimal"
+                    value={formatInputNumber(actualDividendForm.quantity)}
+                    onChange={(event) => setActualDividendForm((previous) => ({ ...previous, quantity: sanitizeNumericInput(event.target.value) }))}
+                    placeholder="선택"
+                    className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddingDividend(false)}
+                  className="h-[52px] bg-line-soft text-ink-soft rounded-2xl font-bold text-sm hover:bg-line transition-colors"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddActualDividend}
+                  className="h-[52px] bg-brand text-white rounded-2xl font-bold text-sm hover:opacity-90 transition-opacity"
+                >
+                  실제 입금 반영
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 자산 추가 모달 */}
 {isAdding && (
@@ -4708,6 +5278,29 @@ const buyLotDraftSummary = useMemo(() => {
               value={newAsset.ticker}
               onChange={(e) => setNewAsset({ ...newAsset, ticker: e.target.value.toUpperCase() })}
             />
+          </div>
+        )}
+
+        {newAsset.category !== '현금' && (
+          <div>
+            <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
+              보유 계좌
+            </label>
+            <select
+              className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+              value={newAsset.accountType}
+              onChange={(e) => setNewAsset({
+                ...newAsset,
+                accountType: normalizeAccountType(e.target.value),
+              })}
+            >
+              {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <p className="mt-1.5 ml-1 text-[11px] font-bold text-ink-mute leading-relaxed">
+              배당은 같은 공식 분배금이라도 계좌 유형에 따라 즉시 원천징수 여부가 달라집니다.
+            </p>
           </div>
         )}
 
@@ -4847,6 +5440,26 @@ const buyLotDraftSummary = useMemo(() => {
           <p className="mt-1 text-sm md:text-base font-bold text-ink">
             {buyLotDrafts.map(lot => lot.date).filter(Boolean).sort()[0] || '-'}
           </p>
+        </div>
+      </div>
+
+      <div className="rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
+          <div>
+            <label className="block text-[11px] font-bold text-ink-mute mb-1">보유 계좌</label>
+            <p className="text-[11px] md:text-[12px] font-bold text-ink-mute leading-relaxed">
+              ISA·연금계좌는 국내 상장 ETF 분배금의 즉시 원천징수를 유예합니다.
+            </p>
+          </div>
+          <select
+            className="w-full sm:w-40 px-3 h-11 bg-surface rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+            value={accountTypeDraft}
+            onChange={(event) => setAccountTypeDraft(normalizeAccountType(event.target.value))}
+          >
+            {ACCOUNT_TYPE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
         </div>
       </div>
 

@@ -24,7 +24,7 @@ const MemoItem = ({ memo, onRemoveMemo, onUpdateMemo, formatMoney }) => {
   };
 
   return (
-    <article className="p-4 md:p-5 hover:bg-canvas/60 transition-colors">
+    <article className="p-3.5 md:p-4 hover:bg-canvas/60 transition-colors">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -48,7 +48,7 @@ const MemoItem = ({ memo, onRemoveMemo, onUpdateMemo, formatMoney }) => {
             )}
           </div>
 
-          <div className="mt-3">
+          <div className="mt-2.5">
             {isEditing ? (
               <div className="space-y-2">
                 <textarea
@@ -212,7 +212,7 @@ const MemoTab = ({
         </div>
 
         {memos.length > 0 ? (
-          <div className="divide-y divide-line">
+          <div className="max-h-[560px] overflow-y-auto scroll-soft divide-y divide-line">
             {memos.map((memo) => (
               <MemoItem key={memo.id} memo={memo} onRemoveMemo={onRemoveMemo} onUpdateMemo={onUpdateMemo} formatMoney={formatMoney} />
             ))}

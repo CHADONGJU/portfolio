@@ -4,6 +4,7 @@ export const PORTFOLIO_COLLECTION_FIELDS = [
   'memos',
   'tradeLedger',
   'autoDividends',
+  'confirmedDividends',
   'dividendAssetRegistry',
 ];
 

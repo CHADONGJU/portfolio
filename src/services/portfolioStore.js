@@ -34,6 +34,14 @@ const getRecordIdentity = (field, record = {}, index = 0) => {
     return `${field}:${String(record.id)}`;
   }
   if (record.sourceId) return `${field}:source:${record.sourceId}`;
+  if (field === 'dividendAssetRegistry') {
+    return [
+      field,
+      record.assetId || '',
+      String(record.ticker || '').trim().toUpperCase(),
+      record.name || '',
+    ].join('::');
+  }
 
   return [
     field,

@@ -1,27 +1,34 @@
+import { isRecordForAsset } from './assetIdentity.js';
+import { getDividendLedgerRows, getDividendTradeSide } from './dividendHoldings.js';
+
 export const DIVIDEND_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const DIVIDEND_REFRESH_VERSION = 10;
+
+const DIVIDEND_SOURCE_REFRESH_VERSION_BY_TICKER = new Map([
+  ['277630', 11],
+  ['453810', 11],
+  ['477730', 11],
+  // Force one clean rebuild for historical sold-position and monthly histories.
+  ['QCOM', 9],
+  ['JEPI', 9],
+  // Visa is the only USD position affected by the Korea-date eligibility
+  // boundary migration. Do not rewrite every USD asset for a KRW source fix.
+  ['V', 9],
+]);
 
 const normalizeTicker = (ticker = '') => String(ticker || '').trim().toUpperCase();
 
-const isRecordForAsset = (record = {}, asset = {}) => {
-  const assetId = asset.id === undefined || asset.id === null ? '' : String(asset.id);
-  const recordAssetId = record.assetId === undefined || record.assetId === null
-    ? ''
-    : String(record.assetId);
-  if (assetId && recordAssetId && assetId === recordAssetId) return true;
-
-  const assetTicker = normalizeTicker(asset.ticker);
-  const recordTicker = normalizeTicker(record.ticker);
-  if (assetTicker && recordTicker && assetTicker === recordTicker) return true;
-
-  return Boolean(asset.name && record.name && asset.name === record.name);
+export const getDividendRefreshVersion = (asset = {}) => {
+  const ticker = normalizeTicker(asset.ticker).replace(/\.KS$/, '');
+  return DIVIDEND_SOURCE_REFRESH_VERSION_BY_TICKER.get(ticker)
+    || DIVIDEND_REFRESH_VERSION;
 };
 
 export const getDividendHoldingRevision = (asset = {}, ledger = []) => {
-  const relatedRows = ledger
-    .filter((record) => isRecordForAsset(record, asset))
+  const relatedRows = getDividendLedgerRows(asset, ledger)
     .map((record) => [
       record.id || record.sourceId || '',
-      record.side || record.type || record.action || '',
+      getDividendTradeSide(record),
       record.date || record.buyDate || record.sellDate || '',
       Number(record.quantity) || 0,
       Number(record.price ?? record.buyPrice ?? record.sellPrice) || 0,
@@ -34,22 +41,13 @@ export const getDividendHoldingRevision = (asset = {}, ledger = []) => {
     asset.name || '',
     asset.buyDate || '',
     Number(asset.quantity) || 0,
+    String(asset.accountType || 'GENERAL').trim().toUpperCase(),
     ...relatedRows,
   ].join('|');
 };
 
 export const findDividendRegistryEntry = (registry = [], asset = {}) => {
-  const assetId = asset.id === undefined || asset.id === null ? '' : String(asset.id);
-  const ticker = normalizeTicker(asset.ticker);
-
-  return registry.find((entry) => {
-    const entryAssetId = entry.assetId === undefined || entry.assetId === null
-      ? ''
-      : String(entry.assetId);
-    if (assetId && entryAssetId && assetId === entryAssetId) return true;
-    if (ticker && normalizeTicker(entry.ticker) === ticker) return true;
-    return Boolean(asset.name && entry.name === asset.name);
-  }) || null;
+  return registry.find((entry) => isRecordForAsset(entry, asset)) || null;
 };
 
 export const getDividendRefreshState = ({
@@ -62,6 +60,12 @@ export const getDividendRefreshState = ({
   const holdingRevision = getDividendHoldingRevision(asset, ledger);
   const entry = findDividendRegistryEntry(registry, asset);
   if (!entry) return { shouldRefresh: true, holdingRevision, reason: 'missing' };
+  if (entry.syncStatus === 'error') {
+    return { shouldRefresh: true, holdingRevision, reason: 'previous-error' };
+  }
+  if (Number(entry.refreshVersion) !== getDividendRefreshVersion(asset)) {
+    return { shouldRefresh: true, holdingRevision, reason: 'schema-changed' };
+  }
   if (entry.holdingRevision !== holdingRevision) {
     return { shouldRefresh: true, holdingRevision, reason: 'holding-changed' };
   }
