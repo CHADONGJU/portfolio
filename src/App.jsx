@@ -90,10 +90,10 @@ const parseNumber = (value) => parseFloat(String(value || '').replace(/,/g, ''))
 const BROKER_FEE_PRESETS = [
   { id: 'custom', name: '직접 입력', domesticRatePercent: 0, overseasRatePercent: 0 },
   { id: 'toss', name: '토스증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
-  { id: 'kiwoom', name: '키움증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
   { id: 'miraeasset', name: '미래에셋증권', domesticRatePercent: 0.014, overseasRatePercent: 0.25 },
-  { id: 'samsung', name: '삼성증권', domesticRatePercent: 0.078, overseasRatePercent: 0.25 },
-  { id: 'nh', name: 'NH투자증권', domesticRatePercent: 0.01, overseasRatePercent: 0.25 },
+  { id: 'shinhan', name: '신한증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
+  { id: 'kb', name: 'KB증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
+  { id: 'koreainvestment', name: '한국투자증권', domesticRatePercent: 0.014, overseasRatePercent: 0.25 },
 ];
 const DEFAULT_BROKER_ID = 'custom';
 const getBrokerPreset = (brokerId) => (
