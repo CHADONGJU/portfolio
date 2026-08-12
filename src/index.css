@@ -73,6 +73,9 @@ body {
   color: var(--color-ink);
   /* 한글은 자간을 살짝 좁혀야 촘촘하게 읽힌다. */
   letter-spacing: -0.012em;
+  /* 금액이 화면의 주인공인 앱이라 숫자는 어디서나 고정폭으로 둔다.
+     표에서 자릿수가 세로로 맞고, 시세가 갱신돼도 폭이 흔들리지 않는다. */
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -428,4 +431,140 @@ body {
     rgba(255, 255, 255, 0.12),
     transparent
   );
+}
+
+/* ── 타이포 위계 ──────────────────────────────────────────
+ * 화면 전체가 font-bold라 "굵게"가 강조 구실을 못 하고 있었다.
+ * 보조 텍스트(ink-mute)와 아주 작은 라벨은 한 단계 내려 600으로 두고,
+ * 굵기 대신 색과 자간으로 층을 만든다. 금액·수익률은 JSX의 bold를
+ * 그대로 두어, 이제 화면에서 진짜 굵은 건 숫자뿐이 된다.
+ * 유틸리티를 덮어야 하므로 @layer 밖에 둔다.
+ */
+.text-ink-mute.font-bold,
+.font-bold.text-ink-mute {
+  font-weight: 600;
+}
+
+/* 11·12px 라벨 — 굵기를 낮추는 대신 자간을 살짝 벌려 또렷하게 */
+.text-\[11px\].font-bold,
+.text-\[12px\].font-bold {
+  font-weight: 600;
+  letter-spacing: 0.002em;
+}
+
+/* 표 머리 — 자간을 0.3em까지 벌린 곳이 있어 한글이 흩어져 보였다.
+   전부 같은 값으로 모으고 색을 한 톤 죽인다. */
+thead {
+  letter-spacing: 0.06em;
+}
+
+thead th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* 큰 숫자 — tracking-tighter(-0.05em)는 네 자리만 넘어가도 붙어 보인다 */
+.text-2xl.font-bold,
+.text-3xl.font-bold,
+.text-4xl.font-bold,
+.md\:text-3xl.font-bold,
+.md\:text-4xl.font-bold {
+  letter-spacing: -0.032em;
+  font-feature-settings: 'tnum', 'ss01';
+}
+
+/* ── 표 ──────────────────────────────────────────────────
+ * 스크롤되는 표에서 머리글이 본문 위로 떠 있는 게 보이도록
+ * 유리처럼 흐리고 아래에 헤어라인 한 줄을 붙인다.
+ */
+thead.sticky {
+  background-color: color-mix(in srgb, var(--color-canvas) 86%, transparent);
+  backdrop-filter: blur(10px) saturate(140%);
+  -webkit-backdrop-filter: blur(10px) saturate(140%);
+  box-shadow: inset 0 -1px 0 var(--color-line);
+}
+
+tbody tr {
+  transition: background-color 0.14s ease;
+}
+
+/* ── 입력 요소 ────────────────────────────────────────────
+ * 테두리 없는 회색 박스라 클릭 대상인지 잘 안 보였다.
+ * 평소엔 아주 옅은 실선 한 겹, 포커스되면 흰 면으로 떠오른다.
+ * (포커스 링은 Tailwind의 ring 유틸리티에 넘긴다)
+ */
+.bg-canvas:is(input, select, textarea),
+.bg-surface:is(input, select, textarea) {
+  outline: 1px solid var(--color-line-soft);
+  outline-offset: -1px;
+  transition:
+    background-color 0.16s ease,
+    outline-color 0.16s ease;
+}
+
+.bg-canvas:is(input, select, textarea):hover:not(:focus) {
+  outline-color: var(--color-line);
+}
+
+.bg-canvas:is(input, select, textarea):focus,
+.bg-surface:is(input, select, textarea):focus {
+  outline-color: transparent;
+  background-color: var(--color-surface);
+}
+
+/* 셀렉트 — OS 기본 화살표 대신 얇은 셰브론 */
+select:is(.bg-canvas, .bg-surface) {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 2.25rem;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b8e97' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 15px 15px;
+}
+
+/* ── 세그먼트 컨트롤 ──────────────────────────────────────
+ * 통화 전환 토글처럼 p-0.5 안에 버튼 두 개가 든 형태.
+ * 선택된 쪽만 흰 알약으로 떠오르게 해서 상태가 한눈에 읽히게 한다.
+ */
+.seg {
+  background: var(--color-brand-soft);
+  box-shadow: inset 0 0 0 1px rgba(16, 21, 31, 0.045);
+}
+
+.seg-item {
+  transition:
+    color 0.16s ease,
+    background-color 0.16s ease,
+    box-shadow 0.16s ease;
+}
+
+.seg-item[aria-pressed='true'] {
+  background: var(--color-surface);
+  color: var(--color-ink);
+  box-shadow:
+    0 1px 1px rgba(12, 13, 16, 0.04),
+    0 4px 10px -6px rgba(12, 13, 16, 0.28);
+}
+
+/* ── 영수증 블록 ──────────────────────────────────────────
+ * 수수료·세금처럼 "빼는 숫자"를 모아 보여주는 곳.
+ * 마지막 줄만 위에 실선을 두고 크기를 키워 결론이 어디인지 못 놓치게 한다.
+ */
+.receipt {
+  border: 1px solid var(--color-line-soft);
+  background: linear-gradient(180deg, #fbfbfc, var(--color-canvas));
+}
+
+.receipt-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.receipt-total {
+  border-top: 1px solid var(--color-line);
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
 }

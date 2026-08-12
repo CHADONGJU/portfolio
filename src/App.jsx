@@ -2,7 +2,8 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
-  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, ArrowRightLeft, Search, Folder, Target, CalendarDays
+  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, ArrowRightLeft, Search, Folder, Target, CalendarDays,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
 import MemoTab from './components/MemoTab';
@@ -408,7 +409,7 @@ const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}#
  * "원화로 적었는데 달러로 들어갔다"는 사고를 눈으로 막는다.
  */
 const PriceInputCurrencyToggle = ({ nativeCurrency, value, onChange }) => (
-  <div className="inline-flex items-center p-0.5 rounded-lg bg-canvas border border-line" role="group" aria-label="입력 통화">
+  <div className="seg inline-flex items-center p-0.5 rounded-[10px]" role="group" aria-label="입력 통화">
     {[
       { key: 'NATIVE', label: `${getCurrencySymbol(nativeCurrency)} ${nativeCurrency}` },
       { key: 'KRW', label: '₩ 원화' },
@@ -420,8 +421,8 @@ const PriceInputCurrencyToggle = ({ nativeCurrency, value, onChange }) => (
           type="button"
           onClick={() => onChange(option.key)}
           aria-pressed={active}
-          className={`px-2.5 py-1 rounded-md text-[11px] md:text-[12px] font-bold leading-none transition-colors ${
-            active ? 'bg-surface text-ink shadow-sm' : 'text-ink-mute hover:text-ink-soft'
+          className={`seg-item px-2.5 py-1 rounded-lg text-[11px] md:text-[12px] font-bold leading-none ${
+            active ? 'text-ink' : 'text-ink-mute hover:text-ink-soft'
           }`}
         >
           {option.label}
@@ -3937,7 +3938,7 @@ const buyLotDraftSummary = useMemo(() => {
                   />
                   <div className="absolute inset-[12%] rounded-full bg-surface shadow-inner shadow-line" />
 	                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none p-4 lg:p-6">
-	                    <span className="text-[11px] md:text-[12px] text-ink-mute font-bold tracking-[0.2em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
+	                    <span className="text-[11px] md:text-[12px] text-ink-mute font-bold tracking-[0.06em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
 	                    <div className="flex flex-col items-center gap-0.5">
 	                      {currentCategoryKRW > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-ink tracking-tight whitespace-nowrap">{formatMoney(currentCategoryKRW, 'KRW')}</span>}
 	                      {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[11px] text-ink-mute font-bold">+</span>}
@@ -4001,14 +4002,14 @@ const buyLotDraftSummary = useMemo(() => {
                 <div className="overflow-x-auto">
                   <table className="w-full table-fixed text-left">
                     <thead className="hidden md:table-header-group">
-                      <tr className="text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.16em] border-b border-line bg-canvas/50">
+                      <tr className="text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.06em] border-b border-line bg-canvas/50">
                         <th className="px-4 py-3 md:px-5 md:py-3.5 w-[30%]">종목/자산</th>
                         <th className="px-4 py-3 md:px-5 md:py-3.5 w-[38%]">상세 가치</th>
                         <th className="px-4 py-3 md:px-4 md:py-3.5 text-right w-[20%]">수익률</th>
                         <th className="px-4 py-3 md:px-3 md:py-3.5 text-center w-[12%]">관리</th>
                       </tr>
                     </thead>
-                    <tbody className="block md:table-row-group divide-y divide-line">
+                    <tbody className="block md:table-row-group divide-y divide-line-soft">
                       {visibleDetailAssets.map((asset) => {
                         // 해외(외화) 종목은 행마다 $ / ₩ 를 눌러 바꿔 볼 수 있다.
                         const nativeCurrency = asset.originalCurrency || asset.currency || 'KRW';
@@ -4070,7 +4071,7 @@ const buyLotDraftSummary = useMemo(() => {
                           <td className="block md:table-cell px-0 py-4 md:px-5 md:py-4 align-middle">
                             {canToggleCurrency && (
                               <div className="flex items-center justify-end gap-1 mb-2 px-4 md:px-0">
-                                <div className="inline-flex items-center p-0.5 rounded-lg bg-canvas border border-line" role="group" aria-label="통화 전환">
+                                <div className="seg inline-flex items-center p-0.5 rounded-[10px]" role="group" aria-label="통화 전환">
                                   {[
                                     { key: 'NATIVE', label: nativeCurrency === 'JPY' ? '¥' : '$' },
                                     { key: 'KRW', label: '₩' },
@@ -4086,8 +4087,8 @@ const buyLotDraftSummary = useMemo(() => {
                                         }}
                                         aria-pressed={active}
                                         title={option.key === 'KRW' ? '원화로 보기' : '현지 통화로 보기'}
-                                        className={`px-2.5 py-1 rounded-md text-[12px] md:text-[13px] font-bold leading-none transition-colors ${
-                                          active ? 'bg-surface text-ink shadow-sm' : 'text-ink-mute hover:text-ink-soft'
+                                        className={`seg-item px-2.5 py-1 rounded-lg text-[12px] md:text-[13px] font-bold leading-none ${
+                                          active ? 'text-ink' : 'text-ink-mute hover:text-ink-soft'
                                         }`}
                                       >
                                         {option.label}
@@ -4214,21 +4215,21 @@ const buyLotDraftSummary = useMemo(() => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
               <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
                 <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><Banknote size={20} /></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.2em] mb-1">원화 매매 순수익</p>
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">원화 매매 순수익</p>
                 <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${krwNetProfit >= 0 ? 'text-up' : 'text-down'}`}>
                   {krwNetProfit > 0 ? '+' : ''}{formatMoney(krwNetProfit, 'KRW')}
                 </p>
               </div>
               <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
                 <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><DollarSign size={20} /></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.2em] mb-1">달러 매매 순수익</p>
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">달러 매매 순수익</p>
                 <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${usdNetProfit >= 0 ? 'text-up' : 'text-down'}`}>
                   {usdNetProfit > 0 ? '+' : ''}{formatMoney(usdNetProfit, 'USD')}
                 </p>
               </div>
               <div className="bg-ink p-5 md:p-7 rounded-2xl shadow-sm flex flex-col justify-center text-surface relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-4 opacity-10"><Wallet size={50}/></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.2em] mb-1">총 환산 매매 순수익</p>
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">총 환산 매매 순수익</p>
                 <p className={`text-3xl md:text-4xl font-bold tracking-tighter ${totalConvertedNetProfit >= 0 ? 'text-up' : 'text-down'}`}>
                   {totalConvertedNetProfit > 0 ? '+' : ''}{formatMoney(totalConvertedNetProfit, 'KRW')}
                 </p>
@@ -4253,7 +4254,7 @@ const buyLotDraftSummary = useMemo(() => {
               </div>
               <div className="max-h-[480px] overflow-auto scroll-soft">
                 <table className="w-full text-left table-auto">
-                  <thead className="sticky top-0 z-10 bg-canvas text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.2em]">
+                  <thead className="sticky top-0 z-10 bg-canvas text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.06em]">
                     <tr>
                       <th className="px-4 py-4 md:px-8 md:py-5">종목</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">보유/매도</th>
@@ -4263,11 +4264,11 @@ const buyLotDraftSummary = useMemo(() => {
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">총 손익</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-line">
+                  <tbody className="divide-y divide-line-soft">
                     {filteredPerformanceSummary.map((summary) => {
                       const totalTone = summary.totalKRW >= 0 ? 'text-up bg-up-soft' : 'text-down bg-down-soft';
                       return (
-                        <tr key={summary.key || summary.name} className="hover:bg-canvas/50 transition-colors">
+                        <tr key={summary.key || summary.name} className="hover:bg-canvas transition-colors">
                           <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
                             <p className="text-sm md:text-base font-bold text-ink">{summary.name}</p>
                             <p className="text-[11px] md:text-[12px] font-bold text-ink-mute mt-1">
@@ -4401,20 +4402,23 @@ const buyLotDraftSummary = useMemo(() => {
                     <div 
                       key={summary.name} 
                       onClick={() => setSelectedDividendAsset(summary.name)} 
-                      className={`p-5 md:p-6 bg-canvas rounded-[20px] border-l-4 cursor-pointer hover:bg-surface transition-all group ${group.id === 'domestic' ? 'border-up' : 'border-brand'}`}
+                      className="p-5 md:p-6 bg-canvas rounded-[20px] border border-line cursor-pointer transition-all group hover:bg-surface hover:shadow-lift hover:-translate-y-px"
                     >
                       <div className="flex justify-between items-start mb-4 md:mb-6">
                         <div className="whitespace-nowrap overflow-hidden pr-3 md:pr-4">
-                          <h4 className="font-bold text-ink text-base md:text-lg group-hover:text-ink transition-colors truncate">{summary.name}</h4>
-                          <p className="text-[11px] md:text-[12px] text-ink-mute font-bold mt-1">{group.id === 'domestic' ? '국내 · KRW' : `해외 · ${summary.currency}`} · 상세 보기</p>
+                          <div className="flex items-center gap-1.5">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${group.id === 'domestic' ? 'bg-up' : 'bg-brand'}`} />
+                            <p className="text-[11px] md:text-[12px] text-ink-mute font-bold truncate">{group.id === 'domestic' ? '국내 · KRW' : `해외 · ${summary.currency}`}</p>
+                          </div>
+                          <h4 className="font-bold text-ink text-base md:text-lg mt-1 truncate">{summary.name}</h4>
                         </div>
                         <div className="text-right whitespace-nowrap shrink-0">
                           <p className="text-[11px] md:text-[12px] text-ink-mute font-bold mb-0.5 md:mb-1">세후 누적 배당금</p>
-                          <p className="text-lg md:text-xl font-bold text-ink">{formatMoney(summary.totalAmount, summary.currency)}</p>
+                          <p className="figure text-lg md:text-xl font-bold text-ink">{formatMoney(summary.totalAmount, summary.currency)}</p>
                         </div>
                       </div>
-                      
-                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[12px] md:text-[13px] font-bold ${summary.status.includes('반영') ? 'bg-brand-soft text-brand' : summary.status.includes('이번 달') ? 'bg-line-soft text-ink-soft' : 'bg-line-soft text-ink-soft'}`}>
+
+                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[12px] md:text-[13px] font-bold ${summary.status.includes('반영') ? 'bg-brand-soft text-brand' : 'bg-line-soft text-ink-soft'}`}>
                         {summary.status} {summary.status.includes('예상') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
                       </div>
                     </div>
@@ -4430,7 +4434,7 @@ const buyLotDraftSummary = useMemo(() => {
                 <div className="bg-canvas rounded-2xl p-1 md:p-2">
                   <div className="overflow-x-auto">
                     <table className="w-full text-left table-auto">
-                      <thead className="text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.3em] border-b border-line/50">
+                      <thead className="text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.06em] border-b border-line/50">
                         <tr>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">기준 수량</th>
                           <th className="px-4 py-4 md:px-8 md:py-5 text-right">주당 세후</th>
@@ -4443,7 +4447,7 @@ const buyLotDraftSummary = useMemo(() => {
                           <th className="px-4 py-4 md:px-8 md:py-5 text-center">관리</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-line/50">
+                      <tbody className="divide-y divide-line-soft">
                         {filteredHistory.length > 0 ? filteredHistory.map(div => (
                           <tr key={div.id} className="hover:bg-surface transition-colors group">
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number(div.quantity) > 0 ? `${Number(div.quantity).toLocaleString()}주` : '-'}</td>
@@ -4544,7 +4548,7 @@ const buyLotDraftSummary = useMemo(() => {
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left table-auto">
-                  <thead className="bg-canvas/50 text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.3em]">
+                  <thead className="bg-canvas/50 text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.06em]">
                     <tr>
                       <th className="px-4 py-4 md:px-8 md:py-5">종목</th>
                       <th className="px-4 py-4 md:px-8 md:py-5">매수/매도일</th>
@@ -4553,7 +4557,7 @@ const buyLotDraftSummary = useMemo(() => {
                       <th className="px-4 py-4 md:px-8 md:py-5 text-center">관리</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-line">
+                  <tbody className="divide-y divide-line-soft">
                     {displayedTrades.map((trade) => {
                       const side = getTradeSide(trade);
                       const action = side === 'sell' ? '매도' : '매수';
@@ -4566,7 +4570,7 @@ const buyLotDraftSummary = useMemo(() => {
                       const sellTax = Number(trade.sellTax) || 0;
 
                       return (
-                        <tr key={`${trade.sourceType}-${trade.id}`} className="hover:bg-canvas/50 transition-colors">
+                        <tr key={`${trade.sourceType}-${trade.id}`} className="hover:bg-canvas transition-colors">
                           <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
                             <div className="flex items-center gap-2">
                               <span className={`inline-flex px-2 py-1 rounded-lg text-[12px] font-bold ${side === 'sell' ? 'bg-down-soft text-down' : 'bg-up-soft text-up'}`}>
@@ -4818,7 +4822,7 @@ const buyLotDraftSummary = useMemo(() => {
               )}
 
               {targetViewMode === 'table' && (
-              <div className="divide-y divide-line">
+              <div className="divide-y divide-line-soft">
                 {targetPortfolioGuide.map((category) => (
                   <div key={category.id} className="p-5 md:p-7 space-y-5">
                     <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr_auto] gap-3 lg:items-end">
@@ -5034,29 +5038,34 @@ const buyLotDraftSummary = useMemo(() => {
                   공시 지급일은 한국시간 기준 · 향후 배당락일은 최근 주기로 추정
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="seg flex items-center gap-0.5 p-1 rounded-[14px]">
                 <button
                   onClick={() => setCalendarMonth(getMonthKey(addMonths(new Date(`${calendarMonth}-01T00:00:00`), -1)))}
-                  className="px-3 py-2 bg-canvas rounded-xl text-[12px] md:text-xs font-bold text-ink-soft hover:bg-line-soft transition-colors"
+                  aria-label="이전 달"
+                  className="seg-item w-9 h-9 grid place-items-center rounded-[10px] text-ink-mute hover:text-ink hover:bg-surface"
                 >
-                  이전
+                  <ChevronLeft size={16} />
                 </button>
-                <div className="px-4 py-2 bg-ink text-surface rounded-xl text-xs md:text-sm font-bold min-w-28 text-center">
+                <div className="px-3 min-w-24 text-center text-xs md:text-sm font-bold text-ink tabular-nums">
                   {calendarMonth}
                 </div>
                 <button
                   onClick={() => setCalendarMonth(getMonthKey(addMonths(new Date(`${calendarMonth}-01T00:00:00`), 1)))}
-                  className="px-3 py-2 bg-canvas rounded-xl text-[12px] md:text-xs font-bold text-ink-soft hover:bg-line-soft transition-colors"
+                  aria-label="다음 달"
+                  className="seg-item w-9 h-9 grid place-items-center rounded-[10px] text-ink-mute hover:text-ink hover:bg-surface"
                 >
-                  다음
+                  <ChevronRight size={16} />
                 </button>
               </div>
             </div>
 
             <div className="p-4 md:p-7">
               <div className="grid grid-cols-7 gap-1.5 md:gap-2 mb-2">
-                {CALENDAR_WEEKDAYS.map((weekday) => (
-                  <div key={weekday} className="text-center text-[12px] md:text-xs font-bold text-ink-mute py-2">
+                {CALENDAR_WEEKDAYS.map((weekday, weekdayIndex) => (
+                  <div
+                    key={weekday}
+                    className={`text-center text-[11px] md:text-[12px] font-bold tracking-[0.06em] py-2 ${weekdayIndex === 0 ? 'text-up/70' : weekdayIndex === 6 ? 'text-down/70' : 'text-ink-mute'}`}
+                  >
                     {weekday}
                   </div>
                 ))}
@@ -5067,9 +5076,9 @@ const buyLotDraftSummary = useMemo(() => {
                   return (
                     <div
                       key={cell.dateKey}
-                      className={`min-h-20 md:min-h-28 rounded-xl border p-2 transition-colors ${cell.isCurrentMonth ? 'bg-surface border-line' : 'bg-canvas/60 border-line text-ink-mute'}`}
+                      className={`min-h-20 md:min-h-28 rounded-xl border p-2 transition-colors ${cell.isCurrentMonth ? 'bg-surface border-line-soft' : 'bg-canvas/50 border-transparent text-ink-mute'}`}
                     >
-                      <div className={`text-[12px] md:text-xs font-bold mb-1.5 ${cell.isCurrentMonth ? 'text-ink-soft' : 'text-ink-mute'}`}>
+                      <div className={`text-[12px] md:text-xs font-semibold mb-1.5 tabular-nums ${cell.isCurrentMonth ? 'text-ink-soft' : 'text-ink-mute/70'}`}>
                         {cell.day}
                       </div>
                       <div className="space-y-1">
@@ -5078,7 +5087,7 @@ const buyLotDraftSummary = useMemo(() => {
                             key={event.id}
                             onClick={() => setSelectedCalendarEventId(event.id)}
                             title={`${event.name} 세전 ${formatMoney(event.grossAmount, event.currency)} / 세후 ${formatMoney(event.netAmount, event.currency)}`}
-                            className={`w-full truncate rounded-lg px-2 py-1 text-[12px] md:text-xs font-bold text-left transition-colors ${selectedCalendarEvent?.id === event.id ? 'bg-brand text-surface' : event.isEstimated ? 'bg-brand-soft text-brand hover:bg-brand-soft/70' : 'bg-up-soft text-up hover:bg-up-soft/70'}`}
+                            className={`w-full truncate rounded-md px-1.5 py-1 text-[11px] md:text-[12px] font-semibold text-left transition-all ${selectedCalendarEvent?.id === event.id ? 'bg-ink text-surface shadow-card' : event.isEstimated ? 'bg-brand-soft text-ink-soft hover:bg-line' : 'bg-up-soft text-up hover:brightness-95'}`}
                           >
                             {event.name}
                           </button>
@@ -5106,13 +5115,13 @@ const buyLotDraftSummary = useMemo(() => {
                       )}
                     </div>
                     <div className="grid grid-cols-2 gap-3 min-w-full md:min-w-80">
-                      <div className="bg-canvas rounded-xl p-4">
+                      <div className="bg-surface border border-line-soft rounded-xl p-4">
                         <p className="text-[12px] font-bold text-ink-mute mb-1">{selectedCalendarEvent.isEstimated ? '세전 예상' : '세전'}</p>
-                        <p className="text-base md:text-lg font-bold text-ink">{formatMoney(selectedCalendarEvent.grossAmount, selectedCalendarEvent.currency)}</p>
+                        <p className="figure text-base md:text-lg font-bold text-ink">{formatMoney(selectedCalendarEvent.grossAmount, selectedCalendarEvent.currency)}</p>
                       </div>
-                      <div className="bg-canvas rounded-xl p-4">
+                      <div className="bg-surface border border-line-soft rounded-xl p-4">
                         <p className="text-[12px] font-bold text-ink-mute mb-1">{selectedCalendarEvent.isEstimated ? '세후 예상' : '세후'}</p>
-                        <p className="text-base md:text-lg font-bold text-up">{formatMoney(selectedCalendarEvent.netAmount, selectedCalendarEvent.currency)}</p>
+                        <p className="figure text-base md:text-lg font-bold text-up">{formatMoney(selectedCalendarEvent.netAmount, selectedCalendarEvent.currency)}</p>
                       </div>
                     </div>
                   </div>
@@ -5127,7 +5136,7 @@ const buyLotDraftSummary = useMemo(() => {
 
       {isAddingDividend && (
         <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[110] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
-          <div className="bg-surface w-full max-w-[440px] max-h-[90vh] overflow-y-auto scroll-soft rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise">
+          <div className="bg-surface w-full max-w-[440px] max-h-[90vh] overflow-y-auto scroll-soft rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise">
             <div className="flex justify-between items-center mb-6">
               <div>
                 <h3 className="text-lg md:text-xl font-bold text-ink">실제 입금 배당 추가</h3>
@@ -5258,7 +5267,7 @@ const buyLotDraftSummary = useMemo(() => {
       {/* 자산 추가 모달 */}
 {isAdding && (
   <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[100] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
-    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
+    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
       <div className="flex justify-between items-center mb-6 md:mb-8 sticky top-0 bg-surface z-10 pt-2 pb-2">
         <h3 className="text-lg md:text-xl font-bold text-ink">새 자산 등록</h3>
         <button
@@ -5469,7 +5478,7 @@ const buyLotDraftSummary = useMemo(() => {
 
   return (
   <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[105] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
-    <div className="bg-surface w-full max-w-4xl max-h-[88vh] rounded-t-[24px] md:rounded-[24px] p-6 md:p-7 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-7 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise flex flex-col">
+    <div className="bg-surface w-full max-w-4xl max-h-[88vh] rounded-t-[24px] md:rounded-[24px] p-6 md:p-7 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-7 shadow-modal anim-rise flex flex-col">
       <div className="flex justify-between items-start gap-4 mb-5 md:mb-6">
         <div className="min-w-0">
           <h3 className="text-lg md:text-xl font-bold text-ink truncate">
@@ -5508,7 +5517,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
       </div>
 
-      <div className="rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5">
+      <div className="hairline rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
           <div>
             <label className="block text-[11px] font-bold text-ink-mute mb-1">보유 계좌</label>
@@ -5531,7 +5540,7 @@ const buyLotDraftSummary = useMemo(() => {
       {/* 외화 종목만: 증권사가 보여주는 원화 투자 원금을 직접 맞출 수 있게 한다.
           자동 계산은 매수일 종가 환율이라 실제 체결 환율과 몇천 원 차이가 날 수 있다. */}
       {isForeignManagedAsset && (
-        <div className="rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-3">
+        <div className="hairline rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-3">
           <div className="flex items-baseline justify-between gap-3">
             <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">매수 시점 환율로 계산한 원금</p>
             <p className="text-sm md:text-base font-bold text-ink">
@@ -5547,7 +5556,7 @@ const buyLotDraftSummary = useMemo(() => {
       )}
 
       {isForeignManagedAsset && (
-        <div className="rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5">
+        <div className="hairline rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5">
           <label className="block text-[11px] md:text-[11px] font-bold text-ink-mute mb-2">
             원화 투자 원금 직접 입력 (선택)
           </label>
@@ -5673,7 +5682,7 @@ const buyLotDraftSummary = useMemo(() => {
 {/* 추가 매수 모달 */}
 {isUpdatingAsset && selectedAssetToUpdate && (
   <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[110] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
-    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
+    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
       <div className="flex justify-between items-center mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-bold text-ink">
           {selectedAssetToUpdate.name} 추가 매수
@@ -5793,7 +5802,7 @@ const buyLotDraftSummary = useMemo(() => {
 {/* 매도 모달 */}
 {isSellingAsset && selectedAssetToSell && (
   <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[120] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
-    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
+    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
       <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
         <h3 className="text-lg md:text-xl font-bold text-ink whitespace-nowrap">
           {selectedAssetToSell.name} 매도
@@ -5910,33 +5919,39 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
 
         {sellFeePreview && (sellFeePreview.grossSellAmount > 0 || sellFeePreview.grossPnl !== 0) && (
-          <div className="rounded-2xl border border-line bg-canvas/70 p-4 space-y-2">
-            <div className="flex items-center justify-between gap-4 text-xs md:text-sm">
-              <span className="font-bold text-ink-mute">예상 수수료</span>
-              <span className="font-extrabold text-ink">
-                {formatMoney(sellFeePreview.brokerFee, selectedAssetToSell.currency)}
-              </span>
+          <div className="receipt rounded-2xl px-4 py-4 md:px-5">
+            <p className="eyebrow mb-3">차감 내역</p>
+
+            <div className="space-y-2.5">
+              <div className="receipt-row text-xs md:text-sm">
+                <span className="font-semibold text-ink-mute">예상 수수료</span>
+                <span className="font-bold text-ink-soft">
+                  −{formatMoney(sellFeePreview.brokerFee, selectedAssetToSell.currency)}
+                </span>
+              </div>
+              <div className="receipt-row text-xs md:text-sm">
+                <span className="font-semibold text-ink-mute">예상 제세금</span>
+                <span className="font-bold text-ink-soft">
+                  −{formatMoney(sellFeePreview.sellTax, selectedAssetToSell.currency)}
+                </span>
+              </div>
+              <div className="receipt-row text-xs md:text-sm">
+                <span className="font-semibold text-ink-mute">총 차감액</span>
+                <span className="font-bold text-ink">
+                  −{formatMoney(sellFeePreview.totalCost, selectedAssetToSell.currency)}
+                </span>
+              </div>
             </div>
-            <div className="flex items-center justify-between gap-4 text-xs md:text-sm">
-              <span className="font-bold text-ink-mute">예상 제세금</span>
-              <span className="font-extrabold text-ink">
-                {formatMoney(sellFeePreview.sellTax, selectedAssetToSell.currency)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between gap-4 text-xs md:text-sm">
-              <span className="font-bold text-ink-mute">총 차감액</span>
-              <span className="font-extrabold text-ink">
-                {formatMoney(sellFeePreview.totalCost, selectedAssetToSell.currency)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between gap-4 text-xs md:text-sm">
-              <span className="font-bold text-ink-mute">차감 후 손익</span>
-              <span className={`font-extrabold ${sellFeePreview.netPnl >= 0 ? 'text-up' : 'text-down'}`}>
+
+            <div className="receipt-row receipt-total">
+              <span className="text-xs md:text-sm font-bold text-ink">차감 후 손익</span>
+              <span className={`figure text-lg md:text-xl font-bold ${sellFeePreview.netPnl >= 0 ? 'text-up' : 'text-down'}`}>
                 {sellFeePreview.netPnl >= 0 ? '+' : ''}
                 {formatMoney(sellFeePreview.netPnl, selectedAssetToSell.currency)}
               </span>
             </div>
-            <p className="text-[11px] font-semibold text-ink-mute leading-relaxed">
+
+            <p className="mt-3 text-[11px] font-medium text-ink-mute leading-relaxed">
               국내주식 제세금 기본값은 매도금액의 0.2%입니다. ETF, 우대계좌, 증권사 이벤트 조건이 다르면 바로 수정하세요.
             </p>
           </div>
@@ -5997,7 +6012,7 @@ const buyLotDraftSummary = useMemo(() => {
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="remove-asset-title"
-            className="w-full max-w-[420px] bg-surface rounded-[24px] p-7 shadow-[0_16px_48px_rgba(25,31,40,0.24)] anim-rise"
+            className="w-full max-w-[420px] bg-surface rounded-[24px] p-7 shadow-modal anim-rise"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="w-11 h-11 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mb-4">
