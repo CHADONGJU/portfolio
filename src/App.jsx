@@ -158,6 +158,12 @@ const formatFeeRateInput = (rate) => {
   if (!Number.isFinite(value)) return '0';
   return String(Number(value.toFixed(4)));
 };
+const DOMESTIC_STOCK_SELL_TAX_RATE_PERCENT = 0.2;
+const getSellTaxRatePercent = (asset = {}) => (
+  isDomesticStockCategory(asset.category)
+    ? DOMESTIC_STOCK_SELL_TAX_RATE_PERCENT
+    : 0
+);
 const formatDateKey = (date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -288,6 +294,8 @@ const buildLedgerEntry = ({
   brokerFeeRate = 0,
   brokerFeeRatePercent = 0,
   brokerFee = 0,
+  sellTaxRatePercent = 0,
+  sellTax = 0,
 }) => ({
   id: sourceId || `${Date.now()}-${Math.random()}`,
   sourceId,
@@ -312,6 +320,8 @@ const buildLedgerEntry = ({
   brokerFeeRate: Number(brokerFeeRate) || 0,
   brokerFeeRatePercent: Number(brokerFeeRatePercent) || 0,
   brokerFee: Number(brokerFee) || 0,
+  sellTaxRatePercent: Number(sellTaxRatePercent) || 0,
+  sellTax: Number(sellTax) || 0,
   // 거래 시점의 원화 환율. 실현손익을 "오늘 환율"로 환산하면
   // 과거 누적 실현손익이 매일 바뀌므로 기록 시점 값을 함께 남긴다.
   fxRate: Number(fxRate) || 0,
@@ -341,6 +351,8 @@ const buildInitialTradeLedger = ({ assets, trades, memos }) => {
       brokerFeeRate: memo.brokerFeeRate,
       brokerFeeRatePercent: memo.brokerFeeRatePercent,
       brokerFee: memo.brokerFee,
+      sellTaxRatePercent: memo.sellTaxRatePercent,
+      sellTax: memo.sellTax,
     }));
   });
 
@@ -359,6 +371,8 @@ const buildInitialTradeLedger = ({ assets, trades, memos }) => {
       brokerFeeRate: trade.brokerFeeRate,
       brokerFeeRatePercent: trade.brokerFeeRatePercent,
       brokerFee: trade.brokerFee,
+      sellTaxRatePercent: trade.sellTaxRatePercent,
+      sellTax: trade.sellTax,
     }));
   });
 
@@ -1137,6 +1151,7 @@ const initialSellFormState = {
   sellDate: defaultBuyDate,
   brokerId: DEFAULT_BROKER_ID,
   brokerFeeRate: '0',
+  sellTaxRate: '0',
   memo: ''
 };
 
@@ -1148,17 +1163,22 @@ const sellFeePreview = useMemo(() => {
   const sellPrice = parseNumber(sellForm.sellPrice);
   const buyPrice = parseNumber(selectedAssetToSell.originalAveragePrice || selectedAssetToSell.averagePrice);
   const feeRatePercent = parseNumber(sellForm.brokerFeeRate);
+  const sellTaxRatePercent = parseNumber(sellForm.sellTaxRate);
   const grossSellAmount = sellPrice * quantity;
   const brokerFee = grossSellAmount * (feeRatePercent / 100);
+  const sellTax = grossSellAmount * (sellTaxRatePercent / 100);
   const grossPnl = (sellPrice - buyPrice) * quantity;
-  const netPnl = grossPnl - brokerFee;
+  const netPnl = grossPnl - brokerFee - sellTax;
 
   return {
     grossSellAmount,
     brokerFee,
+    sellTax,
+    totalCost: brokerFee + sellTax,
     grossPnl,
     netPnl,
     feeRatePercent,
+    sellTaxRatePercent,
   };
 }, [selectedAssetToSell, sellForm]);
 const buyLotDraftSummary = useMemo(() => {
@@ -2638,6 +2658,8 @@ const buyLotDraftSummary = useMemo(() => {
           brokerFeeRate: entry.brokerFeeRate || 0,
           brokerFeeRatePercent: entry.brokerFeeRatePercent || 0,
           brokerFee: entry.brokerFee || 0,
+          sellTaxRatePercent: entry.sellTaxRatePercent || 0,
+          sellTax: entry.sellTax || 0,
           memo: memoText.trim(),
           createdAt: new Date().toISOString(),
           ledgerId: entry.id,
@@ -2678,6 +2700,8 @@ const buyLotDraftSummary = useMemo(() => {
     brokerFeeRate = 0,
     brokerFeeRatePercent = 0,
     brokerFee = 0,
+    sellTaxRatePercent = 0,
+    sellTax = 0,
   }) => {
     // 과거 날짜로 입력한 거래에 '오늘' 환율을 찍으면 원금이 통째로 틀어진다.
     // 거래일이 오늘일 때만 지금 환율을 쓰고, 지난 날짜는 0으로 두었다가 그날 환율을 받아 채운다.
@@ -2698,6 +2722,8 @@ const buyLotDraftSummary = useMemo(() => {
       brokerFeeRate,
       brokerFeeRatePercent,
       brokerFee,
+      sellTaxRatePercent,
+      sellTax,
       // 환율을 아직 못 받아온 상태의 추정치(1350 등)를 각인하면 영영 보정되지 않으므로
       // 실측값이 있을 때만 남기고, 없으면 0으로 두어 나중에 백필이 처리하게 한다.
       fxRate: knownFxRate || (isTradedToday ? getMeasuredKrwRate(asset.currency) : 0),
@@ -2926,6 +2952,8 @@ const buyLotDraftSummary = useMemo(() => {
     brokerFeeRate = 0,
     brokerFeeRatePercent = 0,
     brokerFee = 0,
+    sellTaxRatePercent = 0,
+    sellTax = 0,
   }) => {
     setMemos(prevMemos => [{
       id: Date.now() + Math.random(),
@@ -2947,6 +2975,8 @@ const buyLotDraftSummary = useMemo(() => {
       brokerFeeRate: Number(brokerFeeRate) || 0,
       brokerFeeRatePercent: Number(brokerFeeRatePercent) || 0,
       brokerFee: Number(brokerFee) || 0,
+      sellTaxRatePercent: Number(sellTaxRatePercent) || 0,
+      sellTax: Number(sellTax) || 0,
       memo: memo?.trim() || '',
       createdAt: new Date().toISOString()
     }, ...prevMemos]);
@@ -3026,6 +3056,7 @@ const buyLotDraftSummary = useMemo(() => {
     sellDate: new Date().toISOString().split('T')[0],
     brokerId: defaultBrokerId,
     brokerFeeRate: formatFeeRateInput(getBrokerFeeRatePercent(defaultBrokerId, asset.category)),
+    sellTaxRate: formatFeeRateInput(getSellTaxRatePercent(asset)),
     memo: ''
   });
   setIsSellingAsset(true);
@@ -3355,10 +3386,12 @@ const buyLotDraftSummary = useMemo(() => {
   const brokerPreset = getBrokerPreset(brokerId);
   const brokerFeeRatePercent = parseNumber(sellForm.brokerFeeRate);
   const brokerFeeRate = brokerFeeRatePercent / 100;
+  const sellTaxRatePercent = parseNumber(sellForm.sellTaxRate);
   const grossSellAmountNative = sellPriceNative * sellQty;
   const brokerFeeNative = grossSellAmountNative * brokerFeeRate;
+  const sellTaxNative = grossSellAmountNative * (sellTaxRatePercent / 100);
   const grossPnlNative = (sellPriceNative - avgBuyNative) * sellQty;
-  const pnlNative = grossPnlNative - brokerFeeNative;
+  const pnlNative = grossPnlNative - brokerFeeNative - sellTaxNative;
   const selectedAssetIdentity = getAssetIdentity(selectedAssetToSell);
   const updatedAt = new Date().toISOString();
 
@@ -3380,7 +3413,9 @@ const buyLotDraftSummary = useMemo(() => {
     brokerName: brokerPreset.name,
     brokerFeeRate,
     brokerFeeRatePercent,
-    brokerFee: brokerFeeNative
+    brokerFee: brokerFeeNative,
+    sellTaxRatePercent,
+    sellTax: sellTaxNative
   };
 
   const remainingQty = currentQty - sellQty;
@@ -3414,7 +3449,9 @@ const buyLotDraftSummary = useMemo(() => {
     brokerName: brokerPreset.name,
     brokerFeeRate,
     brokerFeeRatePercent,
-    brokerFee: brokerFeeNative
+    brokerFee: brokerFeeNative,
+    sellTaxRatePercent,
+    sellTax: sellTaxNative
   });
   addLedgerEntry({
     sourceId: `trade-${trade.id}`,
@@ -3430,6 +3467,8 @@ const buyLotDraftSummary = useMemo(() => {
     brokerFeeRate,
     brokerFeeRatePercent,
     brokerFee: brokerFeeNative,
+    sellTaxRatePercent,
+    sellTax: sellTaxNative,
   });
 
   addLog(`'${selectedAssetToSell.name}' 매도 반영 완료`, "success");
@@ -4524,6 +4563,7 @@ const buyLotDraftSummary = useMemo(() => {
                         : (trade.price || trade.buyPrice);
                       const pnl = getRecordPnl(trade);
                       const brokerFee = Number(trade.brokerFee) || 0;
+                      const sellTax = Number(trade.sellTax) || 0;
 
                       return (
                         <tr key={`${trade.sourceType}-${trade.id}`} className="hover:bg-canvas/50 transition-colors">
@@ -4556,6 +4596,11 @@ const buyLotDraftSummary = useMemo(() => {
                                 {brokerFee > 0 && (
                                   <span className="text-[11px] font-bold text-ink-mute">
                                     수수료 -{formatMoney(brokerFee, trade.currency)}
+                                  </span>
+                                )}
+                                {sellTax > 0 && (
+                                  <span className="text-[11px] font-bold text-ink-mute">
+                                    제세금 -{formatMoney(sellTax, trade.currency)}
                                   </span>
                                 )}
                               </div>
@@ -5828,7 +5873,7 @@ const buyLotDraftSummary = useMemo(() => {
 
           <div>
             <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-              수수료율(%)
+              매매 수수료율(%)
             </label>
             <input
               type="text"
@@ -5846,6 +5891,24 @@ const buyLotDraftSummary = useMemo(() => {
           </div>
         </div>
 
+        <div>
+          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
+            제세금율(%)
+          </label>
+          <input
+            type="text"
+            inputMode="decimal"
+            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+            value={sellForm.sellTaxRate}
+            onChange={(e) =>
+              setSellForm((prev) => ({
+                ...prev,
+                sellTaxRate: sanitizeNumericInput(e.target.value)
+              }))
+            }
+          />
+        </div>
+
         {sellFeePreview && (sellFeePreview.grossSellAmount > 0 || sellFeePreview.grossPnl !== 0) && (
           <div className="rounded-2xl border border-line bg-canvas/70 p-4 space-y-2">
             <div className="flex items-center justify-between gap-4 text-xs md:text-sm">
@@ -5855,14 +5918,26 @@ const buyLotDraftSummary = useMemo(() => {
               </span>
             </div>
             <div className="flex items-center justify-between gap-4 text-xs md:text-sm">
-              <span className="font-bold text-ink-mute">수수료 차감 후 손익</span>
+              <span className="font-bold text-ink-mute">예상 제세금</span>
+              <span className="font-extrabold text-ink">
+                {formatMoney(sellFeePreview.sellTax, selectedAssetToSell.currency)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-4 text-xs md:text-sm">
+              <span className="font-bold text-ink-mute">총 차감액</span>
+              <span className="font-extrabold text-ink">
+                {formatMoney(sellFeePreview.totalCost, selectedAssetToSell.currency)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-4 text-xs md:text-sm">
+              <span className="font-bold text-ink-mute">차감 후 손익</span>
               <span className={`font-extrabold ${sellFeePreview.netPnl >= 0 ? 'text-up' : 'text-down'}`}>
                 {sellFeePreview.netPnl >= 0 ? '+' : ''}
                 {formatMoney(sellFeePreview.netPnl, selectedAssetToSell.currency)}
               </span>
             </div>
             <p className="text-[11px] font-semibold text-ink-mute leading-relaxed">
-              프리셋은 계산 편의를 위한 기본값입니다. 실제 계좌 조건이 다르면 바로 수정하세요.
+              국내주식 제세금 기본값은 매도금액의 0.2%입니다. ETF, 우대계좌, 증권사 이벤트 조건이 다르면 바로 수정하세요.
             </p>
           </div>
         )}

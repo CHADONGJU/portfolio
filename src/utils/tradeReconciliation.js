@@ -109,6 +109,7 @@ export const normalizeTradeRow = (record = {}) => {
     && recordedPnl !== '';
   const pnl = parseTradeNumber(record.pnl ?? record.realizedPnl);
   const brokerFee = parseTradeNumber(record.brokerFee ?? record.fee ?? record.commission);
+  const sellTax = parseTradeNumber(record.sellTax ?? record.tax ?? record.transactionTax);
   const grossPnl = parseTradeNumber(record.grossPnl);
 
   return {
@@ -120,8 +121,10 @@ export const normalizeTradeRow = (record = {}) => {
     pnl,
     grossPnl,
     brokerFee,
+    sellTax,
     brokerFeeRate: parseTradeNumber(record.brokerFeeRate),
     brokerFeeRatePercent: parseTradeNumber(record.brokerFeeRatePercent),
+    sellTaxRatePercent: parseTradeNumber(record.sellTaxRatePercent),
     hasRecordedPnl,
   };
 };
@@ -178,7 +181,7 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
       const computedGrossPnl = matchedQuantity > EPSILON
         ? (row.price - averageCost) * matchedQuantity
         : row.pnl;
-      const computedPnl = computedGrossPnl - row.brokerFee;
+      const computedPnl = computedGrossPnl - row.brokerFee - row.sellTax;
       const hasCalculatedPnl = matchedQuantity > EPSILON;
       const resolvedPnl = row.hasRecordedPnl ? row.pnl : computedPnl;
 
