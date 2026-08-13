@@ -50,6 +50,7 @@ import {
 } from './utils/tradeReconciliation';
 import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
 import { buildTradeSummary } from './utils/tradeSummary';
+import { summarizeDividendCalendarEvents } from './utils/dividendCalendar';
 import { getDividendRefreshState, getDividendRefreshVersion } from './utils/dividendRefresh';
 import { isRecordForAsset } from './utils/assetIdentity';
 import {
@@ -1068,6 +1069,7 @@ const App = () => {
   const [dividendFilter, setDividendFilter] = useState('전체');
   const [calendarMonth, setCalendarMonth] = useState(() => getMonthKey(new Date()));
   const [selectedCalendarEventId, setSelectedCalendarEventId] = useState('');
+  const [expandedCalendarDate, setExpandedCalendarDate] = useState('');
 
   const [isAdding, setIsAdding] = useState(false);
   const defaultBuyDate = new Date().toISOString().split('T')[0];
@@ -1085,6 +1087,7 @@ const App = () => {
   });
   const [tradeSortMode, setTradeSortMode] = useState('newest');
   const [tradeStockFilter, setTradeStockFilter] = useState('all');
+  const [tradeSideFilter, setTradeSideFilter] = useState('all');
   const [tradeVisibleCount, setTradeVisibleCount] = useState(TRADE_PAGE_SIZE);
   const [performanceSearchTerm, setPerformanceSearchTerm] = useState('');
   const [memoSortMode, setMemoSortMode] = useState('newest');
@@ -2072,6 +2075,12 @@ const buyLotDraftSummary = useMemo(() => {
       return acc;
     }, {})
   ), [dividendCalendarEvents]);
+  const dividendCalendarMonthlySummary = useMemo(() => (
+    summarizeDividendCalendarEvents(dividendCalendarEvents)
+  ), [dividendCalendarEvents]);
+  const expandedCalendarEvents = useMemo(() => (
+    expandedCalendarDate ? (dividendCalendarEventsByDate[expandedCalendarDate] || []) : []
+  ), [dividendCalendarEventsByDate, expandedCalendarDate]);
   const selectedCalendarEvent = useMemo(() => (
     dividendCalendarEvents.find(event => event.id === selectedCalendarEventId) || dividendCalendarEvents[0] || null
   ), [dividendCalendarEvents, selectedCalendarEventId]);
@@ -2081,6 +2090,12 @@ const buyLotDraftSummary = useMemo(() => {
       setSelectedCalendarEventId('');
     }
   }, [dividendCalendarEvents, selectedCalendarEventId]);
+  useEffect(() => {
+    if (!expandedCalendarDate) return;
+    if (!dividendCalendarEventsByDate[expandedCalendarDate]) {
+      setExpandedCalendarDate('');
+    }
+  }, [dividendCalendarEventsByDate, expandedCalendarDate]);
   const targetBudgetKRW = parseNumber(targetPortfolio.budget) || totalConvertedKRW;
   const targetCategoryTotalPercent = targetPortfolio.categories.reduce((sum, category) => sum + (Number(category.percent) || 0), 0);
   const targetPortfolioGuide = useMemo(() => {
@@ -2497,11 +2512,14 @@ const buyLotDraftSummary = useMemo(() => {
     ].filter(Boolean))].sort()
   ), [tradeLedger, enrichedMemos]);
   const visibleTrades = useMemo(() => {
-    const filtered = tradeStockFilter === 'all'
+    const stockFiltered = tradeStockFilter === 'all'
       ? tradeRecords
       : tradeRecords.filter((trade) => trade.name === tradeStockFilter);
-    return sortTradeRecords(filtered, tradeSortMode);
-  }, [tradeRecords, tradeStockFilter, tradeSortMode]);
+    const sideFiltered = tradeSideFilter === 'all'
+      ? stockFiltered
+      : stockFiltered.filter((trade) => getTradeSide(trade) === tradeSideFilter);
+    return sortTradeRecords(sideFiltered, tradeSortMode);
+  }, [tradeRecords, tradeStockFilter, tradeSideFilter, tradeSortMode]);
   const displayedTrades = useMemo(() => (
     visibleTrades.slice(0, tradeVisibleCount)
   ), [visibleTrades, tradeVisibleCount]);
@@ -2509,7 +2527,7 @@ const buyLotDraftSummary = useMemo(() => {
 
   useEffect(() => {
     setTradeVisibleCount(TRADE_PAGE_SIZE);
-  }, [tradeStockFilter, tradeSortMode]);
+  }, [tradeStockFilter, tradeSideFilter, tradeSortMode]);
 
   const memoLedgerRecords = useMemo(() => {
     const matchedMemoIds = new Set();
@@ -4516,6 +4534,16 @@ const buyLotDraftSummary = useMemo(() => {
                     ))}
                   </select>
                   <select
+                    value={tradeSideFilter}
+                    onChange={(e) => setTradeSideFilter(e.target.value)}
+                    aria-label="매수 또는 매도 필터"
+                    className="px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
+                  >
+                    <option value="all">전체 거래</option>
+                    <option value="buy">매수만</option>
+                    <option value="sell">매도만</option>
+                  </select>
+                  <select
                     value={tradeSortMode}
                     onChange={(e) => setTradeSortMode(e.target.value)}
                     className="px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
@@ -5059,6 +5087,28 @@ const buyLotDraftSummary = useMemo(() => {
               </div>
             </div>
 
+            <div className="px-5 py-4 md:px-7 md:py-5 border-b border-line bg-canvas/60 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <p className="text-[12px] md:text-xs font-bold text-ink-mute">
+                  {calendarMonth.replace('-', '년 ')}월 세후 예상 배당 합계
+                </p>
+                <p className="text-[11px] md:text-[12px] font-semibold text-ink-mute mt-1">
+                  지급 확정 {dividendCalendarMonthlySummary.confirmedCount.toLocaleString()}건 · 예상 {dividendCalendarMonthlySummary.estimatedCount.toLocaleString()}건 · 통화별 합계
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {dividendCalendarMonthlySummary.totals.length > 0 ? (
+                  dividendCalendarMonthlySummary.totals.map(({ currency, amount }) => (
+                    <span key={currency} className="figure px-3 py-2 rounded-xl bg-surface border border-line-soft text-sm md:text-base font-bold text-ink">
+                      {formatMoney(amount, currency)}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-xs md:text-sm font-bold text-ink-mute">예정 금액 없음</span>
+                )}
+              </div>
+            </div>
+
             <div className="p-4 md:p-7">
               <div className="grid grid-cols-7 gap-1.5 md:gap-2 mb-2">
                 {CALENDAR_WEEKDAYS.map((weekday, weekdayIndex) => (
@@ -5093,13 +5143,66 @@ const buyLotDraftSummary = useMemo(() => {
                           </button>
                         ))}
                         {events.length > 3 && (
-                          <span className="block text-[11px] font-bold text-ink-mute px-1">+{events.length - 3}</span>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedCalendarDate((previous) => (
+                              previous === cell.dateKey ? '' : cell.dateKey
+                            ))}
+                            aria-expanded={expandedCalendarDate === cell.dateKey}
+                            aria-label={`${cell.dateKey} 배당 일정 ${events.length - 3}건 더 보기`}
+                            className={`block w-full rounded-md px-1 py-0.5 text-left text-[11px] font-bold transition-colors ${expandedCalendarDate === cell.dateKey ? 'bg-ink text-surface' : 'text-ink-mute hover:bg-canvas hover:text-ink'}`}
+                          >
+                            +{events.length - 3} 더보기
+                          </button>
                         )}
                       </div>
                     </div>
                   );
                 })}
               </div>
+
+              {expandedCalendarEvents.length > 0 && (
+                <div className="mt-4 md:mt-5 rounded-2xl border border-line bg-surface p-4 md:p-5 shadow-card">
+                  <div className="flex items-center justify-between gap-3 mb-3">
+                    <div>
+                      <p className="text-[11px] md:text-[12px] font-bold text-ink-mute">선택한 날짜의 전체 배당 일정</p>
+                      <h4 className="text-sm md:text-base font-bold text-ink mt-0.5">
+                        {expandedCalendarDate} · {expandedCalendarEvents.length.toLocaleString()}건
+                      </h4>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setExpandedCalendarDate('')}
+                      aria-label="날짜별 전체 일정 닫기"
+                      className="p-2 rounded-full bg-canvas text-ink-mute hover:text-ink transition-colors"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                    {expandedCalendarEvents.map((event) => (
+                      <button
+                        key={event.id}
+                        type="button"
+                        onClick={() => setSelectedCalendarEventId(event.id)}
+                        className={`rounded-xl border p-3 text-left transition-colors ${selectedCalendarEvent?.id === event.id ? 'border-ink bg-ink text-surface' : 'border-line-soft bg-canvas hover:border-line'}`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-bold text-xs md:text-sm truncate">{event.name}</p>
+                            <p className={`text-[11px] font-semibold mt-1 ${selectedCalendarEvent?.id === event.id ? 'text-surface/70' : 'text-ink-mute'}`}>
+                              {event.dateLabel} · {event.isEstimated ? '예상' : '확정'}
+                            </p>
+                          </div>
+                          <span className={`figure shrink-0 text-xs md:text-sm font-bold ${selectedCalendarEvent?.id === event.id ? 'text-surface' : 'text-up'}`}>
+                            {formatMoney(event.netAmount, event.currency)}
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="mt-5 md:mt-6 bg-canvas rounded-2xl p-5 md:p-6">
                 {selectedCalendarEvent ? (

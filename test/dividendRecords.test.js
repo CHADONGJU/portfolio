@@ -195,12 +195,20 @@ test('공식 지급일이 지난 보유수량 검증 계산분은 홈페이지 �
   assert.equal(rows.reduce((sum, row) => sum + row.amount, 0), 15780);
 });
 
-test('지급일이 없는 배당락일 추정치는 입금 합계에 포함하지 않는다', () => {
+test('지급일이 없는 해외 배당락일 추정치는 입금 합계에 포함하지 않는다', () => {
+  const rows = selectReceivedDividendRecords([
+    { id: 'foreign', ticker: 'TEST', amount: 0.75, currency: 'USD', date: '2026-07-30', entitlementVerified: true },
+  ], '2026-08-04');
+
+  assert.equal(rows.length, 0);
+});
+
+test('국내 배당은 지급일이 없어도 검증된 배당락일이 지나면 입금 합계에 포함한다', () => {
   const rows = selectReceivedDividendRecords([
     { id: 'tiger', ticker: '277630', amount: 862.92, currency: 'KRW', date: '2026-07-30', entitlementVerified: true },
   ], '2026-08-04');
 
-  assert.equal(rows.length, 0);
+  assert.equal(rows.length, 1);
 });
 
 test('빈 원격 배열을 병합해도 로컬 실제 배당 내역이 사라지지 않는다', () => {
