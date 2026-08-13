@@ -6,6 +6,7 @@ import {
   ChevronLeft, ChevronRight, NotebookPen, PlusCircle
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
+import FeatureInfo from './components/FeatureInfo';
 import ManualTradeEntryForm from './components/ManualTradeEntryForm';
 import StockFilterCombobox from './components/StockFilterCombobox';
 import SyncStatusToast from './components/SyncStatusToast';
@@ -55,6 +56,11 @@ import { buildTradeSummary } from './utils/tradeSummary';
 import { summarizeDividendCalendarEvents } from './utils/dividendCalendar';
 import { buildStockSearchOptions } from './utils/stockSearchOptions';
 import { combineTradesWithMemos } from './utils/tradeMemos';
+import {
+  isDeletedMemoRecord,
+  selectActiveMemoRecords,
+  tombstoneMemoRecords,
+} from './utils/memoRecords';
 import { getDividendRefreshState, getDividendRefreshVersion } from './utils/dividendRefresh';
 import { isRecordForAsset } from './utils/assetIdentity';
 import {
@@ -250,6 +256,7 @@ const findMatchingSellTrade = (memo, trades) => trades.find((trade) => {
 });
 
 const findMatchingMemoForLedger = (entry, memos) => memos.find((memo) => {
+  if (isDeletedMemoRecord(memo)) return false;
   if (memo.ledgerId && (String(memo.ledgerId) === String(entry.id) || String(memo.ledgerId) === String(entry.sourceId))) return true;
   if (entry.sourceId === `memo-${memo.id}`) return true;
   if (!entry.name || entry.name !== memo.name) return false;
@@ -1032,6 +1039,7 @@ const App = () => {
   const [cloudRetryToken, setCloudRetryToken] = useState(0);
   const loadedUserIdRef = useRef('');
   const [assetPendingRemoval, setAssetPendingRemoval] = useState(null);
+  const [isClearAllMemosConfirmOpen, setIsClearAllMemosConfirmOpen] = useState(false);
 
   // 피드백 로그 (3초 뒤 자동 삭제)
   const [syncStatus, setSyncStatus] = useState([]);
@@ -1066,6 +1074,16 @@ const App = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [assetPendingRemoval]);
+
+  useEffect(() => {
+    if (!isClearAllMemosConfirmOpen) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setIsClearAllMemosConfirmOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isClearAllMemosConfirmOpen]);
 
   const [selectedCategory, setSelectedCategory] = useState(null);
   // 자산 ID별 표시 통화. 'KRW'면 원화 환산, 그 외에는 현지 통화로 보여준다.
@@ -2489,7 +2507,8 @@ const buyLotDraftSummary = useMemo(() => {
       sourceType: tradeLedger.length > 0 ? 'ledger' : 'trade',
     }));
   }, [tradeLedger, trades]);
-  const enrichedMemos = useMemo(() => memos.map((memo) => {
+  const activeMemos = useMemo(() => selectActiveMemoRecords(memos), [memos]);
+  const enrichedMemos = useMemo(() => activeMemos.map((memo) => {
     const matchingSellTrade = findMatchingSellTrade(memo, trades);
     if (!matchingSellTrade) return memo;
 
@@ -2506,7 +2525,7 @@ const buyLotDraftSummary = useMemo(() => {
       pnl: getRecordPnl(memo) || getRecordPnl(matchingSellTrade),
       matchedTradeId: matchingSellTrade.id,
     };
-  }), [memos, trades]);
+  }), [activeMemos, trades]);
   const integratedTradeRecords = useMemo(() => (
     combineTradesWithMemos(tradeRecords, enrichedMemos)
   ), [tradeRecords, enrichedMemos]);
@@ -2552,7 +2571,7 @@ const buyLotDraftSummary = useMemo(() => {
     setAssetPendingRemoval({
       asset: assetToRemove,
       tradeCount: trades.filter(trade => isRecordForAsset(trade, assetToRemove)).length,
-      memoCount: memos.filter(memo => isRecordForAsset(memo, assetToRemove)).length,
+      memoCount: activeMemos.filter(memo => isRecordForAsset(memo, assetToRemove)).length,
       ledgerCount: tradeLedger.filter(entry => isRecordForAsset(entry, assetToRemove)).length,
       dividendCount: autoDividends.filter(dividend => isRecordForAsset(dividend, assetToRemove)).length,
     });
@@ -2612,11 +2631,27 @@ const buyLotDraftSummary = useMemo(() => {
     if (e) e.stopPropagation();
     if (record.memoRecordId === null || record.memoRecordId === undefined) return;
 
-    setMemos((previous) => previous.filter((memo) => (
-      String(memo.id) !== String(record.memoRecordId)
+    const deletedAt = new Date().toISOString();
+    setMemos((previous) => previous.map((memo) => (
+      String(memo.id) === String(record.memoRecordId)
+        ? { ...memo, memo: '', status: 'deleted', deletedAt, updatedAt: deletedAt }
+        : memo
     )));
     setExpandedTradeMemoId('');
     addLog('메모만 삭제했습니다. 매매 기록은 유지됩니다.', 'success');
+  };
+
+  const clearAllTradeMemos = () => {
+    const memoCount = activeMemos.length;
+    if (memoCount === 0) {
+      setIsClearAllMemosConfirmOpen(false);
+      return;
+    }
+
+    setMemos((previous) => tombstoneMemoRecords(previous));
+    setExpandedTradeMemoId('');
+    setIsClearAllMemosConfirmOpen(false);
+    addLog(`메모 ${memoCount.toLocaleString()}건만 삭제했습니다. 매매 기록은 유지됩니다.`, 'success');
   };
 
   const updateTradeMemo = (record, memoText) => {
@@ -4247,9 +4282,9 @@ const buyLotDraftSummary = useMemo(() => {
 
             <div className="bg-surface rounded-[20px] overflow-hidden">
               <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-surface">
-                <div>
+                <div className="flex items-center gap-2">
                   <h3 className="text-base md:text-lg font-bold text-ink">종목별 총 손익</h3>
-                  <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">평가손익, 실현손익, 세후 배당을 합산합니다.</p>
+                  <FeatureInfo text="평가손익, 실현손익, 세후 배당을 합산합니다." />
                 </div>
                 <div className="relative w-full md:w-72">
                   <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-ink-mute" />
@@ -4341,10 +4376,13 @@ const buyLotDraftSummary = useMemo(() => {
 
             <div className="bg-surface p-5 md:p-7 rounded-[20px]">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 md:mb-8 gap-3 md:gap-4">
-                <h3 className="text-lg md:text-xl font-bold flex items-center gap-2 md:gap-3">
-                  <Receipt className="text-ink-soft" size={20}/> 
-                  {selectedDividendAsset ? `${selectedDividendAsset} 배당 상세 기록` : '종목별 누적 배당 요약'}
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg md:text-xl font-bold flex items-center gap-2 md:gap-3">
+                    <Receipt className="text-ink-soft" size={20}/>
+                    {selectedDividendAsset ? `${selectedDividendAsset} 배당 상세 기록` : '종목별 누적 배당 요약'}
+                  </h3>
+                  <FeatureInfo text="실제 입금액을 우선하고, 나머지는 공식 분배금과 기준일 보유수량으로 계산합니다." />
+                </div>
                 
                 <div className="flex flex-wrap items-center gap-2 md:gap-3">
                   <input
@@ -4368,7 +4406,7 @@ const buyLotDraftSummary = useMemo(() => {
                   >
                     <Plus size={12} /> 실제 입금 추가
                   </button>
-                  {selectedDividendAsset ? (
+                  {selectedDividendAsset && (
                     <>
                     <select 
                       value={dividendFilter} 
@@ -4383,10 +4421,6 @@ const buyLotDraftSummary = useMemo(() => {
                       <ArrowLeft size={12} /> 전체 보기
                     </button>
                     </>
-                  ) : (
-                    <span className="text-[11px] md:text-[12px] bg-line-soft text-ink-soft px-2 py-1 md:px-3 md:py-1.5 rounded-full font-bold">
-                      실제 입금 우선 · 나머지는 공식 분배금·기준일 보유수량으로 계산
-                    </span>
                   )}
                 </div>
               </div>
@@ -4400,9 +4434,9 @@ const buyLotDraftSummary = useMemo(() => {
                         <span className={`w-9 h-9 rounded-xl flex items-center justify-center ${group.id === 'domestic' ? 'bg-up-soft text-up' : 'bg-brand-soft text-brand'}`}>
                           {group.id === 'domestic' ? <Banknote size={17} /> : <DollarSign size={17} />}
                         </span>
-                        <div>
+                        <div className="flex items-center gap-2">
                           <h4 className="text-sm md:text-base font-bold text-ink">{group.label}</h4>
-                          <p className="text-[11px] font-bold text-ink-mute mt-0.5">{group.description}</p>
+                          <FeatureInfo text={group.description} />
                         </div>
                       </div>
                       <span className="text-[11px] font-bold text-ink-mute">{group.items.length}종목</span>
@@ -4510,18 +4544,28 @@ const buyLotDraftSummary = useMemo(() => {
 
             <div className="bg-surface rounded-[20px] overflow-hidden">
               <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:justify-between md:items-center gap-3 bg-surface">
-                <div>
+                <div className="flex items-center gap-2">
                   <h3 className="text-base md:text-lg font-bold text-ink">과거 매매 기록 · 메모</h3>
-                  <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">매수·매도 내역과 당시 판단 근거를 한곳에서 관리합니다.</p>
+                  <FeatureInfo text="매수·매도 내역과 당시 판단 근거를 한곳에서 관리합니다." />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsManualTradeEntryOpen((previous) => !previous)}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-ink text-surface rounded-xl font-bold text-xs shadow-sm"
-                >
-                  {isManualTradeEntryOpen ? <X size={16} /> : <PlusCircle size={16} />}
-                  {isManualTradeEntryOpen ? '입력 닫기' : '누락 매매 기록 추가'}
-                </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsClearAllMemosConfirmOpen(true)}
+                    disabled={activeMemos.length === 0}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-danger-soft text-danger rounded-xl font-bold text-xs transition-colors hover:bg-danger hover:text-surface disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-danger-soft disabled:hover:text-danger"
+                  >
+                    <Trash2 size={15} /> 전체 메모 삭제
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsManualTradeEntryOpen((previous) => !previous)}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-ink text-surface rounded-xl font-bold text-xs shadow-sm"
+                  >
+                    {isManualTradeEntryOpen ? <X size={16} /> : <PlusCircle size={16} />}
+                    {isManualTradeEntryOpen ? '입력 닫기' : '누락 매매 기록 추가'}
+                  </button>
+                </div>
               </div>
               {isManualTradeEntryOpen && (
                 <ManualTradeEntryForm
@@ -4547,8 +4591,8 @@ const buyLotDraftSummary = useMemo(() => {
                     className="px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
                   >
                     <option value="all">전체 거래</option>
-                    <option value="buy">매수만</option>
-                    <option value="sell">매도만</option>
+                    <option value="buy">매수</option>
+                    <option value="sell">매도</option>
                   </select>
                   <select
                     value={tradeSortMode}
@@ -4729,9 +4773,9 @@ const buyLotDraftSummary = useMemo(() => {
           <div className="space-y-8 anim-fade">
             <div className="bg-surface rounded-[20px] overflow-hidden">
               <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-surface">
-                <div>
+                <div className="flex items-center gap-2">
                   <h3 className="text-base md:text-lg font-bold text-ink">목표 포트폴리오 설정</h3>
-                  <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">분류별 목표 비중과 분류 안 종목별 목표 비중을 저장합니다.</p>
+                  <FeatureInfo text="분류별 목표 비중과 분류 안 종목별 목표 비중을 저장합니다." />
                 </div>
                 <div className="w-full md:w-80">
                   <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
@@ -5083,14 +5127,12 @@ const buyLotDraftSummary = useMemo(() => {
         {activeTab === 'calendar' && (
           <div className="bg-surface rounded-[20px] overflow-hidden anim-fade">
             <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-              <div>
+              <div className="flex items-center gap-2">
                 <h3 className="text-base md:text-lg font-bold text-ink flex items-center gap-2">
                   <CalendarDays size={18} className="text-ink-soft" />
                   배당 캘린더
                 </h3>
-                <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">
-                  공시 지급일은 한국시간 기준 · 향후 배당락일은 최근 주기로 추정
-                </p>
+                <FeatureInfo text="공시 지급일은 한국시간 기준이며, 향후 배당락일은 최근 주기로 추정합니다." />
               </div>
               <div className="seg flex items-center gap-0.5 p-1 rounded-[14px]">
                 <button
@@ -5267,9 +5309,9 @@ const buyLotDraftSummary = useMemo(() => {
         <div className="fixed inset-0 bg-ink/60 backdrop-blur-[2px] z-[110] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade">
           <div className="bg-surface w-full max-w-[440px] max-h-[90vh] overflow-y-auto scroll-soft rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise">
             <div className="flex justify-between items-center mb-6">
-              <div>
+              <div className="flex items-center gap-2">
                 <h3 className="text-lg md:text-xl font-bold text-ink">실제 입금 배당 추가</h3>
-                <p className="text-[11px] md:text-xs font-bold text-ink-mute mt-1">증권사에 들어온 세후 금액을 그대로 입력합니다.</p>
+                <FeatureInfo text="증권사에 들어온 세후 금액을 그대로 입력합니다." align="right" />
               </div>
               <button
                 type="button"
@@ -6130,6 +6172,51 @@ const buyLotDraftSummary = useMemo(() => {
       </button>
     </div>
   </div>
+      )}
+
+      {isClearAllMemosConfirmOpen && (
+        <div
+          className="fixed inset-0 z-[120] bg-ink/40 backdrop-blur-[2px] flex items-center justify-center p-4 anim-fade"
+          onClick={() => setIsClearAllMemosConfirmOpen(false)}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="clear-all-memos-title"
+            className="w-full max-w-[420px] bg-surface rounded-[24px] p-7 shadow-modal anim-rise"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="w-11 h-11 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mb-4">
+              <Trash2 size={20} aria-hidden="true" />
+            </div>
+            <h2 id="clear-all-memos-title" className="text-base md:text-lg font-bold text-ink">
+              전체 메모를 삭제할까요?
+            </h2>
+            <p className="mt-2 text-xs md:text-sm font-medium text-ink-soft leading-relaxed">
+              메모 {activeMemos.length.toLocaleString()}건만 삭제합니다. 매수·매도 기록, 수량과 손익은 그대로 유지됩니다.
+            </p>
+            <p className="mt-3 text-[11px] md:text-xs font-bold text-danger">
+              삭제한 메모 내용은 되돌릴 수 없습니다.
+            </p>
+
+            <div className="mt-6 flex gap-2.5">
+              <button
+                type="button"
+                onClick={() => setIsClearAllMemosConfirmOpen(false)}
+                className="flex-1 px-5 py-3 min-h-11 bg-line-soft text-ink-soft rounded-xl md:rounded-2xl font-bold text-xs md:text-sm hover:bg-line transition-colors"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={clearAllTradeMemos}
+                className="flex-1 px-5 py-3 min-h-11 bg-danger text-surface rounded-xl md:rounded-2xl font-bold text-xs md:text-sm hover:bg-danger transition-colors"
+              >
+                메모만 전체 삭제
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {assetPendingRemoval && (

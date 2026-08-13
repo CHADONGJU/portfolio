@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Check, Trash2, X } from 'lucide-react';
+import FeatureInfo from './FeatureInfo';
 
 const TradeMemoEditor = ({ record, onSave, onDelete, onClose }) => {
   const [draft, setDraft] = useState(record.memo || '');
@@ -10,11 +11,9 @@ const TradeMemoEditor = ({ record, onSave, onDelete, onClose }) => {
   return (
     <div className="rounded-2xl border border-line bg-canvas p-4 md:p-5">
       <div className="flex items-center justify-between gap-3 mb-3">
-        <div>
+        <div className="flex items-center gap-2">
           <p className="text-xs md:text-sm font-bold text-ink">{record.name} 매매 메모</p>
-          <p className="text-[11px] font-semibold text-ink-mute mt-1">
-            {record.isUnlinkedMemo ? '거래 원장을 찾지 못한 과거 메모입니다.' : '이 메모만 수정되며 매매 기록은 변경되지 않습니다.'}
-          </p>
+          <FeatureInfo text={record.isUnlinkedMemo ? '거래 원장을 찾지 못한 과거 메모입니다.' : '이 메모만 수정되며 매매 기록은 변경되지 않습니다.'} />
         </div>
         <button type="button" onClick={onClose} className="p-2 rounded-full text-ink-mute hover:text-ink hover:bg-line-soft" aria-label="메모 편집 닫기">
           <X size={16} />

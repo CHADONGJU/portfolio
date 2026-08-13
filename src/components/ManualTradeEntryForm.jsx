@@ -1,12 +1,13 @@
 import { Plus, X } from 'lucide-react';
 import { formatInputNumber, sanitizeNumericInput } from '../utils/formatters';
+import FeatureInfo from './FeatureInfo';
 
 const ManualTradeEntryForm = ({ value, stockOptions, onChange, onSubmit, onClose }) => (
   <div className="p-5 md:p-6 border-b border-line bg-surface space-y-4">
     <div className="flex items-center justify-between gap-3">
-      <div>
+      <div className="flex items-center gap-2">
         <h4 className="text-sm md:text-base font-bold text-ink">누락 매매 기록 추가</h4>
-        <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">원장에 없는 과거 매수·매도와 당시 메모를 함께 기록합니다.</p>
+        <FeatureInfo text="원장에 없는 과거 매수·매도와 당시 메모를 함께 기록합니다." />
       </div>
       <button type="button" onClick={onClose} className="p-2 rounded-full bg-canvas text-ink-mute hover:text-ink" aria-label="누락 매매 기록 입력 닫기">
         <X size={16} />
