@@ -508,10 +508,24 @@ export const usePortfolioMetrics = ({
     const currentYear = today.getFullYear();
     const currentMonth = today.getMonth();
 
+      const seen = new Set();
       return sortDividendRecordsNewestFirst(summary.history.filter(d => {
         const divDate = new Date(`${getDividendReportingDate(d)}T00:00:00`);
-        if (dividendFilter === '이번 달') return divDate.getFullYear() === currentYear && divDate.getMonth() === currentMonth;
-      if (dividendFilter === '올해') return divDate.getFullYear() === currentYear;
+        const matchesFilter = dividendFilter === '이번 달'
+          ? divDate.getFullYear() === currentYear && divDate.getMonth() === currentMonth
+          : dividendFilter === '올해'
+            ? divDate.getFullYear() === currentYear
+            : true;
+        if (!matchesFilter) return false;
+        const key = [
+          d.ticker || d.name,
+          d.exDate || d.date,
+          d.currency,
+          d.quantity,
+          d.amount,
+        ].join('::');
+        if (seen.has(key)) return false;
+        seen.add(key);
         return true;
       }));
   }, [dividendSummary, selectedDividendAsset, dividendFilter]);

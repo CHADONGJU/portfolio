@@ -242,7 +242,7 @@ const getPeriodKey = (dividend = {}) => {
  * a validation set, but are never appended to the calculated cash total.
  */
 export const selectFormulaDividendRecords = (automaticDividends = []) => (
-  automaticDividends
+  collapseEquivalentAutomaticDividendRecords(automaticDividends)
     .filter((dividend) => !isDeletedDividendRecord(dividend))
     .sort((left, right) => (
       getDividendReportingDate(right).localeCompare(getDividendReportingDate(left))
@@ -278,7 +278,9 @@ export const selectReportedDividendRecords = (
   automaticDividends = [],
   confirmedDividends = [],
 ) => {
-  const activeAutomaticDividends = automaticDividends.filter((dividend) => !isDeletedDividendRecord(dividend));
+  const activeAutomaticDividends = collapseEquivalentAutomaticDividendRecords(
+    automaticDividends.filter((dividend) => !isDeletedDividendRecord(dividend)),
+  );
   const activeConfirmedDividends = confirmedDividends.filter((dividend) => !isDeletedDividendRecord(dividend));
   const confirmedPeriods = new Set(activeConfirmedDividends.map((dividend) => (
     `${getAssetKey(dividend)}::${getPeriodKey(dividend)}`
