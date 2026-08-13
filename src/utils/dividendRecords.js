@@ -32,7 +32,6 @@ const getDateDistanceInDays = (left = '', right = '') => {
 
 export const isSameAutomaticDividendEvent = (left = {}, right = {}) => {
   if (getAutomaticDividendAssetKey(left) !== getAutomaticDividendAssetKey(right)) return false;
-  if ((Number(left.round) || 1) !== (Number(right.round) || 1)) return false;
 
   const leftExDate = left.exDate || left.date || '';
   const rightExDate = right.exDate || right.date || '';
@@ -61,7 +60,15 @@ const preferAutomaticDividendRecord = (candidate = {}, existing = {}) => {
   const priorityDelta = getAutomaticDividendSourcePriority(candidate)
     - getAutomaticDividendSourcePriority(existing);
   if (priorityDelta !== 0) return priorityDelta > 0 ? candidate : existing;
-  return getRecordTimestamp(candidate) >= getRecordTimestamp(existing) ? candidate : existing;
+  const timestampDelta = getRecordTimestamp(candidate) - getRecordTimestamp(existing);
+  if (timestampDelta !== 0) return timestampDelta > 0 ? candidate : existing;
+
+  const amountDelta = (Number(candidate.amount) || 0) - (Number(existing.amount) || 0);
+  if (amountDelta !== 0) return amountDelta > 0 ? candidate : existing;
+
+  return (Number(candidate.quantity) || 0) >= (Number(existing.quantity) || 0)
+    ? candidate
+    : existing;
 };
 
 const collapseEquivalentAutomaticDividendRecords = (records = []) => {

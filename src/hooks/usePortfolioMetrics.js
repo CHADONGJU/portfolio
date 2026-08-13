@@ -521,8 +521,6 @@ export const usePortfolioMetrics = ({
           d.ticker || d.name,
           d.exDate || d.date,
           d.currency,
-          d.quantity,
-          d.amount,
         ].join('::');
         if (seen.has(key)) return false;
         seen.add(key);
