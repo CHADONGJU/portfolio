@@ -3,13 +3,14 @@ import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
   Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, ArrowRightLeft, Search, Folder, Target, CalendarDays,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, NotebookPen, PlusCircle
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
-import MemoTab from './components/MemoTab';
+import ManualTradeEntryForm from './components/ManualTradeEntryForm';
 import StockFilterCombobox from './components/StockFilterCombobox';
 import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
+import TradeMemoEditor from './components/TradeMemoEditor';
 import { useAuth } from './context/useAuth';
 import {
   AUTO_DIVIDENDS_STORAGE_KEY,
@@ -53,6 +54,7 @@ import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync'
 import { buildTradeSummary } from './utils/tradeSummary';
 import { summarizeDividendCalendarEvents } from './utils/dividendCalendar';
 import { buildStockSearchOptions } from './utils/stockSearchOptions';
+import { combineTradesWithMemos } from './utils/tradeMemos';
 import { getDividendRefreshState, getDividendRefreshVersion } from './utils/dividendRefresh';
 import { isRecordForAsset } from './utils/assetIdentity';
 import {
@@ -248,6 +250,7 @@ const findMatchingSellTrade = (memo, trades) => trades.find((trade) => {
 });
 
 const findMatchingMemoForLedger = (entry, memos) => memos.find((memo) => {
+  if (memo.ledgerId && (String(memo.ledgerId) === String(entry.id) || String(memo.ledgerId) === String(entry.sourceId))) return true;
   if (entry.sourceId === `memo-${memo.id}`) return true;
   if (!entry.name || entry.name !== memo.name) return false;
   if (!entry.date || entry.date !== memo.date) return false;
@@ -342,7 +345,7 @@ const buildInitialTradeLedger = ({ assets, trades, memos }) => {
 
   memos.forEach((memo) => {
     pushOnce(buildLedgerEntry({
-      sourceId: `memo-${memo.id}`,
+      sourceId: memo.ledgerId || `memo-${memo.id}`,
       asset: memo,
       side: getTradeSide(memo),
       quantity: memo.quantity,
@@ -1091,9 +1094,9 @@ const App = () => {
   const [tradeStockFilter, setTradeStockFilter] = useState('all');
   const [tradeSideFilter, setTradeSideFilter] = useState('all');
   const [tradeVisibleCount, setTradeVisibleCount] = useState(TRADE_PAGE_SIZE);
+  const [expandedTradeMemoId, setExpandedTradeMemoId] = useState('');
+  const [isManualTradeEntryOpen, setIsManualTradeEntryOpen] = useState(false);
   const [performanceSearchTerm, setPerformanceSearchTerm] = useState('');
-  const [memoSortMode, setMemoSortMode] = useState('newest');
-  const [memoStockFilter, setMemoStockFilter] = useState('all');
   const [targetViewMode, setTargetViewMode] = useState('table');
   const [selectedTargetCategory, setSelectedTargetCategory] = useState(null);
   const [selectedTargetGroup, setSelectedTargetGroup] = useState(null);
@@ -2486,9 +2489,6 @@ const buyLotDraftSummary = useMemo(() => {
       sourceType: tradeLedger.length > 0 ? 'ledger' : 'trade',
     }));
   }, [tradeLedger, trades]);
-  const tradeStockFilterOptions = useMemo(() => (
-    buildStockSearchOptions(tradeRecords)
-  ), [tradeRecords]);
   const enrichedMemos = useMemo(() => memos.map((memo) => {
     const matchingSellTrade = findMatchingSellTrade(memo, trades);
     if (!matchingSellTrade) return memo;
@@ -2507,24 +2507,24 @@ const buyLotDraftSummary = useMemo(() => {
       matchedTradeId: matchingSellTrade.id,
     };
   }), [memos, trades]);
-  const memoStockOptions = useMemo(() => (
-    [...new Set([
-      ...tradeLedger.map((entry) => entry.name),
-      ...enrichedMemos.map((memo) => memo.name),
-    ].filter(Boolean))].sort()
-  ), [tradeLedger, enrichedMemos]);
-  const memoStockFilterOptions = useMemo(() => (
-    buildStockSearchOptions([...tradeLedger, ...enrichedMemos])
-  ), [tradeLedger, enrichedMemos]);
+  const integratedTradeRecords = useMemo(() => (
+    combineTradesWithMemos(tradeRecords, enrichedMemos)
+  ), [tradeRecords, enrichedMemos]);
+  const tradeStockFilterOptions = useMemo(() => (
+    buildStockSearchOptions(integratedTradeRecords)
+  ), [integratedTradeRecords]);
+  const manualTradeStockOptions = useMemo(() => (
+    [...new Set(integratedTradeRecords.map((record) => record.name).filter(Boolean))].sort()
+  ), [integratedTradeRecords]);
   const visibleTrades = useMemo(() => {
     const stockFiltered = tradeStockFilter === 'all'
-      ? tradeRecords
-      : tradeRecords.filter((trade) => trade.name === tradeStockFilter);
+      ? integratedTradeRecords
+      : integratedTradeRecords.filter((trade) => trade.name === tradeStockFilter);
     const sideFiltered = tradeSideFilter === 'all'
       ? stockFiltered
       : stockFiltered.filter((trade) => getTradeSide(trade) === tradeSideFilter);
     return sortTradeRecords(sideFiltered, tradeSortMode);
-  }, [tradeRecords, tradeStockFilter, tradeSideFilter, tradeSortMode]);
+  }, [integratedTradeRecords, tradeStockFilter, tradeSideFilter, tradeSortMode]);
   const displayedTrades = useMemo(() => (
     visibleTrades.slice(0, tradeVisibleCount)
   ), [visibleTrades, tradeVisibleCount]);
@@ -2533,44 +2533,14 @@ const buyLotDraftSummary = useMemo(() => {
   useEffect(() => {
     setTradeVisibleCount(TRADE_PAGE_SIZE);
   }, [tradeStockFilter, tradeSideFilter, tradeSortMode]);
-
-  const memoLedgerRecords = useMemo(() => {
-    const matchedMemoIds = new Set();
-    const canonicalLedgerRows = tradeLedger.length > 0 ? tradeRecords : [];
-    const ledgerRecords = canonicalLedgerRows.map((entry) => {
-      const matchedMemo = findMatchingMemoForLedger(entry, enrichedMemos);
-      if (matchedMemo) matchedMemoIds.add(matchedMemo.id);
-
-      return {
-        ...entry,
-        id: `ledger-${entry.id}`,
-        ledgerId: entry.id,
-        memoId: matchedMemo?.id,
-        memo: matchedMemo?.memo || '',
-        sourceType: 'ledger',
-      };
-    });
-    const memoOnlyRecords = enrichedMemos
-      .filter((memo) => !matchedMemoIds.has(memo.id))
-      .map((memo) => ({
-        ...memo,
-        id: `memo-${memo.id}`,
-        memoId: memo.id,
-        sourceType: 'memo',
-      }));
-
-    return [...ledgerRecords, ...memoOnlyRecords];
-  }, [tradeLedger.length, tradeRecords, enrichedMemos]);
-  const visibleMemos = useMemo(() => {
-    const filtered = memoStockFilter === 'all'
-      ? memoLedgerRecords
-      : memoLedgerRecords.filter((memo) => memo.name === memoStockFilter);
-    return sortTradeRecords(filtered, memoSortMode);
-  }, [memoLedgerRecords, memoStockFilter, memoSortMode]);
   const tradeSummary = useMemo(() => {
-    return buildTradeSummary(visibleTrades, exchangeRate || 1350, jpyKrwRate || 9.5, currencyRates);
+    return buildTradeSummary(
+      visibleTrades.filter((record) => !record.isUnlinkedMemo),
+      exchangeRate || 1350,
+      jpyKrwRate || 9.5,
+      currencyRates,
+    );
   }, [visibleTrades, exchangeRate, jpyKrwRate, currencyRates]);
-  const memoSummary = useMemo(() => buildTradeSummary(visibleMemos, exchangeRate || 1350, jpyKrwRate || 9.5, currencyRates), [visibleMemos, exchangeRate, jpyKrwRate, currencyRates]);
 
   // 자산 삭제는 연결된 거래·메모·원장까지 함께 지우고 되돌릴 수 없다.
   // 무엇이 같이 지워지는지 먼저 보여준 뒤 확인을 받는다.
@@ -2630,75 +2600,73 @@ const buyLotDraftSummary = useMemo(() => {
     } else {
       setTrades(prevTrades => prevTrades.filter(t => t.id !== record.id));
     }
-    addLog("매매 기록이 삭제되었습니다.", "success");
+    addLog(
+      record.memoRecordId !== null && record.memoRecordId !== undefined
+        ? '매매 기록만 삭제했습니다. 연결된 메모는 미연결 기록으로 보존됩니다.'
+        : '매매 기록이 삭제되었습니다.',
+      'success',
+    );
   };
 
-  const removeMemo = (id, e) => {
+  const removeTradeMemo = (record, e) => {
     if (e) e.stopPropagation();
-    if (String(id).startsWith('ledger-')) {
-      const ledgerId = String(id).replace('ledger-', '');
-      const entry = tradeLedger.find((record) => String(record.id) === ledgerId);
-      const matchedMemo = entry ? findMatchingMemoForLedger(entry, memos) : null;
-      if (matchedMemo) {
-        setMemos(prevMemos => prevMemos.filter(memo => memo.id !== matchedMemo.id));
-        addLog("메모가 삭제되었습니다.", "success");
-      }
-      return;
-    }
-    setMemos(prevMemos => prevMemos.filter(memo => memo.id !== id && `memo-${memo.id}` !== id));
-    addLog("메모가 삭제되었습니다.", "success");
+    if (record.memoRecordId === null || record.memoRecordId === undefined) return;
+
+    setMemos((previous) => previous.filter((memo) => (
+      String(memo.id) !== String(record.memoRecordId)
+    )));
+    setExpandedTradeMemoId('');
+    addLog('메모만 삭제했습니다. 매매 기록은 유지됩니다.', 'success');
   };
 
-  const updateMemoText = (id, memoText) => {
-    if (String(id).startsWith('ledger-')) {
-      const ledgerId = String(id).replace('ledger-', '');
-      const entry = tradeLedger.find((record) => String(record.id) === ledgerId);
-      if (!entry) return;
+  const updateTradeMemo = (record, memoText) => {
+    const normalizedMemo = memoText.trim();
+    if (!normalizedMemo) return;
+    const updatedAt = new Date().toISOString();
 
-      const matchedMemo = findMatchingMemoForLedger(entry, memos);
-      if (matchedMemo) {
-        setMemos(prevMemos => prevMemos.map((memo) => (
-          memo.id === matchedMemo.id
-            ? { ...memo, memo: memoText.trim(), updatedAt: new Date().toISOString() }
-            : memo
-        )));
-      } else {
-        setMemos(prevMemos => [{
-          id: Date.now() + Math.random(),
-          assetId: entry.assetId ?? null,
-          name: entry.name,
-          ticker: entry.ticker,
-          category: entry.category,
-          currency: entry.currency,
-          side: entry.side,
-          action: entry.action || (entry.side === 'sell' ? '매도' : '매수'),
-          quantity: entry.quantity,
-          price: entry.price,
-          date: entry.date,
-          pnl: entry.pnl || 0,
-          grossPnl: entry.grossPnl,
-          brokerId: entry.brokerId || '',
-          brokerName: entry.brokerName || '',
-          brokerFeeRate: entry.brokerFeeRate || 0,
-          brokerFeeRatePercent: entry.brokerFeeRatePercent || 0,
-          brokerFee: entry.brokerFee || 0,
-          sellTaxRatePercent: entry.sellTaxRatePercent || 0,
-          sellTax: entry.sellTax || 0,
-          memo: memoText.trim(),
-          createdAt: new Date().toISOString(),
-          ledgerId: entry.id,
-        }, ...prevMemos]);
-      }
-      addLog('메모가 수정되었습니다.', 'success');
-      return;
+    if (record.memoRecordId !== null && record.memoRecordId !== undefined) {
+      setMemos((previous) => previous.map((memo) => (
+        String(memo.id) === String(record.memoRecordId)
+          ? {
+            ...memo,
+            memo: normalizedMemo,
+            ledgerId: record.isUnlinkedMemo ? (memo.ledgerId || '') : record.id,
+            updatedAt,
+          }
+          : memo
+      )));
+    } else {
+      setMemos((previous) => [{
+        id: Date.now() + Math.random(),
+        assetId: record.assetId ?? null,
+        name: record.name,
+        ticker: record.ticker || '',
+        category: record.category || '',
+        currency: record.currency || 'KRW',
+        round: getTradeRound(record),
+        side: getTradeSide(record),
+        action: getTradeSide(record) === 'sell' ? '매도' : '매수',
+        quantity: record.quantity,
+        price: record.price || (getTradeSide(record) === 'sell' ? record.sellPrice : record.buyPrice) || 0,
+        date: getRecordDate(record),
+        pnl: getRecordPnl(record),
+        grossPnl: record.grossPnl,
+        brokerId: record.brokerId || '',
+        brokerName: record.brokerName || '',
+        brokerFeeRate: record.brokerFeeRate || 0,
+        brokerFeeRatePercent: record.brokerFeeRatePercent || 0,
+        brokerFee: record.brokerFee || 0,
+        sellTaxRatePercent: record.sellTaxRatePercent || 0,
+        sellTax: record.sellTax || 0,
+        memo: normalizedMemo,
+        ledgerId: record.id,
+        createdAt: updatedAt,
+        updatedAt,
+      }, ...previous]);
     }
 
-    setMemos(prevMemos => prevMemos.map((memo) => (
-      memo.id === id || `memo-${memo.id}` === id
-        ? { ...memo, memo: memoText.trim(), updatedAt: new Date().toISOString() }
-        : memo
-    )));
-    addLog('메모가 수정되었습니다.', 'success');
+    setExpandedTradeMemoId('');
+    addLog('매매 메모를 저장했습니다.', 'success');
   };
 
   const getMeasuredKrwRate = (currency) => {
@@ -2964,6 +2932,7 @@ const buyLotDraftSummary = useMemo(() => {
 
   const addTradeMemo = ({
     asset,
+    ledgerId = '',
     action,
     quantity,
     price,
@@ -2979,6 +2948,9 @@ const buyLotDraftSummary = useMemo(() => {
     sellTaxRatePercent = 0,
     sellTax = 0,
   }) => {
+    const normalizedMemo = memo?.trim() || '';
+    if (!normalizedMemo) return;
+
     setMemos(prevMemos => [{
       id: Date.now() + Math.random(),
       assetId: asset.id,
@@ -3001,7 +2973,8 @@ const buyLotDraftSummary = useMemo(() => {
       brokerFee: Number(brokerFee) || 0,
       sellTaxRatePercent: Number(sellTaxRatePercent) || 0,
       sellTax: Number(sellTax) || 0,
-      memo: memo?.trim() || '',
+      ledgerId,
+      memo: normalizedMemo,
       createdAt: new Date().toISOString()
     }, ...prevMemos]);
   };
@@ -3020,8 +2993,10 @@ const buyLotDraftSummary = useMemo(() => {
       category: matchedAsset?.category || '',
       currency: matchedAsset?.currency || manualMemo.currency,
     };
+    const memoId = Date.now() + Math.random();
+    const ledgerId = `memo-${memoId}`;
     setMemos(prevMemos => [{
-      id: Date.now() + Math.random(),
+      id: memoId,
       assetId: manualMemoAsset.id,
       name: manualMemoAsset.name,
       ticker: manualMemoAsset.ticker,
@@ -3033,10 +3008,12 @@ const buyLotDraftSummary = useMemo(() => {
       price: parseNumber(manualMemo.price),
       date: manualMemo.date,
       pnl: parseNumber(manualMemo.realizedPnl),
+      ledgerId,
       memo: manualMemo.memo.trim(),
       createdAt: new Date().toISOString()
     }, ...prevMemos]);
     addLedgerEntry({
+      sourceId: ledgerId,
       asset: manualMemoAsset,
       side: manualMemo.action === '매도' ? 'sell' : 'buy',
       quantity: parseNumber(manualMemo.quantity),
@@ -3056,7 +3033,8 @@ const buyLotDraftSummary = useMemo(() => {
       currency: 'KRW',
       memo: '',
     });
-    addLog('메모가 추가되었습니다.', 'success');
+    setIsManualTradeEntryOpen(false);
+    addLog('누락 매매 기록을 추가했습니다.', 'success');
   };
 
   const openAddBuyModal = (asset) => {
@@ -3359,8 +3337,10 @@ const buyLotDraftSummary = useMemo(() => {
     }))
   );
 
+  const ledgerId = `buy-${Date.now()}-${Math.random()}`;
   addTradeMemo({
     asset: selectedAssetToUpdate,
+    ledgerId,
     action: '매수',
     quantity: addedQty,
     price: addedAvgNative,
@@ -3368,6 +3348,7 @@ const buyLotDraftSummary = useMemo(() => {
     memo: addBuyForm.memo
   });
   addLedgerEntry({
+    sourceId: ledgerId,
     asset: selectedAssetToUpdate,
     side: 'buy',
     quantity: addedQty,
@@ -3460,8 +3441,10 @@ const buyLotDraftSummary = useMemo(() => {
     );
   }
 
+  const ledgerId = `trade-${trade.id}`;
   addTradeMemo({
     asset: selectedAssetToSell,
+    ledgerId,
     action: '매도',
     quantity: sellQty,
     price: sellPriceNative,
@@ -3478,7 +3461,7 @@ const buyLotDraftSummary = useMemo(() => {
     sellTax: sellTaxNative
   });
   addLedgerEntry({
-    sourceId: `trade-${trade.id}`,
+    sourceId: ledgerId,
     asset: selectedAssetToSell,
     side: 'sell',
     quantity: sellQty,
@@ -3787,8 +3770,10 @@ const buyLotDraftSummary = useMemo(() => {
           : candidate
       )));
     });
+    const ledgerId = `buy-${Date.now()}-${Math.random()}`;
     addTradeMemo({
       asset,
+      ledgerId,
       action: '매수',
       quantity: parsedQty,
       price: parsedAvgPrice,
@@ -3796,6 +3781,7 @@ const buyLotDraftSummary = useMemo(() => {
       memo: newAsset.memo
     });
     addLedgerEntry({
+      sourceId: ledgerId,
       asset,
       side: 'buy',
       quantity: parsedQty,
@@ -4523,9 +4509,29 @@ const buyLotDraftSummary = useMemo(() => {
             </div>
 
             <div className="bg-surface rounded-[20px] overflow-hidden">
-              <div className="p-5 md:p-7 border-b border-line flex justify-between items-center bg-surface">
-                <h3 className="text-base md:text-lg font-bold text-ink">과거 매매 기록</h3>
+              <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:justify-between md:items-center gap-3 bg-surface">
+                <div>
+                  <h3 className="text-base md:text-lg font-bold text-ink">과거 매매 기록 · 메모</h3>
+                  <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">매수·매도 내역과 당시 판단 근거를 한곳에서 관리합니다.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsManualTradeEntryOpen((previous) => !previous)}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-ink text-surface rounded-xl font-bold text-xs shadow-sm"
+                >
+                  {isManualTradeEntryOpen ? <X size={16} /> : <PlusCircle size={16} />}
+                  {isManualTradeEntryOpen ? '입력 닫기' : '누락 매매 기록 추가'}
+                </button>
               </div>
+              {isManualTradeEntryOpen && (
+                <ManualTradeEntryForm
+                  value={manualMemo}
+                  stockOptions={manualTradeStockOptions}
+                  onChange={setManualMemo}
+                  onSubmit={handleAddManualMemo}
+                  onClose={() => setIsManualTradeEntryOpen(false)}
+                />
+              )}
               <div className="p-5 md:p-6 border-b border-line bg-surface space-y-4">
                 <div className="flex flex-col md:flex-row gap-3">
                   <StockFilterCombobox
@@ -4583,6 +4589,7 @@ const buyLotDraftSummary = useMemo(() => {
                       <th className="px-4 py-4 md:px-8 md:py-5">매수/매도일</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">매수가/매도가</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-right">실현 손익</th>
+                      <th className="px-4 py-4 md:px-8 md:py-5">메모</th>
                       <th className="px-4 py-4 md:px-8 md:py-5 text-center">관리</th>
                     </tr>
                   </thead>
@@ -4597,54 +4604,91 @@ const buyLotDraftSummary = useMemo(() => {
                       const pnl = getRecordPnl(trade);
                       const brokerFee = Number(trade.brokerFee) || 0;
                       const sellTax = Number(trade.sellTax) || 0;
+                      const rowKey = `${trade.sourceType}-${trade.id}`;
+                      const isMemoExpanded = expandedTradeMemoId === rowKey;
 
                       return (
-                        <tr key={`${trade.sourceType}-${trade.id}`} className="hover:bg-canvas transition-colors">
-                          <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
-                            <div className="flex items-center gap-2">
-                              <span className={`inline-flex px-2 py-1 rounded-lg text-[12px] font-bold ${side === 'sell' ? 'bg-down-soft text-down' : 'bg-up-soft text-up'}`}>
-                                {action}
-                              </span>
-                              <div>
-                                <p className="text-sm md:text-base font-bold text-ink">{trade.name}</p>
-                                {trade.ticker && (
-                                  <p className="text-[11px] md:text-[12px] font-bold text-ink-mute mt-1">{trade.ticker}</p>
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-[12px] md:text-xs text-ink-soft font-bold whitespace-nowrap">
-                            <span className="text-ink-mute mr-1 md:mr-2">{action}일:</span>{date || '-'}
-                          </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft space-y-1 whitespace-nowrap">
-                            <div>{formatMoney(price, trade.currency)}</div>
-                            <div className="text-ink-mute">{Number(trade.quantity || 0).toLocaleString()}주</div>
-                          </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
-                            {side === 'sell' ? (
-                              <div className="flex flex-col items-end gap-1">
-                                <span className={`inline-flex font-bold px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl text-[12px] md:text-xs ${pnl >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
-                                  {pnl > 0 ? '+' : ''}{formatMoney(pnl, trade.currency)}
+                        <React.Fragment key={rowKey}>
+                          <tr className={`transition-colors ${isMemoExpanded ? 'bg-canvas/70' : 'hover:bg-canvas'}`}>
+                            <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
+                              <div className="flex items-center gap-2">
+                                <span className={`inline-flex px-2 py-1 rounded-lg text-[12px] font-bold ${side === 'sell' ? 'bg-down-soft text-down' : 'bg-up-soft text-up'}`}>
+                                  {action}
                                 </span>
-                                {brokerFee > 0 && (
-                                  <span className="text-[11px] font-bold text-ink-mute">
-                                    수수료 -{formatMoney(brokerFee, trade.currency)}
-                                  </span>
-                                )}
-                                {sellTax > 0 && (
-                                  <span className="text-[11px] font-bold text-ink-mute">
-                                    제세금 -{formatMoney(sellTax, trade.currency)}
-                                  </span>
-                                )}
+                                <div>
+                                  <p className="text-sm md:text-base font-bold text-ink">{trade.name}</p>
+                                  <div className="flex items-center gap-1.5 mt-1">
+                                    {trade.ticker && (
+                                      <p className="text-[11px] md:text-[12px] font-bold text-ink-mute">{trade.ticker}</p>
+                                    )}
+                                    {trade.isUnlinkedMemo && (
+                                      <span className="inline-flex px-2 py-0.5 rounded-md bg-warn-soft text-warn text-[10px] font-bold">미연결 기록</span>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
-                            ) : (
-                              <span className="text-[12px] md:text-xs font-bold text-ink-mute">-</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-center whitespace-nowrap">
-                            <button onClick={(e) => removeTrade(trade, e)} className="text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors p-1.5 md:p-2 rounded-xl" title="기록 삭제"><Trash2 size={16} /></button>
-                          </td>
-                        </tr>
+                            </td>
+                            <td className="px-4 py-4 md:px-8 md:py-6 text-[12px] md:text-xs text-ink-soft font-bold whitespace-nowrap">
+                              <span className="text-ink-mute mr-1 md:mr-2">{action}일:</span>{date || '-'}
+                            </td>
+                            <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft space-y-1 whitespace-nowrap">
+                              <div>{formatMoney(price, trade.currency)}</div>
+                              <div className="text-ink-mute">{Number(trade.quantity || 0).toLocaleString()}주</div>
+                            </td>
+                            <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
+                              {side === 'sell' ? (
+                                <div className="flex flex-col items-end gap-1">
+                                  <span className={`inline-flex font-bold px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl text-[12px] md:text-xs ${pnl >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
+                                    {pnl > 0 ? '+' : ''}{formatMoney(pnl, trade.currency)}
+                                  </span>
+                                  {brokerFee > 0 && (
+                                    <span className="text-[11px] font-bold text-ink-mute">
+                                      수수료 -{formatMoney(brokerFee, trade.currency)}
+                                    </span>
+                                  )}
+                                  {sellTax > 0 && (
+                                    <span className="text-[11px] font-bold text-ink-mute">
+                                      제세금 -{formatMoney(sellTax, trade.currency)}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-[12px] md:text-xs font-bold text-ink-mute">-</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-4 md:px-8 md:py-6 min-w-48 max-w-72">
+                              <button
+                                type="button"
+                                onClick={() => setExpandedTradeMemoId((previous) => previous === rowKey ? '' : rowKey)}
+                                title={trade.memo || '메모 추가'}
+                                className={`w-full inline-flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors ${trade.memo ? 'bg-brand-soft text-ink-soft' : 'bg-canvas text-ink-mute hover:text-ink'}`}
+                              >
+                                <NotebookPen size={15} className="shrink-0" />
+                                <span className="truncate text-[11px] md:text-xs font-bold">{trade.memo || '메모 추가'}</span>
+                              </button>
+                            </td>
+                            <td className="px-4 py-4 md:px-8 md:py-6 text-center whitespace-nowrap">
+                              {!trade.isUnlinkedMemo ? (
+                                <button onClick={(e) => removeTrade(trade, e)} className="text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors p-1.5 md:p-2 rounded-xl" title="매매 기록 삭제 · 메모는 보존"><Trash2 size={16} /></button>
+                              ) : (
+                                <span className="text-[11px] font-bold text-ink-mute">메모만 보존</span>
+                              )}
+                            </td>
+                          </tr>
+                          {isMemoExpanded && (
+                            <tr>
+                              <td colSpan="6" className="px-4 pb-4 md:px-8 md:pb-6 bg-canvas/40">
+                                <TradeMemoEditor
+                                  key={rowKey}
+                                  record={trade}
+                                  onSave={(memoText) => updateTradeMemo(trade, memoText)}
+                                  onDelete={(event) => removeTradeMemo(trade, event)}
+                                  onClose={() => setExpandedTradeMemoId('')}
+                                />
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                       );
                     })}
                   </tbody>
@@ -5034,26 +5078,6 @@ const buyLotDraftSummary = useMemo(() => {
               )}
             </div>
           </div>
-        )}
-
-        {activeTab === 'notes' && (
-          <MemoTab
-            memos={visibleMemos}
-            stockOptions={memoStockOptions}
-            stockFilterOptions={memoStockFilterOptions}
-            stockFilter={memoStockFilter}
-            onStockFilterChange={setMemoStockFilter}
-            sortMode={memoSortMode}
-            onSortModeChange={setMemoSortMode}
-            sortOptions={TRADE_SORT_OPTIONS}
-            summary={memoSummary}
-            manualMemo={manualMemo}
-            onManualMemoChange={setManualMemo}
-            onAddManualMemo={handleAddManualMemo}
-            onRemoveMemo={removeMemo}
-            onUpdateMemo={updateMemoText}
-            formatMoney={formatMoney}
-          />
         )}
 
         {activeTab === 'calendar' && (

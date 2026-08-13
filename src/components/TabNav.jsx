@@ -2,7 +2,6 @@ const TABS = [
   { id: 'portfolio', label: '내 포트폴리오' },
   { id: 'history', label: '수익·배당' },
   { id: 'target', label: '목표' },
-  { id: 'notes', label: '메모' },
   { id: 'calendar', label: '캘린더' },
 ];
 
