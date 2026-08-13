@@ -216,8 +216,10 @@ export const selectReceivedDividendRecords = (dividends = [], today = getKoreaDa
 
     // Formula rows are counted only after the official payment date and only when
     // their record-date holdings were verified from the transaction ledger.
-    if (!dividend.actualPaymentDate && !dividend.paymentDate) return false;
     const paymentDate = getDividendReportingDate(dividend);
+    const currency = String(dividend.currency || '').toUpperCase();
+    const canUseExDividendDate = currency === 'KRW';
+    if (!dividend.actualPaymentDate && !dividend.paymentDate && !canUseExDividendDate) return false;
     return Boolean(dividend.entitlementVerified && paymentDate && paymentDate <= today);
   })
 );
