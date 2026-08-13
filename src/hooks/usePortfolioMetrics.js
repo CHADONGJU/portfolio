@@ -393,8 +393,7 @@ export const usePortfolioMetrics = ({
     dividendAssetRegistry.forEach((entry) => {
       if (!entry?.hasDividends || !entry.name) return;
       const asset = assets.find(candidate => candidate.name === entry.name);
-      if (!asset) return;
-      activeDividendAssets.set(entry.name, { asset, registry: entry });
+      activeDividendAssets.set(entry.name, { asset: asset || entry, registry: entry });
     });
 
     assets.forEach(asset => {
@@ -402,6 +401,14 @@ export const usePortfolioMetrics = ({
         autoDividends.filter(d => d.name === asset.name),
       );
       if (assetDivs.length > 0) activeDividendAssets.set(asset.name, { asset, registry: null });
+    });
+
+    autoDividends.forEach((dividend) => {
+      if (!dividend?.name || activeDividendAssets.has(dividend.name)) return;
+      activeDividendAssets.set(dividend.name, {
+        asset: assets.find((candidate) => candidate.name === dividend.name) || dividend,
+        registry: null,
+      });
     });
 
     receivedDividends.forEach((dividend) => {
