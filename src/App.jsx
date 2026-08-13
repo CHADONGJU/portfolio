@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
 import MemoTab from './components/MemoTab';
+import StockFilterCombobox from './components/StockFilterCombobox';
 import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
 import { useAuth } from './context/useAuth';
@@ -51,6 +52,7 @@ import {
 import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
 import { buildTradeSummary } from './utils/tradeSummary';
 import { summarizeDividendCalendarEvents } from './utils/dividendCalendar';
+import { buildStockSearchOptions } from './utils/stockSearchOptions';
 import { getDividendRefreshState, getDividendRefreshVersion } from './utils/dividendRefresh';
 import { isRecordForAsset } from './utils/assetIdentity';
 import {
@@ -2484,8 +2486,8 @@ const buyLotDraftSummary = useMemo(() => {
       sourceType: tradeLedger.length > 0 ? 'ledger' : 'trade',
     }));
   }, [tradeLedger, trades]);
-  const tradeStockOptions = useMemo(() => (
-    [...new Set(tradeRecords.map((trade) => trade.name).filter(Boolean))].sort()
+  const tradeStockFilterOptions = useMemo(() => (
+    buildStockSearchOptions(tradeRecords)
   ), [tradeRecords]);
   const enrichedMemos = useMemo(() => memos.map((memo) => {
     const matchingSellTrade = findMatchingSellTrade(memo, trades);
@@ -2510,6 +2512,9 @@ const buyLotDraftSummary = useMemo(() => {
       ...tradeLedger.map((entry) => entry.name),
       ...enrichedMemos.map((memo) => memo.name),
     ].filter(Boolean))].sort()
+  ), [tradeLedger, enrichedMemos]);
+  const memoStockFilterOptions = useMemo(() => (
+    buildStockSearchOptions([...tradeLedger, ...enrichedMemos])
   ), [tradeLedger, enrichedMemos]);
   const visibleTrades = useMemo(() => {
     const stockFiltered = tradeStockFilter === 'all'
@@ -4523,16 +4528,12 @@ const buyLotDraftSummary = useMemo(() => {
               </div>
               <div className="p-5 md:p-6 border-b border-line bg-surface space-y-4">
                 <div className="flex flex-col md:flex-row gap-3">
-                  <select
+                  <StockFilterCombobox
                     value={tradeStockFilter}
-                    onChange={(e) => setTradeStockFilter(e.target.value)}
-                    className="px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
-                  >
-                    <option value="all">전체 종목</option>
-                    {tradeStockOptions.map((name) => (
-                      <option key={name} value={name}>{name}</option>
-                    ))}
-                  </select>
+                    onChange={setTradeStockFilter}
+                    options={tradeStockFilterOptions}
+                    ariaLabel="과거 매매 기록 종목 필터"
+                  />
                   <select
                     value={tradeSideFilter}
                     onChange={(e) => setTradeSideFilter(e.target.value)}
@@ -5039,6 +5040,7 @@ const buyLotDraftSummary = useMemo(() => {
           <MemoTab
             memos={visibleMemos}
             stockOptions={memoStockOptions}
+            stockFilterOptions={memoStockFilterOptions}
             stockFilter={memoStockFilter}
             onStockFilterChange={setMemoStockFilter}
             sortMode={memoSortMode}

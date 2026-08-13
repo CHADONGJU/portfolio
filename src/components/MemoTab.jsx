@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { CalendarDays, Check, NotebookPen, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { formatInputNumber, sanitizeNumericInput } from '../utils/formatters';
+import StockFilterCombobox from './StockFilterCombobox';
 
 const normalizeAction = (memo) => {
   if (memo.side === 'buy' || memo.type === 'buy') return '매수';
@@ -107,6 +108,7 @@ const MemoItem = ({ memo, onRemoveMemo, onUpdateMemo, formatMoney }) => {
 const MemoTab = ({
   memos,
   stockOptions,
+  stockFilterOptions,
   stockFilter,
   onStockFilterChange,
   sortMode,
@@ -201,10 +203,12 @@ const MemoTab = ({
 
         <div className="p-5 md:p-6 border-b border-line bg-surface">
           <div className="flex flex-col md:flex-row gap-3">
-            <select value={stockFilter} onChange={(e) => onStockFilterChange(e.target.value)} className="px-4 py-3 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft">
-              <option value="all">전체 종목</option>
-              {stockOptions.map((name) => <option key={name} value={name}>{name}</option>)}
-            </select>
+            <StockFilterCombobox
+              value={stockFilter}
+              onChange={onStockFilterChange}
+              options={stockFilterOptions}
+              ariaLabel="메모장 종목 필터"
+            />
             <select value={sortMode} onChange={(e) => onSortModeChange(e.target.value)} className="px-4 py-3 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft">
               {sortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
