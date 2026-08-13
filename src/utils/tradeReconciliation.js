@@ -192,8 +192,9 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
        */
       const buyRate = averageCost > EPSILON ? averageKrwCost / averageCost : 0;
       const removedKrwCost = averageKrwCost * matchedQuantity;
+      const krwCharges = (row.brokerFee + row.sellTax) * buyRate;
       const krwPnl = (tracksKrwCost && buyRate > 0 && matchedQuantity > EPSILON && unknownRateQuantity <= EPSILON)
-        ? (row.price * matchedQuantity * buyRate) - removedKrwCost
+        ? (row.price * matchedQuantity * buyRate) - removedKrwCost - krwCharges
         : null;
 
       quantity = Math.max(0, quantity - matchedQuantity);
