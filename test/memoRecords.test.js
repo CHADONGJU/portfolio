@@ -2,45 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  isDeletedMemoRecord,
   selectActiveMemoRecords,
-  tombstoneMemoRecords,
 } from '../src/utils/memoRecords.js';
-import { assertSafePortfolioWrite } from '../src/utils/portfolioWriteSafety.js';
 
-test('clears every active memo with tombstones without removing its records', () => {
-  const cleared = tombstoneMemoRecords([
-    { id: 'one', memo: '첫 메모' },
-    { id: 'two', memo: '둘째 메모', ledgerId: 'ledger-2' },
-  ], '2026-08-13T12:00:00.000Z');
+test('filters deleted memo records from the visible memo list', () => {
+  const active = { id: 'active', memo: '유지할 메모' };
+  const deletedByStatus = { id: 'status', memo: '', status: 'deleted' };
+  const deletedByTimestamp = { id: 'timestamp', memo: '', deletedAt: '2026-08-13T12:00:00.000Z' };
 
-  assert.equal(cleared.length, 2);
-  assert.equal(selectActiveMemoRecords(cleared).length, 0);
-  assert.deepEqual(cleared[1], {
-    id: 'two',
-    memo: '',
-    ledgerId: 'ledger-2',
-    status: 'deleted',
-    deletedAt: '2026-08-13T12:00:00.000Z',
-    updatedAt: '2026-08-13T12:00:00.000Z',
-  });
+  assert.deepEqual(
+    selectActiveMemoRecords([active, deletedByStatus, deletedByTimestamp]),
+    [active],
+  );
 });
 
-test('keeps existing tombstones unchanged during a later clear', () => {
-  const existing = { id: 'old', status: 'deleted', deletedAt: '2026-01-01T00:00:00.000Z' };
-  assert.equal(tombstoneMemoRecords([existing], '2026-08-13T12:00:00.000Z')[0], existing);
-});
-
-test('passes the mass-shrink guard because memo records are preserved', () => {
-  const previousMemos = Array.from({ length: 12 }, (_, index) => ({
-    id: `memo-${index}`,
-    ledgerId: `ledger-${index}`,
-    memo: `메모 ${index}`,
-  }));
-  const nextMemos = tombstoneMemoRecords(previousMemos, '2026-08-13T12:00:00.000Z');
-
-  assert.doesNotThrow(() => assertSafePortfolioWrite(
-    { memos: previousMemos },
-    { memos: nextMemos },
-  ));
-  assert.equal(nextMemos.length, previousMemos.length);
+test('recognizes both supported deleted memo markers', () => {
+  assert.equal(isDeletedMemoRecord({ status: 'deleted' }), true);
+  assert.equal(isDeletedMemoRecord({ deletedAt: '2026-08-13T12:00:00.000Z' }), true);
+  assert.equal(isDeletedMemoRecord({ memo: '활성 메모' }), false);
 });

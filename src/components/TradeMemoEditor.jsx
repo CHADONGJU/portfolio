@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, Trash2, X } from 'lucide-react';
+import { Check, Eraser, Trash2, X } from 'lucide-react';
 import FeatureInfo from './FeatureInfo';
 
 const TradeMemoEditor = ({ record, onSave, onDelete, onClose }) => {
@@ -37,6 +37,14 @@ const TradeMemoEditor = ({ record, onSave, onDelete, onClose }) => {
         </button>
         <button type="button" onClick={onClose} className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-line-soft text-ink-soft rounded-xl font-bold text-xs">
           <X size={14} /> 취소
+        </button>
+        <button
+          type="button"
+          disabled={draft.length === 0}
+          onClick={() => setDraft('')}
+          className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-line-soft text-ink-soft rounded-xl font-bold text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Eraser size={14} /> 입력 내용 지우기
         </button>
         {record.memoRecordId !== null && record.memoRecordId !== undefined && (
           <button

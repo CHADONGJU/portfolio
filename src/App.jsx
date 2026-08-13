@@ -59,7 +59,6 @@ import { combineTradesWithMemos } from './utils/tradeMemos';
 import {
   isDeletedMemoRecord,
   selectActiveMemoRecords,
-  tombstoneMemoRecords,
 } from './utils/memoRecords';
 import { getDividendRefreshState, getDividendRefreshVersion } from './utils/dividendRefresh';
 import { isRecordForAsset } from './utils/assetIdentity';
@@ -1039,7 +1038,6 @@ const App = () => {
   const [cloudRetryToken, setCloudRetryToken] = useState(0);
   const loadedUserIdRef = useRef('');
   const [assetPendingRemoval, setAssetPendingRemoval] = useState(null);
-  const [isClearAllMemosConfirmOpen, setIsClearAllMemosConfirmOpen] = useState(false);
 
   // 피드백 로그 (3초 뒤 자동 삭제)
   const [syncStatus, setSyncStatus] = useState([]);
@@ -1074,16 +1072,6 @@ const App = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [assetPendingRemoval]);
-
-  useEffect(() => {
-    if (!isClearAllMemosConfirmOpen) return undefined;
-
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape') setIsClearAllMemosConfirmOpen(false);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isClearAllMemosConfirmOpen]);
 
   const [selectedCategory, setSelectedCategory] = useState(null);
   // 자산 ID별 표시 통화. 'KRW'면 원화 환산, 그 외에는 현지 통화로 보여준다.
@@ -2639,19 +2627,6 @@ const buyLotDraftSummary = useMemo(() => {
     )));
     setExpandedTradeMemoId('');
     addLog('메모만 삭제했습니다. 매매 기록은 유지됩니다.', 'success');
-  };
-
-  const clearAllTradeMemos = () => {
-    const memoCount = activeMemos.length;
-    if (memoCount === 0) {
-      setIsClearAllMemosConfirmOpen(false);
-      return;
-    }
-
-    setMemos((previous) => tombstoneMemoRecords(previous));
-    setExpandedTradeMemoId('');
-    setIsClearAllMemosConfirmOpen(false);
-    addLog(`메모 ${memoCount.toLocaleString()}건만 삭제했습니다. 매매 기록은 유지됩니다.`, 'success');
   };
 
   const updateTradeMemo = (record, memoText) => {
@@ -4551,14 +4526,6 @@ const buyLotDraftSummary = useMemo(() => {
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setIsClearAllMemosConfirmOpen(true)}
-                    disabled={activeMemos.length === 0}
-                    className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-danger-soft text-danger rounded-xl font-bold text-xs transition-colors hover:bg-danger hover:text-surface disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-danger-soft disabled:hover:text-danger"
-                  >
-                    <Trash2 size={15} /> 전체 메모 삭제
-                  </button>
-                  <button
-                    type="button"
                     onClick={() => setIsManualTradeEntryOpen((previous) => !previous)}
                     className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-ink text-surface rounded-xl font-bold text-xs shadow-sm"
                   >
@@ -6172,51 +6139,6 @@ const buyLotDraftSummary = useMemo(() => {
       </button>
     </div>
   </div>
-      )}
-
-      {isClearAllMemosConfirmOpen && (
-        <div
-          className="fixed inset-0 z-[120] bg-ink/40 backdrop-blur-[2px] flex items-center justify-center p-4 anim-fade"
-          onClick={() => setIsClearAllMemosConfirmOpen(false)}
-        >
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="clear-all-memos-title"
-            className="w-full max-w-[420px] bg-surface rounded-[24px] p-7 shadow-modal anim-rise"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="w-11 h-11 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mb-4">
-              <Trash2 size={20} aria-hidden="true" />
-            </div>
-            <h2 id="clear-all-memos-title" className="text-base md:text-lg font-bold text-ink">
-              전체 메모를 삭제할까요?
-            </h2>
-            <p className="mt-2 text-xs md:text-sm font-medium text-ink-soft leading-relaxed">
-              메모 {activeMemos.length.toLocaleString()}건만 삭제합니다. 매수·매도 기록, 수량과 손익은 그대로 유지됩니다.
-            </p>
-            <p className="mt-3 text-[11px] md:text-xs font-bold text-danger">
-              삭제한 메모 내용은 되돌릴 수 없습니다.
-            </p>
-
-            <div className="mt-6 flex gap-2.5">
-              <button
-                type="button"
-                onClick={() => setIsClearAllMemosConfirmOpen(false)}
-                className="flex-1 px-5 py-3 min-h-11 bg-line-soft text-ink-soft rounded-xl md:rounded-2xl font-bold text-xs md:text-sm hover:bg-line transition-colors"
-              >
-                취소
-              </button>
-              <button
-                type="button"
-                onClick={clearAllTradeMemos}
-                className="flex-1 px-5 py-3 min-h-11 bg-danger text-surface rounded-xl md:rounded-2xl font-bold text-xs md:text-sm hover:bg-danger transition-colors"
-              >
-                메모만 전체 삭제
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {assetPendingRemoval && (
