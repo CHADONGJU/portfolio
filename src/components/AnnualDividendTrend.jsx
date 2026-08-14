@@ -1,10 +1,16 @@
 import { useMemo, useState } from 'react';
 import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react';
-import { getDetailChartColor } from '../constants';
 import { formatMoney } from '../utils/formatters';
 import FeatureInfo from './FeatureInfo';
 
-const OTHER_COLOR = '#94a3b8';
+const DIVIDEND_GREEN_COLORS = [
+  '#064e3b',
+  '#047857',
+  '#059669',
+  '#10b981',
+  '#34d399',
+];
+const OTHER_COLOR = '#a7f3d0';
 
 const formatCompactKrw = (amount) => new Intl.NumberFormat('ko-KR', {
   notation: 'compact',
@@ -12,7 +18,9 @@ const formatCompactKrw = (amount) => new Intl.NumberFormat('ko-KR', {
 }).format(Math.round(Number(amount) || 0));
 
 const getSegmentColor = (name, assetIndex) => (
-  name === '기타' ? OTHER_COLOR : getDetailChartColor(assetIndex)
+  name === '기타'
+    ? OTHER_COLOR
+    : DIVIDEND_GREEN_COLORS[assetIndex % DIVIDEND_GREEN_COLORS.length]
 );
 
 const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
@@ -117,7 +125,13 @@ const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
                 </span>
               ))}
               <span className="inline-flex items-center gap-1.5 text-[11px] md:text-xs font-bold text-ink-mute">
-                <span className="w-4 h-2.5 rounded-sm bg-[repeating-linear-gradient(135deg,#94a3b8_0_4px,#cbd5e1_4px_7px)]" />
+                <span
+                  className="w-4 h-2.5 rounded-sm border border-line-soft"
+                  style={{
+                    backgroundColor: 'transparent',
+                    backgroundImage: 'repeating-linear-gradient(135deg, #059669 0 2px, transparent 2px 6px)',
+                  }}
+                />
                 향후 예상
               </span>
             </div>
@@ -154,9 +168,10 @@ const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
                               style={{
                                 height: `${heightPercent}%`,
                                 minHeight: segment.amount > 0 ? '2px' : 0,
-                                background: segment.isEstimated
-                                  ? `repeating-linear-gradient(135deg, ${color} 0 6px, ${color}99 6px 10px)`
-                                  : color,
+                                backgroundColor: segment.isEstimated ? 'transparent' : color,
+                                backgroundImage: segment.isEstimated
+                                  ? `repeating-linear-gradient(135deg, ${color} 0 2px, transparent 2px 7px)`
+                                  : 'none',
                               }}
                             />
                           );
