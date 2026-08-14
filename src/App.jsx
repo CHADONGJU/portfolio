@@ -4519,8 +4519,21 @@ const buyLotDraftSummary = useMemo(() => {
                         </div>
                       </div>
 
-                      <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[12px] md:text-[13px] font-bold ${summary.status.includes('반영') ? 'bg-brand-soft text-brand' : 'bg-line-soft text-ink-soft'}`}>
-                        {summary.status} {summary.status.includes('예상') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
+                      <div className="pt-4 border-t border-line-soft flex items-end justify-between gap-3">
+                        <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[12px] md:text-[13px] font-bold ${summary.status.includes('반영') ? 'bg-brand-soft text-brand' : 'bg-line-soft text-ink-soft'}`}>
+                          {summary.status} {summary.status.includes('예상') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
+                        </div>
+                        <div
+                          className="text-right whitespace-nowrap shrink-0"
+                          title="최근 세후 배당과 지급주기를 연간 환산한 뒤 현재 평가금액으로 나눈 값"
+                        >
+                          <p className="text-[10px] md:text-[11px] font-bold text-ink-mute">예상 세후 연 배당률</p>
+                          <p className={`figure text-base md:text-lg font-bold mt-0.5 ${Number.isFinite(summary.annualDividendYieldPercent) ? 'text-up' : 'text-ink-mute'}`}>
+                            {Number.isFinite(summary.annualDividendYieldPercent)
+                              ? `${summary.annualDividendYieldPercent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
+                              : '—'}
+                          </p>
+                        </div>
                       </div>
                     </div>
                     )),

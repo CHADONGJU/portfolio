@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { getCategoryColor, getCategoryDetailColor } from '../constants';
 import { getDividendExDate, getDividendReportingDate } from '../utils/dividendDates';
 import { sortDividendRecordsNewestFirst } from '../utils/dividendRecords';
+import { calculateAnnualDividendYield } from '../utils/annualDividendYield';
 import {
   buildCanonicalTradeRows,
   buildKrwCostBasisByAsset,
@@ -433,6 +434,8 @@ export const usePortfolioMetrics = ({
           totalAmount: 0,
           status: '배당락 기록 대기',
           expectedAmount: 0,
+          expectedAnnualAmount: 0,
+          annualDividendYieldPercent: null,
           history: [],
         };
         return;
@@ -466,6 +469,15 @@ export const usePortfolioMetrics = ({
       nextDate.setMonth(nextDate.getMonth() + monthDiff);
       const nextMonth = nextDate.getMonth() + 1;
       const nextYear = nextDate.getFullYear();
+      const currentAsset = enhancedAssets.find((candidate) => candidate.name === asset.name);
+      const {
+        expectedAnnualAmount,
+        annualDividendYieldPercent,
+      } = calculateAnnualDividendYield({
+        expectedPaymentAmount: expectedAmount,
+        intervalMonths: monthDiff,
+        currentValue: currentAsset?.currentNative,
+      });
 
       if (
         Number.isFinite(lastReportingDate.getTime())
@@ -487,6 +499,8 @@ export const usePortfolioMetrics = ({
         totalAmount,
         status,
         expectedAmount,
+        expectedAnnualAmount,
+        annualDividendYieldPercent,
         // Detail history is a receipt ledger, not a forecast. Keep future events in
         // assetDivs for the next-dividend estimate, but never list them as received.
         history: sortDividendRecordsNewestFirst(receivedAssetDivs),
@@ -498,7 +512,7 @@ export const usePortfolioMetrics = ({
       if (categoryDelta !== 0) return categoryDelta;
       return b.totalAmount - a.totalAmount;
     });
-  }, [autoDividends, receivedDividends, assets, dividendAssetRegistry]);
+  }, [autoDividends, receivedDividends, assets, dividendAssetRegistry, enhancedAssets]);
 
   const filteredHistory = useMemo(() => {
     if (!selectedDividendAsset) return [];
