@@ -6,6 +6,7 @@ import {
   ChevronLeft, ChevronRight, NotebookPen, PlusCircle
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
+import AnnualDividendTrend from './components/AnnualDividendTrend';
 import FeatureInfo from './components/FeatureInfo';
 import ManualTradeEntryForm from './components/ManualTradeEntryForm';
 import StockFilterCombobox from './components/StockFilterCombobox';
@@ -54,6 +55,10 @@ import {
 import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
 import { buildTradeSummary } from './utils/tradeSummary';
 import { summarizeDividendCalendarEvents } from './utils/dividendCalendar';
+import {
+  buildAnnualDividendEvents,
+  summarizeAnnualDividendTrend,
+} from './utils/annualDividendTrend';
 import { buildStockSearchOptions } from './utils/stockSearchOptions';
 import { combineTradesWithMemos } from './utils/tradeMemos';
 import {
@@ -105,6 +110,7 @@ import { db } from './firebase';
 
 // 과거 거래의 환율을 거래일 기준으로 한 번 고쳐 받았는지 표시하는 플래그.
 const FX_RATE_REPAIR_STORAGE_KEY = 'portfolio.fxRateRepairedV1';
+const ANNUAL_DIVIDEND_FX_RATES_STORAGE_KEY = 'portfolio.annualDividendFxRatesV1';
 
 const isDomesticStockCategory = (category) => category?.includes('국내') && category?.includes('주식');
 const isCommodityCategory = (category) => category?.includes('원자재');
@@ -1079,6 +1085,10 @@ const App = () => {
   const [selectedDividendAsset, setSelectedDividendAsset] = useState(null);
   const [dividendFilter, setDividendFilter] = useState('전체');
   const [calendarMonth, setCalendarMonth] = useState(() => getMonthKey(new Date()));
+  const [annualDividendYear, setAnnualDividendYear] = useState(() => new Date().getFullYear());
+  const [annualDividendFxRates, setAnnualDividendFxRates] = useState(() => (
+    loadJson(ANNUAL_DIVIDEND_FX_RATES_STORAGE_KEY, {})
+  ));
   const [selectedCalendarEventId, setSelectedCalendarEventId] = useState('');
   const [expandedCalendarDate, setExpandedCalendarDate] = useState('');
 
@@ -1914,6 +1924,79 @@ const buyLotDraftSummary = useMemo(() => {
       items: dividendSummary.filter((summary) => summary.currency !== 'KRW'),
     },
   ].filter((group) => group.items.length > 0)), [dividendSummary]);
+
+  const annualDividendEvents = useMemo(() => buildAnnualDividendEvents({
+    dividendSummary,
+    assets: enhancedAssets,
+    year: annualDividendYear,
+  }), [annualDividendYear, dividendSummary, enhancedAssets]);
+  const annualDividendFxLookupDates = useMemo(() => {
+    const todayKey = formatDateKey(new Date());
+    return [...new Set(annualDividendEvents
+      .filter((event) => (
+        !event.isEstimated
+        && event.currency === 'USD'
+        && event.fxDate < todayKey
+        && !(Number(event.fxRate) > 0)
+        && !(Number(annualDividendFxRates[event.fxDate]) > 0)
+      ))
+      .map((event) => event.fxDate))]
+      .sort();
+  }, [annualDividendEvents, annualDividendFxRates]);
+  const annualDividendFxLookupKey = annualDividendFxLookupDates.join('|');
+
+  useEffect(() => {
+    if (!annualDividendFxLookupKey) return undefined;
+    let cancelled = false;
+    const lookupDates = annualDividendFxLookupKey.split('|');
+
+    Promise.all(lookupDates.map(async (date) => ({
+      date,
+      rate: await fetchUsdKrwRateByDate(date),
+    }))).then((results) => {
+      if (cancelled) return;
+      setAnnualDividendFxRates((previous) => {
+        const next = { ...previous };
+        let changed = false;
+        results.forEach(({ date, rate }) => {
+          if (!(Number(rate) > 0) || Number(next[date]) === Number(rate)) return;
+          next[date] = Number(rate);
+          changed = true;
+        });
+        if (!changed) return previous;
+        saveJson(ANNUAL_DIVIDEND_FX_RATES_STORAGE_KEY, next);
+        return next;
+      });
+    }).catch(() => {
+      // 네트워크 실패 시 현재 환율로 우선 표시하고 다음 방문 때 다시 확인한다.
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [annualDividendFxLookupKey]);
+
+  const annualDividendTrend = useMemo(() => summarizeAnnualDividendTrend({
+    events: annualDividendEvents,
+    resolveKrwRate: (event) => {
+      if (event.currency === 'KRW') return 1;
+      if (Number(event.fxRate) > 0) return Number(event.fxRate);
+      if (event.currency === 'USD') {
+        if (!event.isEstimated && Number(annualDividendFxRates[event.fxDate]) > 0) {
+          return Number(annualDividendFxRates[event.fxDate]);
+        }
+        return exchangeRate || currencyRates.USD || 1350;
+      }
+      if (event.currency === 'JPY') return jpyKrwRate || currencyRates.JPY || 9.5;
+      return currencyRates[event.currency] || 1;
+    },
+  }), [
+    annualDividendEvents,
+    annualDividendFxRates,
+    currencyRates,
+    exchangeRate,
+    jpyKrwRate,
+  ]);
 
   const isDomesticStockChart = selectedCategory?.includes('국내') && selectedCategory?.includes('주식');
   const isOverseasStockChart = selectedCategory?.includes('해외') && selectedCategory?.includes('주식');
@@ -5092,7 +5175,8 @@ const buyLotDraftSummary = useMemo(() => {
         )}
 
         {activeTab === 'calendar' && (
-          <div className="bg-surface rounded-[20px] overflow-hidden anim-fade">
+          <div className="space-y-6 anim-fade">
+          <div className="bg-surface rounded-[20px] overflow-hidden">
             <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div className="flex items-center gap-2">
                 <h3 className="text-base md:text-lg font-bold text-ink flex items-center gap-2">
@@ -5268,6 +5352,14 @@ const buyLotDraftSummary = useMemo(() => {
                 )}
               </div>
             </div>
+          </div>
+          <AnnualDividendTrend
+            key={annualDividendYear}
+            year={annualDividendYear}
+            trend={annualDividendTrend}
+            isFxLoading={annualDividendFxLookupDates.length > 0}
+            onYearChange={setAnnualDividendYear}
+          />
           </div>
         )}
       </div>
