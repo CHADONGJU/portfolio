@@ -4621,7 +4621,9 @@ const buyLotDraftSummary = useMemo(() => {
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number(div.quantity) > 0 ? `${Number(div.quantity).toLocaleString()}주` : '-'}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number(div.perShareNetAmount) > 0 ? formatMoney(div.perShareNetAmount, div.currency) : '-'}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
-                              {getDividendReportingDate(div)}
+                              {(div.actualPaymentDate || div.paymentDate)
+                                ? `지급일 ${getDividendReportingDate(div)}`
+                                : `배당락일 ${getDividendExDate(div)}`}
                               <span className="block mt-1 text-[11px] text-ink-mute">
                                 {`배당기준일 ${div.recordDate || getDividendEligibilityDate(div) || getDividendExDate(div)}`}
                               </span>
