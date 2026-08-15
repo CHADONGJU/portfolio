@@ -117,6 +117,23 @@ const isCommodityCategory = (category) => category?.includes('원자재');
 
 const ASSET_CATEGORIES = ['국내주식', '해외주식', '현금', '원자재'];
 
+const formatAssetQuantity = (quantity, category) => {
+  const number = Number(quantity);
+  if (!Number.isFinite(number)) return '0';
+
+  if (category === '해외주식') {
+    return number.toLocaleString(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 6,
+    });
+  }
+
+  return number.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: Number.isInteger(number) ? 0 : 3,
+  });
+};
+
 const PORTFOLIO_STORAGE_KEYS = [
   ASSETS_STORAGE_KEY,
   TRADES_STORAGE_KEY,
@@ -2119,6 +2136,7 @@ const buyLotDraftSummary = useMemo(() => {
             dateLabel: isDividendReportingDateShifted(dividend) ? '한국시간 지급일' : '지급일',
             officialPaymentDate,
             exDate: getDividendExDate(dividend),
+            eligibilityDate: dividend.recordDate || getDividendEligibilityDate(dividend),
             name: summary.name,
             ticker: dividend.ticker || asset?.ticker || summary.ticker || summary.name,
             currency: dividend.currency || asset?.currency || summary.currency || 'KRW',
@@ -2132,25 +2150,29 @@ const buyLotDraftSummary = useMemo(() => {
         const nextDate = getNextEstimatedExDividendDate(history, today);
         if (!nextDate) return paymentEvents;
 
-        const dateKey = formatDateKey(nextDate);
-        if (!dateKey.startsWith(monthPrefix)) return paymentEvents;
-
         const latestDividend = history[0] || {};
+        const currency = asset?.currency || summary.currency || latestDividend.currency || 'KRW';
+        const exDate = formatDateKey(nextDate);
+        const eligibilityDate = getDividendEligibilityDate({ exDate, currency }) || exDate;
+        if (!eligibilityDate.startsWith(monthPrefix)) return paymentEvents;
+
         const quantity = parseNumber(asset?.quantity || latestDividend.quantity);
         const perShareGrossAmount = Number(latestDividend.perShareGrossAmount) || 0;
         const perShareNetAmount = Number(latestDividend.perShareNetAmount)
           || (Number(latestDividend.quantity) > 0 ? Number(latestDividend.amount) / Number(latestDividend.quantity) : 0);
         const grossAmount = perShareGrossAmount * quantity;
         const netAmount = perShareNetAmount * quantity || Number(summary.expectedAmount) || 0;
-        const currency = asset?.currency || summary.currency || latestDividend.currency || 'KRW';
         const ticker = asset?.ticker || summary.ticker || summary.name;
 
         if (quantity <= 0 || (grossAmount <= 0 && netAmount <= 0)) return paymentEvents;
 
         return [...paymentEvents, {
-          id: `${summary.name}-estimated-ex-${dateKey}`,
-          date: dateKey,
-          dateLabel: '예상 배당락일',
+          id: `${summary.name}-estimated-record-${eligibilityDate}`,
+          date: eligibilityDate,
+          dateLabel: '예상 배당기준일',
+          exDate,
+          eligibilityDate,
+          officialPaymentDate: '',
           name: summary.name,
           ticker,
           currency,
@@ -2662,6 +2684,8 @@ const buyLotDraftSummary = useMemo(() => {
 
   const removeTrade = (record, e) => {
     if (e) e.stopPropagation();
+    const hasLinkedMemo = record.memoRecordId !== null && record.memoRecordId !== undefined;
+
     if (record.sourceType === 'ledger') {
       const nextLedger = tradeLedger.filter(entry => entry.id !== record.id);
       setTradeLedger(nextLedger);
@@ -2690,9 +2714,20 @@ const buyLotDraftSummary = useMemo(() => {
     } else {
       setTrades(prevTrades => prevTrades.filter(t => t.id !== record.id));
     }
+
+    if (hasLinkedMemo) {
+      const deletedAt = new Date().toISOString();
+      setMemos((previous) => previous.map((memo) => (
+        String(memo.id) === String(record.memoRecordId)
+          ? { ...memo, memo: '', status: 'deleted', deletedAt, updatedAt: deletedAt }
+          : memo
+      )));
+      setExpandedTradeMemoId('');
+    }
+
     addLog(
-      record.memoRecordId !== null && record.memoRecordId !== undefined
-        ? '매매 기록만 삭제했습니다. 연결된 메모는 미연결 기록으로 보존됩니다.'
+      hasLinkedMemo
+        ? '매매 기록과 연결된 메모를 함께 삭제했습니다.'
         : '매매 기록이 삭제되었습니다.',
       'success',
     );
@@ -2709,7 +2744,12 @@ const buyLotDraftSummary = useMemo(() => {
         : memo
     )));
     setExpandedTradeMemoId('');
-    addLog('메모만 삭제했습니다. 매매 기록은 유지됩니다.', 'success');
+    addLog(
+      record.isUnlinkedMemo
+        ? '보존된 미연결 기록을 삭제했습니다.'
+        : '메모만 삭제했습니다. 매매 기록은 유지됩니다.',
+      'success',
+    );
   };
 
   const updateTradeMemo = (record, memoText) => {
@@ -4119,6 +4159,7 @@ const buyLotDraftSummary = useMemo(() => {
                         const isKrwView = canToggleCurrency && assetCurrencyView[asset.id] === 'KRW';
                         const viewCurrency = isKrwView ? 'KRW' : nativeCurrency;
                         const rate = Number(asset.krwRate) > 0 ? Number(asset.krwRate) : 1;
+                        const todayRate = Number(asset.todayKrwRate) > 0 ? Number(asset.todayKrwRate) : rate;
                         const nativeAveragePrice = asset.nativeAveragePrice
                           || Number(asset.originalAveragePrice)
                           || Number(asset.averagePrice)
@@ -4135,7 +4176,7 @@ const buyLotDraftSummary = useMemo(() => {
                             purchase: asset.purchaseKRW,
                             averagePrice: asset.krwAveragePrice,
                             current: asset.currentKRW,
-                            price: asset.nativeCurrentPrice * rate,
+                            price: asset.nativeCurrentPrice * todayRate,
                             profit: asset.profitKRW,
                             returnPercent: asset.returnPercentKRW,
                           }
@@ -4160,7 +4201,7 @@ const buyLotDraftSummary = useMemo(() => {
                               <div className="min-w-0 flex-1">
                                 <p className="font-bold text-ink text-base md:text-[16px] leading-none truncate">{asset.name}</p>
                                 <p className="text-xs md:text-[13px] text-ink-mute font-bold mt-2 md:mt-1.5 truncate">
-                                  {asset.category === '현금' ? 'CASH' : asset.ticker} {asset.category !== '현금' && `• ${asset.quantity.toLocaleString()}${asset.category==='원자재'?'단위':'주'}`}
+                                  {asset.category === '현금' ? 'CASH' : asset.ticker} {asset.category !== '현금' && `• ${formatAssetQuantity(asset.quantity, asset.category)}${asset.category==='원자재'?'단위':'주'}`}
                                 </p>
                                 {asset.category !== '현금' && (
                                   <p className="text-[12px] md:text-[13px] text-ink-mute font-bold mt-1 truncate">
@@ -4499,44 +4540,57 @@ const buyLotDraftSummary = useMemo(() => {
                       </div>
                       <span className="text-[11px] font-bold text-ink-mute">{group.items.length}종목</span>
                     </div>,
-                    ...group.items.map((summary) => (
-                    <div 
-                      key={summary.name} 
-                      onClick={() => setSelectedDividendAsset(summary.name)} 
-                      className="p-5 md:p-6 bg-canvas rounded-[20px] border border-line cursor-pointer transition-all group hover:bg-surface hover:shadow-lift hover:-translate-y-px"
-                    >
-                      <div className="flex justify-between items-start mb-4 md:mb-6">
-                        <div className="whitespace-nowrap overflow-hidden pr-3 md:pr-4">
-                          <div className="flex items-center gap-1.5">
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${group.id === 'domestic' ? 'bg-up' : 'bg-brand'}`} />
-                            <p className="text-[11px] md:text-[12px] text-ink-mute font-bold truncate">{group.id === 'domestic' ? '국내 · KRW' : `해외 · ${summary.currency}`}</p>
-                          </div>
-                          <h4 className="font-bold text-ink text-base md:text-lg mt-1 truncate">{summary.name}</h4>
-                        </div>
-                        <div className="text-right whitespace-nowrap shrink-0">
-                          <p className="text-[11px] md:text-[12px] text-ink-mute font-bold mb-0.5 md:mb-1">세후 누적 배당금</p>
-                          <p className="figure text-lg md:text-xl font-bold text-ink">{formatMoney(summary.totalAmount, summary.currency)}</p>
-                        </div>
-                      </div>
+                    ...group.items.map((summary) => {
+                      const latestDividend = Array.isArray(summary.history) ? summary.history[0] : null;
+                      const dividendRecordDate = latestDividend
+                        ? latestDividend.recordDate || getDividendEligibilityDate(latestDividend) || getDividendExDate(latestDividend)
+                        : '';
+                      const dividendPaymentDate = latestDividend ? getDividendOfficialPaymentDate(latestDividend) : '';
 
-                      <div className="pt-4 border-t border-line-soft flex items-end justify-between gap-3">
-                        <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[12px] md:text-[13px] font-bold ${summary.status.includes('반영') ? 'bg-brand-soft text-brand' : 'bg-line-soft text-ink-soft'}`}>
-                          {summary.status} {summary.status.includes('예상') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
+                      return (
+                      <div
+                        key={summary.name}
+                        onClick={() => setSelectedDividendAsset(summary.name)}
+                        className="p-5 md:p-6 bg-canvas rounded-[20px] border border-line cursor-pointer transition-all group hover:bg-surface hover:shadow-lift hover:-translate-y-px"
+                      >
+                        <div className="flex justify-between items-start mb-4 md:mb-6">
+                          <div className="whitespace-nowrap overflow-hidden pr-3 md:pr-4">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${group.id === 'domestic' ? 'bg-up' : 'bg-brand'}`} />
+                              <p className="text-[11px] md:text-[12px] text-ink-mute font-bold truncate">{group.id === 'domestic' ? '국내 · KRW' : `해외 · ${summary.currency}`}</p>
+                            </div>
+                            <h4 className="font-bold text-ink text-base md:text-lg mt-1 truncate">{summary.name}</h4>
+                          </div>
+                          <div className="text-right whitespace-nowrap shrink-0">
+                            <p className="text-[11px] md:text-[12px] text-ink-mute font-bold mb-0.5 md:mb-1">세후 누적 배당금</p>
+                            <p className="figure text-lg md:text-xl font-bold text-ink">{formatMoney(summary.totalAmount, summary.currency)}</p>
+                          </div>
                         </div>
-                        <div
-                          className="text-right whitespace-nowrap shrink-0"
-                          title="최근 세후 배당과 지급주기를 연간 환산한 뒤 현재 평가금액으로 나눈 값"
-                        >
-                          <p className="text-[10px] md:text-[11px] font-bold text-ink-mute">예상 세후 연 배당률</p>
-                          <p className={`figure text-base md:text-lg font-bold mt-0.5 ${Number.isFinite(summary.annualDividendYieldPercent) ? 'text-up' : 'text-ink-mute'}`}>
-                            {Number.isFinite(summary.annualDividendYieldPercent)
-                              ? `${summary.annualDividendYieldPercent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
-                              : '—'}
-                          </p>
+
+                        <div className="space-y-1.5 mb-4 text-[11px] md:text-[12px] font-bold text-ink-mute">
+                          <p>배당기준일 {dividendRecordDate || '미정'}</p>
+                          <p>배당지급일 {dividendPaymentDate || '미정'}</p>
+                        </div>
+
+                        <div className="pt-4 border-t border-line-soft flex items-end justify-between gap-3">
+                          <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[12px] md:text-[13px] font-bold ${summary.status.includes('반영') ? 'bg-brand-soft text-brand' : 'bg-line-soft text-ink-soft'}`}>
+                            {summary.status} {summary.status.includes('예상') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
+                          </div>
+                          <div
+                            className="text-right whitespace-nowrap shrink-0"
+                            title="최근 세후 배당과 지급주기를 연간 환산한 뒤 현재 평가금액으로 나눈 값"
+                          >
+                            <p className="text-[10px] md:text-[11px] font-bold text-ink-mute">예상 세후 연 배당률</p>
+                            <p className={`figure text-base md:text-lg font-bold mt-0.5 ${Number.isFinite(summary.annualDividendYieldPercent) ? 'text-up' : 'text-ink-mute'}`}>
+                              {Number.isFinite(summary.annualDividendYieldPercent)
+                                ? `${summary.annualDividendYieldPercent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
+                                : '—'}
+                            </p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                    )),
+                      );
+                    }),
                   ]) : (
                     <div className="col-span-full py-8 md:py-12 text-center text-ink-mute font-bold text-xs md:text-sm">
                       {isFetching ? '배당 데이터를 갱신 중입니다...' : '매수일 이후 배당 내역이 없거나 데이터를 불러올 수 없습니다.'}
@@ -4568,12 +4622,12 @@ const buyLotDraftSummary = useMemo(() => {
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number(div.perShareNetAmount) > 0 ? formatMoney(div.perShareNetAmount, div.currency) : '-'}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
                               {getDividendReportingDate(div)}
-                              {getDividendOfficialPaymentDate(div) && (
-                                <span className="block mt-1 text-[11px] text-ink-mute">
-                                  공식 지급 {getDividendOfficialPaymentDate(div)}
-                                </span>
-                              )}
-                              <span className="block mt-1 text-[11px] text-ink-mute">배당락 {getDividendExDate(div)}</span>
+                              <span className="block mt-1 text-[11px] text-ink-mute">
+                                {`배당기준일 ${div.recordDate || getDividendEligibilityDate(div) || getDividendExDate(div)}`}
+                              </span>
+                              <span className="block mt-1 text-[11px] text-ink-mute">
+                                배당지급일 {getDividendOfficialPaymentDate(div) || '미정'}
+                              </span>
                             </td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-bold text-ink whitespace-nowrap">{div.name}</td>
                             <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number.isFinite(Number(div.grossAmount)) ? formatMoney(div.grossAmount, div.currency) : '-'}</td>
@@ -4778,7 +4832,17 @@ const buyLotDraftSummary = useMemo(() => {
                               {!trade.isUnlinkedMemo ? (
                                 <button onClick={(e) => removeTrade(trade, e)} className="text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors p-1.5 md:p-2 rounded-xl" title="매매 기록 삭제 · 메모는 보존"><Trash2 size={16} /></button>
                               ) : (
-                                <span className="text-[11px] font-bold text-ink-mute">메모만 보존</span>
+                                <div className="inline-flex items-center justify-center gap-2">
+                                  <span className="text-[11px] font-bold text-ink-mute">메모만 보존</span>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => removeTradeMemo(trade, e)}
+                                    className="text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors p-1.5 md:p-2 rounded-xl"
+                                    title="보존된 미연결 기록 삭제"
+                                  >
+                                    <Trash2 size={16} />
+                                  </button>
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -5343,11 +5407,12 @@ const buyLotDraftSummary = useMemo(() => {
                       <p className="text-[12px] md:text-xs font-bold text-ink-mute mb-1">{selectedCalendarEvent.dateLabel} {selectedCalendarEvent.date}</p>
                       <h4 className="text-lg md:text-xl font-bold text-ink">{selectedCalendarEvent.name}</h4>
                       <p className="text-xs md:text-sm font-bold text-ink-soft mt-1">{selectedCalendarEvent.ticker} · {selectedCalendarEvent.quantity.toLocaleString()}주 기준</p>
-                      {!selectedCalendarEvent.isEstimated && selectedCalendarEvent.officialPaymentDate !== selectedCalendarEvent.date && (
-                        <p className="text-[11px] md:text-xs font-bold text-ink-mute mt-1">
-                          미국 공시 지급일 {selectedCalendarEvent.officialPaymentDate} · 배당락일 {selectedCalendarEvent.exDate}
-                        </p>
-                      )}
+                      <p className="text-[11px] md:text-xs font-bold text-ink-mute mt-1">
+                        배당기준일 {selectedCalendarEvent.eligibilityDate || selectedCalendarEvent.date}
+                      </p>
+                      <p className="text-[11px] md:text-xs font-bold text-ink-mute mt-1">
+                        배당지급일 {selectedCalendarEvent.officialPaymentDate || '미정'}
+                      </p>
                     </div>
                     <div className="grid grid-cols-2 gap-3 min-w-full md:min-w-80">
                       <div className="bg-surface border border-line-soft rounded-xl p-4">

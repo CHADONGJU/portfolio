@@ -15,6 +15,19 @@ const addUtcDays = (dateKey, days) => {
   return date.toISOString().slice(0, 10);
 };
 
+const addUtcBusinessDays = (dateKey, days) => {
+  let nextDate = dateKey;
+  let remaining = Math.max(0, Number(days) || 0);
+
+  while (remaining > 0) {
+    nextDate = addUtcDays(nextDate, 1);
+    const day = new Date(`${nextDate}T00:00:00Z`).getUTCDay();
+    if (day !== 0 && day !== 6) remaining -= 1;
+  }
+
+  return nextDate;
+};
+
 export const getDividendExDate = (dividend = {}) => (
   normalizeDateKey(dividend.exDate || dividend.date)
 );
@@ -22,8 +35,9 @@ export const getDividendExDate = (dividend = {}) => (
 export const getDividendEligibilityDate = (dividend = {}) => {
   const exDate = getDividendExDate(dividend);
   if (!exDate) return '';
-  return String(dividend.currency || '').toUpperCase() === 'USD'
-    ? addUtcDays(exDate, 1)
+  const currency = String(dividend.currency || '').toUpperCase();
+  return currency === 'USD' || currency === 'KRW'
+    ? addUtcBusinessDays(exDate, 1)
     : exDate;
 };
 

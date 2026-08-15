@@ -139,20 +139,15 @@ export const usePortfolioMetrics = ({
       }
 
       /**
-       * 원화 표시에 쓰는 환율은 "오늘 환율"이 아니라 "이 종목을 살 때 쓴 환율"로 고정한다.
-       *
-       * 오늘 환율로 평가금액을 환산하면, 주가가 하나도 안 움직인 날에도 총 보유자산이
-       * 환율만큼 오르내린다. 환율 변동을 손익으로 보고 싶지 않다는 요구에 맞춰
-       * 매입도 평가도 같은 환율을 쓰게 해 환차손익이 아예 생기지 않게 한다.
-       * 원금을 아직 확정하지 못한 자산만 어쩔 수 없이 오늘 환율을 쓴다.
+       * 원금은 실제 매수 시점의 원화 투입액으로 고정하고, 현재 평가는 오늘 환율로 본다.
+       * 토스 같은 증권사 앱의 원화 화면도 이 구조라 원화 손익에는 환율 변동이 함께 들어간다.
        */
       const displayKrwRate = purchaseNative > 0 && purchaseKRW > 0
         ? purchaseKRW / purchaseNative
         : krwRate;
-      const currentKRW = currentNative * displayKrwRate;
+      const currentKRW = currentNative * krwRate;
 
       const profitNative = currentNative - purchaseNative;
-      // 매입·평가에 같은 환율을 쓰므로 원화 손익은 주가 손익을 환산한 값과 정확히 같다.
       const profitKRW = currentKRW - purchaseKRW;
 
       const returnPercent = (purchaseNative > 0 && a.category !== '현금') ? ((currentNative - purchaseNative) / purchaseNative) * 100 : 0;
