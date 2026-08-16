@@ -388,6 +388,9 @@ export const usePortfolioMetrics = ({
         realizedKRW,
         dividendKRW,
         totalKRW,
+        unrealizedNative,
+        realizedNative,
+        dividendNative,
         totalNative: currency === 'KRW' ? totalKRW : unrealizedNative + realizedNative + dividendNative,
       };
     }).sort((a, b) => {

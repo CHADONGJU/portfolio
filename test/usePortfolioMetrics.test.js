@@ -67,6 +67,10 @@ test('종목별 실현손익이 헤더 합계와 같은 환율을 쓴다', () =>
   const soxl = metrics.stockPerformanceSummary.find((row) => row.name === 'SOXL');
 
   assert.ok(soxl, 'SOXL 요약이 있어야 한다');
+  assert.equal(soxl.realizedNative, 200);
+  assert.equal(soxl.unrealizedNative, 0);
+  assert.equal(soxl.dividendNative, 0);
+  assert.equal(soxl.totalNative, 200);
   assert.equal(soxl.realizedKRW, metrics.totalConvertedNetProfit);
   // 오늘 환율(1500)로 근사하면 300,000이 나온다. 그게 아니어야 한다.
   assert.notEqual(soxl.realizedKRW, 200 * 1500);

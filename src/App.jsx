@@ -4614,7 +4614,13 @@ const buyLotDraftSummary = useMemo(() => {
                   </thead>
                   <tbody className="divide-y divide-line-soft">
                     {filteredPerformanceSummary.map((summary) => {
-                      const totalTone = summary.totalKRW >= 0 ? 'text-up bg-up-soft' : 'text-down bg-down-soft';
+                      const isForeignCurrency = summary.currency !== 'KRW';
+                      const unrealizedDisplay = isForeignCurrency ? summary.unrealizedNative : summary.unrealizedKRW;
+                      const realizedDisplay = isForeignCurrency ? summary.realizedNative : summary.realizedKRW;
+                      const dividendDisplay = isForeignCurrency ? summary.dividendNative : summary.dividendKRW;
+                      const totalDisplay = isForeignCurrency ? summary.totalNative : summary.totalKRW;
+                      const displayCurrency = isForeignCurrency ? summary.currency : 'KRW';
+                      const totalTone = totalDisplay >= 0 ? 'text-up bg-up-soft' : 'text-down bg-down-soft';
                       return (
                         <tr key={summary.key || summary.name} className="hover:bg-canvas transition-colors">
                           <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
@@ -4640,27 +4646,27 @@ const buyLotDraftSummary = useMemo(() => {
                             )}
                           </td>
                           <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
-                            {summary.unrealizedKRW > 0 ? '+' : ''}{formatMoney(summary.unrealizedKRW, 'KRW')}
+                            {unrealizedDisplay > 0 ? '+' : ''}{formatMoney(unrealizedDisplay, displayCurrency)}
                           </td>
                           <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
-                            {summary.realizedKRW > 0 ? '+' : ''}{formatMoney(summary.realizedKRW, 'KRW')}
+                            {realizedDisplay > 0 ? '+' : ''}{formatMoney(realizedDisplay, displayCurrency)}
                           </td>
                           <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
-                            {summary.dividendKRW > 0 ? '+' : ''}{formatMoney(summary.dividendKRW, 'KRW')}
+                            {dividendDisplay > 0 ? '+' : ''}{formatMoney(dividendDisplay, displayCurrency)}
                           </td>
                           <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
                             <div className="flex flex-col items-end gap-1">
-                              {summary.currency === 'USD' && (
+                              {isForeignCurrency && (
                                 <>
                                   <span className={`inline-flex px-3 py-1.5 rounded-xl text-xs md:text-sm font-bold ${totalTone}`}>
-                                  {summary.totalNative > 0 ? '+' : ''}{formatMoney(summary.totalNative, 'USD')}
+                                    {summary.totalNative > 0 ? '+' : ''}{formatMoney(summary.totalNative, summary.currency)}
                                   </span>
                                   <span className="text-[12px] md:text-xs font-bold text-ink-mute">
-                                    원화 환산 {summary.totalKRW > 0 ? '+' : ''}{formatMoney(summary.totalKRW, 'KRW')}
+                                    원화 기준 합계 {summary.totalKRW > 0 ? '+' : ''}{formatMoney(summary.totalKRW, 'KRW')}
                                   </span>
                                 </>
                               )}
-                              {summary.currency !== 'USD' && (
+                              {!isForeignCurrency && (
                                 <span className={`inline-flex px-3 py-1.5 rounded-xl text-xs md:text-sm font-bold ${totalTone}`}>
                                   {summary.totalKRW > 0 ? '+' : ''}{formatMoney(summary.totalKRW, 'KRW')}
                                 </span>
