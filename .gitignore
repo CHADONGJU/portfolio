@@ -38,3 +38,6 @@ restore-missing-assets.cjs
 *.njsproj
 *.sln
 *.sw?
+
+# 잠금 파일 임시 보관함 (클라우드 세션에서 삭제 불가)
+_to_delete/
