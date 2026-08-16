@@ -83,3 +83,37 @@ test('does not duplicate an active asset that is also present in the ledger', ()
   assert.equal(calculationAssets.length, 1);
   assert.equal(calculationAssets[0], activeAssets[0]);
 });
+
+test('같은 종목을 두 계좌에 나눠 담으면 계좌별로 따로 계산한다', () => {
+  const isaAsset = {
+    id: 'isa-1', ticker: '453810', name: 'KODEX', quantity: 100, accountType: 'ISA',
+  };
+  const generalAsset = {
+    id: 'gen-1', ticker: '453810', name: 'KODEX', quantity: 100, accountType: 'GENERAL',
+  };
+  const ledger = [
+    { ...buy('isa-buy', 'isa-1', '453810', '2026-01-05', 100, 10000), accountType: 'ISA' },
+    { ...buy('gen-buy', 'gen-1', '453810', '2026-02-05', 100, 10000), accountType: 'GENERAL' },
+  ];
+
+  const calculationAssets = buildDividendCalculationAssets([isaAsset, generalAsset], ledger);
+  assert.equal(calculationAssets.length, 2);
+
+  const isa = calculationAssets.find((asset) => asset.accountType === 'ISA');
+  const general = calculationAssets.find((asset) => asset.accountType === 'GENERAL');
+  assert.ok(isa && general);
+
+  // 계좌별 보유 수량이 서로 섞이면 안 된다(합쳐서 200주가 되면 안 됨).
+  assert.equal(getDividendHeldQuantityOnDate(isa, ledger, '2026-03-01'), 100);
+  assert.equal(getDividendHeldQuantityOnDate(general, ledger, '2026-03-01'), 100);
+  assert.equal(getDividendHeldQuantityOnDate(general, ledger, '2026-01-20'), 0);
+});
+
+test('한 계좌에만 있는 종목은 계좌 정보 없는 옛 원장 행과 계속 짝지어진다', () => {
+  const asset = { id: 1, ticker: 'VZ', name: 'VZ', quantity: 50, accountType: 'ISA' };
+  const ledger = [buy('legacy', null, 'VZ', '2025-07-02', 50, 42.59)];
+
+  const [calculationAsset] = buildDividendCalculationAssets([asset], ledger);
+  assert.equal(calculationAsset.dividendAccountScope, undefined);
+  assert.equal(getDividendHeldQuantityOnDate(calculationAsset, ledger, '2025-12-31'), 50);
+});

@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
@@ -44,7 +44,14 @@ import {
   subscribePortfolioState,
 } from './services/portfolioStore';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
-import { loadJson, removeStoredKeys, saveJson, setStorageErrorHandler } from './utils/storage';
+import {
+  claimLegacyStorageKeys,
+  getScopedStorageKey,
+  loadJson,
+  removeStoredKeys,
+  saveJson,
+  setStorageErrorHandler,
+} from './utils/storage';
 import { arePortfolioSnapshotsEquivalent } from './utils/portfolioSnapshotComparison';
 import {
   buildCanonicalTradeRows,
@@ -145,6 +152,9 @@ const PORTFOLIO_STORAGE_KEYS = [
   PORTFOLIO_NAME_STORAGE_KEY,
   TARGET_PORTFOLIO_STORAGE_KEY,
 ];
+
+// 로그인하지 않은 상태에서 쓰는 저장 영역. 계정 영역과 절대 섞이면 안 된다.
+const GUEST_STORAGE_SCOPE = 'guest';
 
 // 가상화폐 기능을 제거하면서, 기존에 남아 있는 가상화폐 데이터를 1회 정리한다.
 const CRYPTO_CATEGORY = '가상화폐';
@@ -1042,6 +1052,51 @@ const emptyPortfolioSnapshot = () => ({
   targetPortfolio: DEFAULT_TARGET_PORTFOLIO,
 });
 
+/**
+ * 계정 분리 이전 버전이 남긴 비-네임스페이스 키를 현재 저장 영역으로 승계한다.
+ *
+ * 로그인 계정이면 그대로 가져온다. 비로그인(게스트)일 때는, 예전에 로그인해서 쓴
+ * 흔적이 있으면 그 데이터가 다른 사람 것일 수 있으므로 승계하지 않는다.
+ * 승계하지 않은 키는 지우지도 않는다 — 원래 주인이 로그인하면 그때 가져간다.
+ */
+const claimLegacyPortfolioStorage = (scope) => {
+  if (!scope) return;
+
+  if (scope === GUEST_STORAGE_SCOPE) {
+    const purgedRaw = loadJson(CRYPTO_PURGE_FLAG_KEY, []);
+    const signedInFootprint = Array.isArray(purgedRaw)
+      && purgedRaw.some((key) => key && key !== 'local');
+    if (signedInFootprint) return;
+  }
+
+  claimLegacyStorageKeys(PORTFOLIO_STORAGE_KEYS, scope);
+};
+
+/** 계정 영역이 확정된 뒤에만 로컬에 기록한다. */
+const usePersistedPortfolioSlice = (canPersist, key, value) => {
+  useEffect(() => {
+    if (!canPersist) return;
+    saveJson(key, value);
+  }, [canPersist, key, value]);
+};
+
+/** 저장 영역 하나를 통째로 읽어온다. 계정이 바뀔 때 상태를 갈아끼우는 데 쓴다. */
+const readStoredPortfolio = (scope) => {
+  const read = (key, fallback) => loadJson(getScopedStorageKey(key, scope), fallback);
+
+  return {
+    portfolioName: normalizePortfolioName(read(PORTFOLIO_NAME_STORAGE_KEY, DEFAULT_PORTFOLIO_NAME)),
+    assets: migrateUserConfirmedAccountTypes(read(ASSETS_STORAGE_KEY, [])),
+    trades: read(TRADES_STORAGE_KEY, []),
+    memos: read(MEMOS_STORAGE_KEY, []),
+    tradeLedger: read(TRADE_LEDGER_STORAGE_KEY, []),
+    autoDividends: read(AUTO_DIVIDENDS_STORAGE_KEY, []),
+    confirmedDividends: read(CONFIRMED_DIVIDENDS_STORAGE_KEY, []),
+    dividendAssetRegistry: read(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY, []),
+    targetPortfolio: read(TARGET_PORTFOLIO_STORAGE_KEY, DEFAULT_TARGET_PORTFOLIO),
+  };
+};
+
 const App = () => {
   const { user, signOutUser } = useAuth();
   const userId = user?.uid || '';
@@ -1255,22 +1310,36 @@ const buyLotDraftSummary = useMemo(() => {
     }
   }, [newAsset.category, newAsset.ticker]);
 
+  // 로컬 저장 키는 반드시 계정별로 분리한다. AuthGate가 인증 확인이 끝난 뒤에만
+  // App을 렌더하므로, 아래 useState 초기화 시점에 이미 userId가 확정돼 있다.
+  const storageScope = userId || GUEST_STORAGE_SCOPE;
+  const scopedKey = useCallback(
+    (key) => getScopedStorageKey(key, storageScope),
+    [storageScope],
+  );
+
+  // 계정 분리 이전 버전에서 저장된 데이터를 현재 계정 영역으로 승계한다.
+  // 훅은 선언 순서대로 실행되므로, 아래 상태 초기화보다 반드시 먼저 놓아야 한다.
+  useMemo(() => {
+    claimLegacyPortfolioStorage(storageScope);
+  }, [storageScope]);
+
   const [assets, setAssets] = useState(() => (
-    migrateUserConfirmedAccountTypes(loadJson(ASSETS_STORAGE_KEY, []))
+    migrateUserConfirmedAccountTypes(loadJson(scopedKey(ASSETS_STORAGE_KEY), []))
   ));
-  const [trades, setTrades] = useState(() => loadJson(TRADES_STORAGE_KEY, []));
-  const [memos, setMemos] = useState(() => loadJson(MEMOS_STORAGE_KEY, []));
-  const [tradeLedger, setTradeLedger] = useState(() => loadJson(TRADE_LEDGER_STORAGE_KEY, []));
-  const [portfolioName, setPortfolioName] = useState(() => normalizePortfolioName(loadJson(PORTFOLIO_NAME_STORAGE_KEY, DEFAULT_PORTFOLIO_NAME)));
-  const [targetPortfolio, setTargetPortfolio] = useState(() => loadJson(TARGET_PORTFOLIO_STORAGE_KEY, DEFAULT_TARGET_PORTFOLIO));
-  const [dividendAssetRegistry, setDividendAssetRegistry] = useState(() => loadJson(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY, []));
+  const [trades, setTrades] = useState(() => loadJson(scopedKey(TRADES_STORAGE_KEY), []));
+  const [memos, setMemos] = useState(() => loadJson(scopedKey(MEMOS_STORAGE_KEY), []));
+  const [tradeLedger, setTradeLedger] = useState(() => loadJson(scopedKey(TRADE_LEDGER_STORAGE_KEY), []));
+  const [portfolioName, setPortfolioName] = useState(() => normalizePortfolioName(loadJson(scopedKey(PORTFOLIO_NAME_STORAGE_KEY), DEFAULT_PORTFOLIO_NAME)));
+  const [targetPortfolio, setTargetPortfolio] = useState(() => loadJson(scopedKey(TARGET_PORTFOLIO_STORAGE_KEY), DEFAULT_TARGET_PORTFOLIO));
+  const [dividendAssetRegistry, setDividendAssetRegistry] = useState(() => loadJson(scopedKey(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY), []));
   const targetPortfolioRef = useRef(targetPortfolio);
   const targetTickerSnapshotKey = useMemo(() => (
     getTargetItemSnapshotKey(targetPortfolio)
   ), [targetPortfolio]);
 
-  const [autoDividends, setAutoDividends] = useState(() => loadJson(AUTO_DIVIDENDS_STORAGE_KEY, []));
-  const [confirmedDividends, setConfirmedDividends] = useState(() => loadJson(CONFIRMED_DIVIDENDS_STORAGE_KEY, []));
+  const [autoDividends, setAutoDividends] = useState(() => loadJson(scopedKey(AUTO_DIVIDENDS_STORAGE_KEY), []));
+  const [confirmedDividends, setConfirmedDividends] = useState(() => loadJson(scopedKey(CONFIRMED_DIVIDENDS_STORAGE_KEY), []));
   const initialLedgerMigrationDoneRef = useRef(false);
 
   const portfolioSnapshot = useMemo(() => ({
@@ -1289,15 +1358,20 @@ const buyLotDraftSummary = useMemo(() => {
   const cloudRevisionRef = useRef('');
   const applyingCloudSnapshotRef = useRef(false);
 
-  useEffect(() => { saveJson(ASSETS_STORAGE_KEY, assets); }, [assets]);
-  useEffect(() => { saveJson(TRADES_STORAGE_KEY, trades); }, [trades]);
-  useEffect(() => { saveJson(MEMOS_STORAGE_KEY, memos); }, [memos]);
-  useEffect(() => { saveJson(TRADE_LEDGER_STORAGE_KEY, tradeLedger); }, [tradeLedger]);
-  useEffect(() => { saveJson(AUTO_DIVIDENDS_STORAGE_KEY, autoDividends); }, [autoDividends]);
-  useEffect(() => { saveJson(CONFIRMED_DIVIDENDS_STORAGE_KEY, confirmedDividends); }, [confirmedDividends]);
-  useEffect(() => { saveJson(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY, dividendAssetRegistry); }, [dividendAssetRegistry]);
-  useEffect(() => { saveJson(PORTFOLIO_NAME_STORAGE_KEY, portfolioName); }, [portfolioName]);
-  useEffect(() => { saveJson(TARGET_PORTFOLIO_STORAGE_KEY, targetPortfolio); }, [targetPortfolio]);
+  // 계정이 바뀐 직후에는 화면 상태가 아직 이전 계정 것이다. 그대로 저장하면
+  // 새 계정 영역에 남의 데이터가 기록되므로, 영역 전환이 끝날 때까지 저장을 멈춘다.
+  const [persistedStorageScope, setPersistedStorageScope] = useState(storageScope);
+  const isStorageScopeReady = persistedStorageScope === storageScope;
+
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(ASSETS_STORAGE_KEY), assets);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(TRADES_STORAGE_KEY), trades);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(MEMOS_STORAGE_KEY), memos);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(TRADE_LEDGER_STORAGE_KEY), tradeLedger);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(AUTO_DIVIDENDS_STORAGE_KEY), autoDividends);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(CONFIRMED_DIVIDENDS_STORAGE_KEY), confirmedDividends);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY), dividendAssetRegistry);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(PORTFOLIO_NAME_STORAGE_KEY), portfolioName);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(TARGET_PORTFOLIO_STORAGE_KEY), targetPortfolio);
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
   useEffect(() => { portfolioSnapshotRef.current = portfolioSnapshot; }, [portfolioSnapshot]);
 
@@ -1313,10 +1387,34 @@ const buyLotDraftSummary = useMemo(() => {
     setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
   };
 
+  const applyStoredPortfolio = (stored) => {
+    setAssets(stored.assets);
+    setTrades(stored.trades);
+    setMemos(stored.memos);
+    setTradeLedger(stored.tradeLedger);
+    setAutoDividends(stored.autoDividends);
+    setConfirmedDividends(stored.confirmedDividends);
+    setDividendAssetRegistry(stored.dividendAssetRegistry);
+    setPortfolioName(stored.portfolioName);
+    setTargetPortfolio(stored.targetPortfolio);
+  };
+
+  // 로그인/로그아웃/계정 전환으로 저장 영역이 바뀌면, 화면 상태를 새 영역의
+  // 저장값으로 통째로 갈아끼운다. 이전 계정 상태가 새 영역으로 흘러가지 않는다.
+  useEffect(() => {
+    if (persistedStorageScope === storageScope) return;
+
+    claimLegacyPortfolioStorage(storageScope);
+    applyStoredPortfolio(readStoredPortfolio(storageScope));
+    cloudSnapshotRef.current = null;
+    cloudRevisionRef.current = '';
+    setPersistedStorageScope(storageScope);
+  }, [storageScope, persistedStorageScope]);
+
   const handleSignOut = async () => {
     // 로그아웃 후에도 localStorage가 남아 있으면, 같은 기기에서
     // '로그인 없이 보기'로 들어온 다음 사람에게 이전 사용자 데이터가 그대로 보인다.
-    removeStoredKeys(PORTFOLIO_STORAGE_KEYS);
+    removeStoredKeys(PORTFOLIO_STORAGE_KEYS.map(key => scopedKey(key)));
     resetPortfolioState();
     setCloudPortfolioUserId('');
     setCloudLoadFailed(false);
@@ -1623,7 +1721,16 @@ const buyLotDraftSummary = useMemo(() => {
     setAssets(prevAssets => {
       const mergedAssets = mergeUniqueAssets(prevAssets);
       const reconciledAssets = reconcileAssetsWithTradeLedger(mergedAssets, tradeLedger);
-      return reconciledAssets.length < mergedAssets.length ? mergedAssets : reconciledAssets;
+
+      // 원장상 전량 매도된 종목은 목록에서 빠지는 게 정상이다. 예전에는 '개수가 줄면
+      // 통째로 버리기'로 막았는데, 그러면 한 종목만 청산돼도 나머지 종목의 수량·평단
+      // 보정까지 전부 사라졌다. 지금은 보정 결과를 유지하되, 원장이 깨져서 대량으로
+      // 사라지는 경우(절반 초과)만 방어한다.
+      const removedCount = mergedAssets.length - reconciledAssets.length;
+      const isImplausibleRemoval = mergedAssets.length > 1
+        && removedCount > Math.floor(mergedAssets.length / 2);
+
+      return isImplausibleRemoval ? mergedAssets : reconciledAssets;
     });
   }, [isCloudPortfolioLoaded, tradeLedger]);
 
@@ -3353,12 +3460,19 @@ const buyLotDraftSummary = useMemo(() => {
     };
   }));
   setMemos(prevMemos => {
-    const matchedBuyMemos = existingBuyRows
-      .map(row => findMatchingMemoForLedger(row, prevMemos))
-      .filter(Boolean);
-    const matchedMemoIds = new Set(matchedBuyMemos.map(memo => memo.id));
+    // 메모는 원장 행 id로 짝지어야 한다. 배열 인덱스로 맞추면 메모가 없는 매수 건이
+    // 섞였을 때 앞뒤가 밀려서 다른 매수 건에 남의 메모가 옮겨 붙는다.
+    const memoByLedgerId = new Map();
+    existingBuyRows.forEach((row) => {
+      const matched = findMatchingMemoForLedger(row, prevMemos);
+      if (matched) memoByLedgerId.set(String(row.id), matched);
+    });
+
+    const reusedMemoIds = new Set();
     const nextBuyMemos = nextBuyRows.map((row, index) => {
-      const existingMemo = matchedBuyMemos[index];
+      const existingMemo = memoByLedgerId.get(String(row.id)) || null;
+      if (existingMemo) reusedMemoIds.add(existingMemo.id);
+
       return {
         ...(existingMemo || {}),
         id: existingMemo?.id || Date.now() + Math.random() + index,
@@ -3382,9 +3496,11 @@ const buyLotDraftSummary = useMemo(() => {
       };
     });
 
+    // 실제로 이어붙인 메모만 교체한다. 매수 건이 줄어 짝을 잃은 메모는 지우지 않고
+    // 남겨서, 과거 매매 기록에 '미연결 기록'으로 보이게 한다(내용 소실 방지).
     return [
       ...nextBuyMemos,
-      ...prevMemos.filter(memo => !matchedMemoIds.has(memo.id)),
+      ...prevMemos.filter(memo => !reusedMemoIds.has(memo.id)),
     ];
   });
 

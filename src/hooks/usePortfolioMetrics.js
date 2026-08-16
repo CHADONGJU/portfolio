@@ -51,6 +51,17 @@ const getRecordKrwRate = (record = {}, rateByCurrency) => {
  * 매수일·매도일 환율을 모두 아는 기록은 krwPnl(환차손익 포함)을 그대로 쓰고,
  * 환율을 다 모르는 옛 기록만 "손익 × 매도일 환율"로 근사한다.
  */
+/**
+ * 매수 시점 환율(기록에 저장된 fxRate). 원화 원가·실현손익 계산의 기준이며,
+ * 헤더 합계와 종목별 카드가 같은 값을 쓰도록 반드시 공유해야 한다.
+ */
+const resolveRecordBuyKrwRate = (record) => {
+  const currency = record?.currency || 'KRW';
+  if (currency === 'KRW') return 1;
+  const storedRate = Number(record?.fxRate);
+  return Number.isFinite(storedRate) && storedRate > 0 ? storedRate : 0;
+};
+
 const getRecordKrwPnl = (record = {}, rateByCurrency) => {
   const exactKrwPnl = Number(record.krwPnl);
   if (record.krwPnl !== null && record.krwPnl !== undefined && Number.isFinite(exactKrwPnl)) {
@@ -246,12 +257,7 @@ export const usePortfolioMetrics = ({
     buildCanonicalTradeRows({
       tradeLedger,
       trades,
-      resolveKrwRate: (record) => {
-        const currency = record?.currency || 'KRW';
-        if (currency === 'KRW') return 1;
-        const storedRate = Number(record?.fxRate);
-        return Number.isFinite(storedRate) && storedRate > 0 ? storedRate : 0;
-      },
+      resolveKrwRate: resolveRecordBuyKrwRate,
     })
   ), [tradeLedger, trades]);
   const realizedRecords = canonicalTradeRows.filter(record => record.side === 'sell');
@@ -300,7 +306,11 @@ export const usePortfolioMetrics = ({
       const inGroup = (record) => record.name === name && getTradeRound(record) === round;
       const assetRows = enhancedAssets.filter(inGroup);
       const tradeRows = ledgerRows.filter(inGroup);
-      const position = buildPositionFromTradeRows(tradeRows);
+      // 환율 해석기를 빼먹으면 이미 계산된 krwPnl이 null로 덮여, 종목 카드의 실현손익만
+      // "손익 × 오늘 환율"로 근사돼 헤더 합계와 어긋나고 매일 값이 흔들린다.
+      const position = buildPositionFromTradeRows(tradeRows, {
+        resolveKrwRate: resolveRecordBuyKrwRate,
+      });
       const sellRows = position.rows.filter(record => record.side === 'sell');
       const buyRows = position.rows.filter(record => record.side === 'buy');
       const dividendRows = receivedDividends.filter((dividend) => {

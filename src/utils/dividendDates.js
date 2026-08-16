@@ -32,13 +32,21 @@ export const getDividendExDate = (dividend = {}) => (
   normalizeDateKey(dividend.exDate || dividend.date)
 );
 
+/**
+ * 배당을 받을 수 있는 마지막 매수일(거래원장 날짜 기준).
+ *
+ * - USD: 미국 ex-date는 현지 날짜이고 국내 원장은 한국시간 체결일로 기록되므로
+ *   한 영업일 뒤로 옮겨 비교한다.
+ * - KRW: 국내 ETF 피드(KODEX basicD, TIGER recordDate)는 이미 '배당기준일'을
+ *   exDate 자리에 넣어준다. 기준일을 지나서 산 주식은 배당 대상이 아니므로
+ *   여기에 영업일을 더하면 안 된다.
+ * - 그 외 통화: 원본 날짜를 그대로 쓴다.
+ */
 export const getDividendEligibilityDate = (dividend = {}) => {
   const exDate = getDividendExDate(dividend);
   if (!exDate) return '';
   const currency = String(dividend.currency || '').toUpperCase();
-  return currency === 'USD' || currency === 'KRW'
-    ? addUtcBusinessDays(exDate, 1)
-    : exDate;
+  return currency === 'USD' ? addUtcBusinessDays(exDate, 1) : exDate;
 };
 
 export const getDividendOfficialPaymentDate = (dividend = {}) => (

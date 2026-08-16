@@ -31,9 +31,10 @@ test('scopes source migrations without refreshing unrelated USD assets', () => {
   assert.equal(getDividendRefreshVersion({ ticker: 'JEPI' }), 9);
   assert.equal(getDividendRefreshVersion({ ticker: 'SPY' }), DIVIDEND_REFRESH_VERSION);
   assert.equal(getDividendRefreshVersion({ ticker: 'QCOM' }), 9);
-  assert.equal(getDividendRefreshVersion({ ticker: '277630' }), 12);
-  assert.equal(getDividendRefreshVersion({ ticker: '453810.KS' }), 11);
-  assert.equal(getDividendRefreshVersion({ ticker: '477730' }), 11);
+  // v12에서 국내 배당 자격일 버그를 고치면서 국내 3종목은 강제 재계산 대상이 됐다.
+  assert.equal(getDividendRefreshVersion({ ticker: '277630' }), 13);
+  assert.equal(getDividendRefreshVersion({ ticker: '453810.KS' }), 12);
+  assert.equal(getDividendRefreshVersion({ ticker: '477730' }), 12);
   assert.equal(getDividendRefreshVersion({ ticker: 'V' }), 9);
 });
 

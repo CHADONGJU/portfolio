@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   getAutomaticDividendEventKey,
+  isSameAutomaticDividendEvent,
   mergeAutomaticDividendRecords,
   selectFormulaDividendRecords,
   mergeDividendRecords,
@@ -232,4 +233,17 @@ test('삭제 tombstone은 다른 기기의 오래된 기록보다 우선하고 �
   assert.equal(merged.length, 1);
   assert.equal(merged[0].status, 'deleted');
   assert.equal(selectReceivedDividendRecords(merged).length, 0);
+});
+
+test('계좌 유형이 다르면 같은 종목·같은 배당락일이라도 한 건으로 합치지 않는다', () => {
+  const isaRow = {
+    ticker: '453810', name: 'KODEX', exDate: '2026-07-31', currency: 'KRW',
+    accountType: 'ISA', amount: 9120, quantity: 100,
+  };
+  const generalRow = {
+    ...isaRow, accountType: 'GENERAL', amount: 4560, quantity: 50,
+  };
+
+  assert.equal(isSameAutomaticDividendEvent(isaRow, generalRow), false);
+  assert.equal(isSameAutomaticDividendEvent(isaRow, { ...isaRow, amount: 1 }), true);
 });

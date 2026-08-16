@@ -1,4 +1,5 @@
 import { getDividendReportingDate } from './dividendDates.js';
+import { normalizeAccountType } from './accountTypes.js';
 
 const normalizeTicker = (ticker = '') => String(ticker || '').trim().toUpperCase();
 const isDeletedDividendRecord = (dividend = {}) => Boolean(dividend.deletedAt || dividend.status === 'deleted');
@@ -19,9 +20,12 @@ export const getAutomaticDividendEventKey = (dividend = {}) => [
   dividend.exDate || dividend.date || '',
 ].join('::');
 
-const getAutomaticDividendAssetKey = (dividend = {}) => (
-  normalizeTicker(dividend.ticker) || String(dividend.name || '').trim().toUpperCase()
-);
+// 같은 종목이라도 계좌 유형이 다르면 과세가 다른 별개의 보유분이다.
+// 계좌를 빼고 묶으면 ISA분과 일반계좌분이 한 건으로 합쳐지면서 한쪽이 사라진다.
+const getAutomaticDividendAssetKey = (dividend = {}) => [
+  normalizeTicker(dividend.ticker) || String(dividend.name || '').trim().toUpperCase(),
+  normalizeAccountType(dividend.accountType),
+].join('::');
 
 const getDateDistanceInDays = (left = '', right = '') => {
   const leftTimestamp = Date.parse(`${String(left || '').slice(0, 10)}T00:00:00Z`);

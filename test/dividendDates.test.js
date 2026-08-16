@@ -12,6 +12,15 @@ test('미국 배당 기준일은 한국 거래원장 날짜로 하루 이동한�
   assert.equal(getDividendEligibilityDate({ exDate: '2026-07-31', currency: 'KRW' }), '2026-07-31');
 });
 
+test('국내 배당 기준일은 어떤 경우에도 뒤로 밀리지 않는다', () => {
+  // 금요일 기준일. 영업일을 더하면 월요일(2026-08-03)로 밀려 기준일 이후 매수분까지
+  // 배당 대상이 된다. 국내 피드는 이미 기준일을 주므로 그대로 써야 한다.
+  assert.equal(getDividendEligibilityDate({ exDate: '2026-07-31', currency: 'KRW' }), '2026-07-31');
+  assert.equal(getDividendEligibilityDate({ date: '2026-12-31', currency: 'KRW' }), '2026-12-31');
+  assert.equal(getDividendEligibilityDate({ exDate: '2026-07-31', currency: 'JPY' }), '2026-07-31');
+  assert.equal(getDividendEligibilityDate({ exDate: '2026-07-31' }), '2026-07-31');
+});
+
 test('SPY July 31 US payment is reported in August in Korea', () => {
   const dividend = {
     exDate: '2026-06-18',

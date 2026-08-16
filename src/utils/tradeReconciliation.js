@@ -197,10 +197,19 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
         ? (row.price * matchedQuantity * buyRate) - removedKrwCost - krwCharges
         : null;
 
+      /**
+       * 이동평균이므로 매도분에는 환율을 아는 물량과 모르는 물량이 같은 비율로 섞여 있다.
+       * 매도 수량만큼 통째로 빼면, 환율 미상 물량이 실제보다 빨리 0이 되면서 남은 보유분의
+       * 원금이 "정확"하다고 잘못 표시된다(원금 과소 계상).
+       */
+      const remainingRatio = quantity > EPSILON
+        ? Math.max(0, quantity - matchedQuantity) / quantity
+        : 0;
+
       quantity = Math.max(0, quantity - matchedQuantity);
       cost = Math.max(0, cost - (averageCost * matchedQuantity));
       krwCost = Math.max(0, krwCost - removedKrwCost);
-      unknownRateQuantity = Math.max(0, unknownRateQuantity - matchedQuantity);
+      unknownRateQuantity = Math.max(0, unknownRateQuantity * remainingRatio);
       if (quantity <= EPSILON) {
         quantity = 0;
         cost = 0;

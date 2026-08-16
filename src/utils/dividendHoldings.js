@@ -1,3 +1,5 @@
+import { normalizeAccountType } from './accountTypes.js';
+
 const normalizeTicker = (value = '') => String(value || '').trim().toUpperCase();
 const normalizeName = (value = '') => String(value || '').trim().toUpperCase();
 
@@ -13,6 +15,13 @@ export const getDividendTradeSide = (record = {}) => {
 };
 
 export const isSameDividendSecurity = (record = {}, asset = {}) => {
+  // 같은 종목을 여러 계좌에 나눠 담은 경우에만 계좌 범위가 붙는다.
+  // 이때는 계좌가 다른 원장 행을 서로의 보유 수량으로 세면 안 된다.
+  if (asset.dividendAccountScope
+    && normalizeAccountType(record.accountType) !== asset.dividendAccountScope) {
+    return false;
+  }
+
   const assetTicker = normalizeTicker(asset.ticker);
   const recordTicker = normalizeTicker(record.ticker);
   if (assetTicker && recordTicker) return assetTicker === recordTicker;
@@ -115,16 +124,53 @@ const getSecurityKey = (record = {}) => (
  * read-only asset descriptor from the transaction ledger for closed positions.
  */
 export const buildDividendCalculationAssets = (assets = [], ledger = []) => {
+  const safeAssets = Array.isArray(assets) ? assets : [];
+  const safeLedger = Array.isArray(ledger) ? ledger : [];
+
+  /**
+   * 같은 종목을 두 계좌(예: ISA + 일반)에 나눠 담으면 과세 방식이 서로 다르다.
+   * 종목만으로 묶으면 한쪽 자산이 다른 쪽을 덮어써서, 살아남은 계좌의 과세 방식이
+   * 합쳐진 전체 수량에 적용된다.
+   *
+   * 다만 모든 종목을 계좌별로 쪼개면 계좌 정보가 없는 옛 원장 행이 짝을 잃으므로,
+   * 실제로 두 개 이상의 계좌에 걸쳐 있는 종목만 분리한다.
+   */
+  const accountsBySecurity = new Map();
+  safeAssets.forEach((asset) => {
+    const security = getSecurityKey(asset);
+    if (!security) return;
+    const accounts = accountsBySecurity.get(security) || new Set();
+    accounts.add(normalizeAccountType(asset.accountType));
+    accountsBySecurity.set(security, accounts);
+  });
+  const accountSplitSecurities = new Set(
+    [...accountsBySecurity.entries()]
+      .filter(([, accounts]) => accounts.size > 1)
+      .map(([security]) => security),
+  );
+
+  const isAccountSplit = (record) => accountSplitSecurities.has(getSecurityKey(record));
+  const getGroupKey = (record) => {
+    const security = getSecurityKey(record);
+    if (!security) return '';
+    return isAccountSplit(record)
+      ? `${security}::${normalizeAccountType(record.accountType)}`
+      : security;
+  };
+
   const bySecurity = new Map();
 
-  assets.forEach((asset) => {
-    const key = getSecurityKey(asset);
-    if (key) bySecurity.set(key, asset);
+  safeAssets.forEach((asset) => {
+    const key = getGroupKey(asset);
+    if (!key) return;
+    bySecurity.set(key, isAccountSplit(asset)
+      ? { ...asset, dividendAccountScope: normalizeAccountType(asset.accountType) }
+      : asset);
   });
 
   const ledgerBySecurity = new Map();
-  ledger.forEach((record) => {
-    const key = getSecurityKey(record);
+  safeLedger.forEach((record) => {
+    const key = getGroupKey(record);
     if (!key) return;
     const rows = ledgerBySecurity.get(key) || [];
     rows.push(record);
@@ -147,19 +193,24 @@ export const buildDividendCalculationAssets = (assets = [], ledger = []) => {
     const currency = String(firstBuy.currency || representative.currency || '').trim().toUpperCase()
       || (/^\d{6}$/.test(ticker) ? 'KRW' : 'USD');
 
+    const accountType = firstBuy.accountType || representative.accountType || 'GENERAL';
+
     bySecurity.set(key, {
-      id: `dividend-history-${ticker || key}`,
+      id: `dividend-history-${key}`,
       name: name || ticker,
       ticker,
       category: firstBuy.category || representative.category || (currency === 'KRW' ? '국내주식' : '해외주식'),
       currency,
       originalCurrency: currency,
-      accountType: firstBuy.accountType || representative.accountType || 'GENERAL',
+      accountType,
       accountTypeSource: firstBuy.accountTypeSource || representative.accountTypeSource || '',
       buyDate: firstBuy.date || firstBuy.buyDate || '',
       quantity: 0,
       securityType: firstBuy.securityType || representative.securityType || '',
       historicalOnly: true,
+      ...(isAccountSplit(firstBuy)
+        ? { dividendAccountScope: normalizeAccountType(accountType) }
+        : {}),
     });
   });
 

@@ -135,3 +135,34 @@ test('보유 중인 원금은 오늘 환율이 아무리 움직여도 그대로�
   assert.equal(profitKRW, (33 - 30) * 50 * 1465);
   assert.equal(profitKRW / position.krwCost, (33 - 30) / 30); // 원화 수익률 = 달러 수익률
 });
+
+test('환율을 모르는 매수분이 섞이면 부분 매도해도 원금이 "정확"해지지 않는다', () => {
+  // 10주는 환율(1300)을 알고, 10주는 모른다. 15주를 팔면 이동평균상 남은 5주에도
+  // 환율 미상분이 비례해서 남아 있어야 한다. 매도 수량만큼 통째로 빼면
+  // 미상분이 0이 되면서 원금이 절반으로 과소 계상된 채 "정확"으로 표시됐다.
+  const rows = [
+    usd({ id: 'a', side: 'buy', date: '2025-01-10', quantity: 10, price: 100, fxRate: 1300 }),
+    usd({ id: 'b', side: 'buy', date: '2025-02-10', quantity: 10, price: 100 }),
+    usd({ id: 'c', side: 'sell', date: '2025-03-10', quantity: 15, price: 100 }),
+  ];
+  const position = buildPositionFromTradeRows(rows, { resolveKrwRate: rateOf });
+
+  assert.equal(position.quantity, 5);
+  assert.equal(position.hasExactKrwCost, false);
+
+  const sellRow = position.rows.find((row) => row.id === 'c');
+  assert.equal(sellRow.krwPnl, null);
+});
+
+test('환율을 모두 아는 포지션은 부분 매도 후에도 원금이 정확하다', () => {
+  const rows = [
+    usd({ id: 'a', side: 'buy', date: '2025-01-10', quantity: 10, price: 100, fxRate: 1300 }),
+    usd({ id: 'b', side: 'buy', date: '2025-02-10', quantity: 10, price: 100, fxRate: 1400 }),
+    usd({ id: 'c', side: 'sell', date: '2025-03-10', quantity: 15, price: 100 }),
+  ];
+  const position = buildPositionFromTradeRows(rows, { resolveKrwRate: rateOf });
+
+  assert.equal(position.quantity, 5);
+  assert.equal(position.hasExactKrwCost, true);
+  assert.equal(position.krwCost, 5 * 100 * 1350);
+});
