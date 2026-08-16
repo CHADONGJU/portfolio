@@ -117,3 +117,27 @@ test('한 계좌에만 있는 종목은 계좌 정보 없는 옛 원장 행과 �
   assert.equal(calculationAsset.dividendAccountScope, undefined);
   assert.equal(getDividendHeldQuantityOnDate(calculationAsset, ledger, '2025-12-31'), 50);
 });
+
+test('원장이 계좌별로 앞뒤가 맞지 않으면 계좌 분리를 하지 않는다', () => {
+  // 매수는 ISA로 다시 태깅됐는데 매도는 옛 계좌(GENERAL)로 남은 원장.
+  // 계좌로 행을 걸러내면 ISA 자산이 자기 매도를 못 봐서 수량이 부풀어 오른다.
+  const isaAsset = { id: 'isa', ticker: '453810', name: 'KODEX', quantity: 10, accountType: 'ISA' };
+  const generalAsset = { id: 'gen', ticker: '453810', name: 'KODEX', quantity: 5, accountType: 'GENERAL' };
+  const ledger = [
+    { ...buy('b1', 'isa', '453810', '2024-01-02', 100, 10000), accountType: 'ISA' },
+    {
+      id: 's1', assetId: 'gen', ticker: '453810', name: 'KODEX', side: 'sell',
+      date: '2024-03-02', quantity: 90, price: 11000, accountType: 'GENERAL',
+    },
+    { ...buy('b2', 'gen', '453810', '2025-01-02', 5, 12000), accountType: 'GENERAL' },
+  ];
+
+  const calculationAssets = buildDividendCalculationAssets([isaAsset, generalAsset], ledger);
+  calculationAssets.forEach((asset) => {
+    assert.equal(asset.dividendAccountScope, undefined);
+  });
+
+  // 종목 단위로 묶으면 수량은 최소한 정확하다(100 - 90 = 10).
+  const [asset] = calculationAssets;
+  assert.equal(getDividendHeldQuantityOnDate(asset, ledger, '2024-06-01'), 10);
+});

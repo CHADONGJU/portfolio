@@ -16,6 +16,8 @@ const StockFilterCombobox = ({
   const [activeIndex, setActiveIndex] = useState(0);
   const rootRef = useRef(null);
   const inputRef = useRef(null);
+  const triggerRef = useRef(null);
+  const listboxRef = useRef(null);
   const listboxId = `stock-filter-${useId().replace(/:/g, '')}`;
 
   const normalizedOptions = useMemo(() => options.map((option) => {
@@ -43,6 +45,7 @@ const StockFilterCombobox = ({
 
     const handlePointerDown = (event) => {
       if (!rootRef.current?.contains(event.target)) {
+        // 바깥을 클릭해 닫을 때는 사용자가 이미 다른 곳을 가리키고 있다.
         setIsOpen(false);
         setQuery('');
         setActiveIndex(0);
@@ -57,10 +60,20 @@ const StockFilterCombobox = ({
     };
   }, [isOpen]);
 
-  const close = () => {
+  // 하이라이트가 max-h-64 밖으로 나가면 화살표를 눌러도 아무 변화가 없어 보인다.
+  useEffect(() => {
+    if (!isOpen) return;
+    const activeOption = listboxRef.current?.querySelector('[data-active="true"]');
+    activeOption?.scrollIntoView({ block: 'nearest' });
+  }, [isOpen, activeIndex]);
+
+  // 닫을 때 포커스를 트리거로 돌려주지 않으면 사용자가 document.body로 떨어져,
+  // 페이지 맨 위부터 다시 Tab을 눌러야 한다.
+  const close = ({ restoreFocus = true } = {}) => {
     setIsOpen(false);
     setQuery('');
     setActiveIndex(0);
+    if (restoreFocus) triggerRef.current?.focus();
   };
 
   const selectOption = (option) => {
@@ -106,12 +119,13 @@ const StockFilterCombobox = ({
   return (
     <div ref={rootRef} className={`relative w-full md:w-[280px] ${className}`}>
       <button
+        ref={triggerRef}
         type="button"
-        onClick={() => (isOpen ? close() : open())}
+        onClick={() => (isOpen ? close({ restoreFocus: false }) : open())}
         onKeyDown={handleTriggerKeyDown}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        aria-controls={listboxId}
+        aria-controls={isOpen ? listboxId : undefined}
         aria-label={ariaLabel}
         className={`w-full h-[52px] pl-4 ${value !== 'all' ? 'pr-20' : 'pr-11'} bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand text-left grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 text-xs md:text-sm text-ink-soft`}
       >
@@ -173,7 +187,7 @@ const StockFilterCombobox = ({
             )}
           </div>
 
-          <div id={listboxId} role="listbox" className="max-h-64 overflow-y-auto scroll-soft space-y-1">
+          <div ref={listboxRef} id={listboxId} role="listbox" className="max-h-64 overflow-y-auto scroll-soft space-y-1">
             {visibleOptions.map((option, index) => {
               const isSelected = option.value === value;
               return (
@@ -182,6 +196,8 @@ const StockFilterCombobox = ({
                   id={`${listboxId}-option-${index}`}
                   type="button"
                   role="option"
+                  tabIndex={-1}
+                  data-active={activeIndex === index}
                   aria-selected={isSelected}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => selectOption(option)}

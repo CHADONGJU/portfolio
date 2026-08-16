@@ -17,7 +17,9 @@
   /* 글자 */
   --color-ink: #0c0d10;
   --color-ink-soft: #52555d;
-  --color-ink-mute: #8b8e97;
+  /* 11~12px 작은 글씨에 광범위하게 쓰인다. #8b8e97은 흰 배경 3.27:1,
+     캔버스 2.98:1로 WCAG AA(4.5:1) 미달이었다. 같은 회색 계열에서 최소한만 어둡게. */
+  --color-ink-mute: #6c6f77;
 
   /* 브랜드 — 그래파이트. 색을 쓰지 않으니 수익률 숫자만 색으로 튄다. */
   --color-brand: #26282e;
@@ -32,7 +34,8 @@
 
   --color-danger: #c8433f;
   --color-danger-soft: #fbeeed;
-  --color-warn: #b0761c;
+  /* #b0761c는 3.85:1로 AA 미달이었다. */
+  --color-warn: #956317;
   --color-warn-soft: #f9f3e8;
 
   /* 밤 화면(로그인) 전용 잉크 */

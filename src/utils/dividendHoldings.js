@@ -85,14 +85,42 @@ const isSnapshotDuplicate = (candidate = {}, linkedRows = []) => {
 };
 
 /**
+ * 같은 원장·같은 종목이면 결과가 항상 같으므로 원장 배열 단위로 캐시한다.
+ *
+ * 이 함수는 원장 전체를 훑은 뒤 행마다 isSnapshotDuplicate(다시 O(관련 행 수))를
+ * 돌린다. 보유 종목 수만큼 매 렌더 반복되면 원장이 커질수록 급격히 느려진다.
+ * 상태를 갈아끼울 때마다 새 배열이 오므로(WeakMap 키) 오래된 결과가 남지 않는다.
+ * 원장 배열을 제자리에서 변경하면 캐시가 어긋나니, 항상 새 배열로 교체해야 한다.
+ */
+const dividendLedgerRowsCache = new WeakMap();
+
+const getDividendLedgerCacheKey = (asset = {}) => [
+  normalizeTicker(asset.ticker),
+  normalizeName(asset.name),
+  asset.dividendAccountScope || '',
+].join('::');
+
+/**
  * Dividend entitlement follows the security, even when a recovery changed the asset id.
  * At the same time, unlinked snapshot buys must not be added to their original lots again.
  */
 export const getDividendLedgerRows = (asset = {}, ledger = []) => {
+  if (!Array.isArray(ledger) || ledger.length === 0) return [];
+
+  let cacheByAsset = dividendLedgerRowsCache.get(ledger);
+  if (!cacheByAsset) {
+    cacheByAsset = new Map();
+    dividendLedgerRowsCache.set(ledger, cacheByAsset);
+  }
+
+  const cacheKey = getDividendLedgerCacheKey(asset);
+  const cached = cacheByAsset.get(cacheKey);
+  if (cached) return cached;
+
   const relatedRows = ledger.filter((record) => isSameDividendSecurity(record, asset));
   const linkedRows = relatedRows.filter(isLinkedLedgerRow);
 
-  return relatedRows
+  const rows = relatedRows
     .filter((record) => !isSnapshotDuplicate(record, linkedRows))
     .sort((left, right) => {
       const dateDelta = parseDate(left.date || left.buyDate || left.sellDate)
@@ -100,6 +128,9 @@ export const getDividendLedgerRows = (asset = {}, ledger = []) => {
       if (dateDelta !== 0) return dateDelta;
       return String(left.id || left.sourceId || '').localeCompare(String(right.id || right.sourceId || ''));
     });
+
+  cacheByAsset.set(cacheKey, rows);
+  return rows;
 };
 
 export const getDividendHeldQuantityOnDate = (asset = {}, ledger = [], date = '') => {
@@ -143,9 +174,41 @@ export const buildDividendCalculationAssets = (assets = [], ledger = []) => {
     accounts.add(normalizeAccountType(asset.accountType));
     accountsBySecurity.set(security, accounts);
   });
+
+  /**
+   * 계좌별로 쪼개려면 원장도 계좌별로 앞뒤가 맞아야 한다.
+   *
+   * 매수 행만 계좌가 다시 붙고 매도 행은 옛 계좌로 남아 있는 원장이 실제로 존재한다.
+   * 그런 상태에서 계좌로 행을 걸러내면 한쪽 자산이 자기 매도 기록을 못 보고
+   * 매수 수량만 세어, 배당 대상 수량이 몇 배로 부풀어 오른다.
+   *
+   * 그래서 "계좌별 원장 합계 == 그 계좌 자산의 보유 수량"이 모든 계좌에서 성립할 때만
+   * 분리한다. 하나라도 어긋나면 예전처럼 종목 단위로 묶어 계산한다(적어도 수량은 맞다).
+   */
+  const isLedgerAccountConsistent = (security) => {
+    const securityAssets = safeAssets.filter((asset) => getSecurityKey(asset) === security);
+    const securityRows = safeLedger.filter((row) => getSecurityKey(row) === security);
+    if (securityRows.length === 0) return false;
+
+    const netByAccount = new Map();
+    securityRows.forEach((row) => {
+      const account = normalizeAccountType(row.accountType);
+      netByAccount.set(account, (netByAccount.get(account) || 0) + signedQuantity(row));
+    });
+
+    const assetAccounts = new Set(securityAssets.map((asset) => normalizeAccountType(asset.accountType)));
+    if (netByAccount.size !== assetAccounts.size) return false;
+
+    return securityAssets.every((asset) => {
+      const net = netByAccount.get(normalizeAccountType(asset.accountType));
+      if (net === undefined) return false;
+      return Math.abs(net - (Number(asset.quantity) || 0)) <= 1e-6;
+    });
+  };
+
   const accountSplitSecurities = new Set(
     [...accountsBySecurity.entries()]
-      .filter(([, accounts]) => accounts.size > 1)
+      .filter(([security, accounts]) => accounts.size > 1 && isLedgerAccountConsistent(security))
       .map(([security]) => security),
   );
 

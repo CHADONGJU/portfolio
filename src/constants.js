@@ -43,45 +43,30 @@ export const DETAIL_CHART_COLORS = [
 ];
 
 export const CATEGORY_DETAIL_COLOR_SCALES = {
+  /*
+   * 밝은 쪽 끝을 잘라냈다. 예전 마지막 색(#fffafa)은 흰 카드 배경 대비 1.03:1이라
+   * 비중이 작은 종목이 배경과 구분되지 않는 흰 조각으로 보였다. 범례 색상칩이
+   * 유일한 식별 수단이라 색이 안 보이면 정보 자체가 사라진다.
+   * 여기 있는 색은 모두 흰 배경 대비 1.9:1 이상, 이웃 색과 1.28:1 이상 차이가 난다.
+   * 이 개수를 넘는 종목은 아래 HSL 생성기가 이어서 만든다.
+   */
   국내주식: [
     '#450a0a',
     '#7f1d1d',
-    '#991b1b',
     '#b91c1c',
     '#dc2626',
     '#ef4444',
     '#f87171',
     '#fca5a5',
-    '#fecaca',
-    '#fee2e2',
-    '#fff1f2',
-    '#fffafa',
   ],
   해외주식: [
     '#1e3a8a',
     '#1e40af',
     '#1d4ed8',
     '#2563eb',
-    '#2f6ff0',
     '#3b82f6',
-    '#4b8df7',
     '#60a5fa',
-    '#70b0fb',
-    '#82bafa',
     '#93c5fd',
-    '#a4cdfd',
-    '#b1d4fe',
-    '#bfdbfe',
-    '#c9e2fe',
-    '#d3e8ff',
-    '#dbeafe',
-    '#e0edff',
-    '#e5f0ff',
-    '#eaf3ff',
-    '#eff6ff',
-    '#f3f8ff',
-    '#f7fbff',
-    '#fbfdff',
   ],
   현금: [
     '#a16207',
@@ -99,7 +84,7 @@ export const CATEGORY_DETAIL_COLOR_SCALES = {
 
 const CATEGORY_DETAIL_HSL = {
   국내주식: { hue: 0, saturation: 68, startLightness: 30, step: 3.7, range: 46 },
-  해외주식: { hue: 220, saturation: 78, startLightness: 30, step: 3.5, range: 48 },
+  해외주식: { hue: 220, saturation: 78, startLightness: 30, step: 3.5, range: 44 },
   현금: { hue: 43, saturation: 76, startLightness: 38, step: 4.5, range: 36 },
   원자재: { hue: 215, saturation: 22, startLightness: 18, step: 4, range: 38 },
 };

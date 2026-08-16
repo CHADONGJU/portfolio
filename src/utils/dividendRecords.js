@@ -14,8 +14,15 @@ const getRecordTimestamp = (dividend = {}) => {
   return Number.isFinite(timestamp) ? timestamp : 0;
 };
 
+/**
+ * 배당 이벤트 하나를 식별하는 키.
+ * 계좌 유형까지 들어가야 한다 — 이 키가 mergeAutomaticDividendRecords에서 어떤
+ * 기록이 살아남을지 정하기 때문에, 계좌를 빼면 ISA분과 일반계좌분 중 한쪽이
+ * 조용히 사라진다.
+ */
 export const getAutomaticDividendEventKey = (dividend = {}) => [
   normalizeTicker(dividend.ticker) || String(dividend.name || '').trim().toUpperCase(),
+  normalizeAccountType(dividend.accountType),
   Number(dividend.round) || 1,
   dividend.exDate || dividend.date || '',
 ].join('::');

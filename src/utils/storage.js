@@ -84,33 +84,94 @@ export const hasStoredKey = (key) => {
   }
 };
 
+const SCOPE_CLAIM_MARKER_PREFIX = 'portfolio_scope_claimed_v1';
+
 /**
  * 계정 분리 이전에 저장된 키를 현재 계정 영역으로 한 번만 옮긴다.
- * 이미 해당 계정의 값이 있으면 건드리지 않으므로 여러 번 호출해도 안전하다.
- * (StrictMode의 이중 렌더에서도 같은 결과가 나와야 한다.)
+ *
+ * 전부 성공했을 때만 옛 키를 지우고 완료 표시를 남긴다. 중간에 용량 초과로
+ * 실패하면 복사한 것을 되돌리고 표시도 남기지 않아, 다음 실행에서 다시 시도한다.
+ * "대상 키가 이미 있으면 건너뛴다"로 판단하면, 실패 직후 앱이 빈 상태를 그 키에
+ * 써버린 뒤로는 영영 승계하지 못한다.
  */
 export const claimLegacyStorageKeys = (keys = [], scope = '') => {
   if (!scope) return 0;
 
-  let claimed = 0;
-  keys.forEach((key) => {
-    const scopedKey = getScopedStorageKey(key, scope);
-    if (scopedKey === key) return;
+  const markerKey = `${SCOPE_CLAIM_MARKER_PREFIX}::${scope}`;
+  try {
+    if (localStorage.getItem(markerKey) !== null) return 0;
+  } catch {
+    return 0;
+  }
 
-    try {
+  const writtenKeys = [];
+  const legacyKeys = [];
+
+  try {
+    keys.forEach((key) => {
+      const scopedKey = getScopedStorageKey(key, scope);
+      if (scopedKey === key) return;
       if (localStorage.getItem(scopedKey) !== null) return;
+
       const legacyValue = localStorage.getItem(key);
       if (legacyValue === null) return;
 
       localStorage.setItem(scopedKey, legacyValue);
+      writtenKeys.push(scopedKey);
+      legacyKeys.push(key);
+    });
+  } catch (error) {
+    console.error('localStorage 계정 분리 실패, 원래 상태로 되돌립니다:', error);
+    writtenKeys.forEach((scopedKey) => {
+      try {
+        localStorage.removeItem(scopedKey);
+      } catch {
+        // 되돌리기까지 실패하면 남겨둔다. 옛 키는 그대로이므로 데이터는 살아 있다.
+      }
+    });
+    return 0;
+  }
+
+  legacyKeys.forEach((key) => {
+    try {
       localStorage.removeItem(key);
-      claimed += 1;
-    } catch (error) {
-      console.error(`localStorage 계정 분리 실패 (${key}):`, error);
+    } catch {
+      // 지우지 못해도 승계 자체는 끝났다.
     }
   });
 
-  return claimed;
+  try {
+    localStorage.setItem(markerKey, '1');
+  } catch {
+    // 표시를 못 남기면 다음에 한 번 더 시도할 뿐, 결과는 같다.
+  }
+
+  return legacyKeys.length;
+};
+
+/**
+ * 한 저장 영역의 값을 다른 영역으로 옮긴다.
+ * 비로그인으로 쓰던 기록을 로그인 직후 그 계정으로 넘길 때 쓴다.
+ */
+export const moveStorageScope = (keys = [], fromScope = '', toScope = '') => {
+  if (!fromScope || !toScope || fromScope === toScope) return 0;
+
+  let moved = 0;
+  keys.forEach((key) => {
+    try {
+      const fromKey = getScopedStorageKey(key, fromScope);
+      const value = localStorage.getItem(fromKey);
+      if (value === null) return;
+
+      localStorage.setItem(getScopedStorageKey(key, toScope), value);
+      localStorage.removeItem(fromKey);
+      moved += 1;
+    } catch (error) {
+      console.error(`localStorage 영역 이동 실패 (${key}):`, error);
+    }
+  });
+
+  return moved;
 };
 
 export const removeStoredKeys = (keys = []) => {

@@ -247,3 +247,18 @@ test('계좌 유형이 다르면 같은 종목·같은 배당락일이라도 한
   assert.equal(isSameAutomaticDividendEvent(isaRow, generalRow), false);
   assert.equal(isSameAutomaticDividendEvent(isaRow, { ...isaRow, amount: 1 }), true);
 });
+
+test('계좌가 다른 같은 배당 이벤트는 병합에서 한쪽이 사라지지 않는다', () => {
+  const isaRow = {
+    ticker: '069500', name: 'KODEX200', round: 1, exDate: '2026-05-01',
+    currency: 'KRW', accountType: 'ISA', amount: 1000,
+  };
+  const generalRow = { ...isaRow, accountType: 'GENERAL', amount: 500 };
+
+  const merged = mergeAutomaticDividendRecords([isaRow, generalRow], []);
+  assert.equal(merged.length, 2);
+  assert.deepEqual(
+    merged.map((record) => record.accountType).sort(),
+    ['GENERAL', 'ISA'],
+  );
+});

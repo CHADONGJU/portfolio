@@ -137,7 +137,9 @@ const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
             </div>
 
             <div className="overflow-x-auto scroll-soft pb-2">
-              <div className="min-w-[760px] h-[300px] border-b border-line flex items-end gap-2 md:gap-3 px-2 pt-8">
+              {/* 390px 화면에서 min-w-[760px]는 7~12월이 늘 화면 밖이라, 좁은 화면에서는
+                  막대를 줄여 12개월이 한눈에 들어오게 한다. */}
+              <div className="min-w-[520px] sm:min-w-[760px] h-[300px] border-b border-line flex items-end gap-1.5 sm:gap-2 md:gap-3 px-2 pt-8">
                 {trend.months.map((month) => {
                   const barHeight = trend.maxMonthTotal > 0
                     ? (month.total / trend.maxMonthTotal) * 220
@@ -148,7 +150,9 @@ const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
                       type="button"
                       onClick={() => setSelectedMonth(month.month)}
                       aria-label={`${month.month}월 세후 배당 ${formatMoney(month.total, 'KRW')}`}
-                      className="group flex-1 h-full min-w-12 flex flex-col items-center justify-end focus:outline-none"
+                      /* focus:outline-none만 두면 전역 :focus-visible 규칙보다 특이도가
+                         높아 차트 전체에 포커스 표시가 사라진다. 대체 링을 함께 준다. */
+                      className="group flex-1 h-full min-w-9 sm:min-w-12 flex flex-col items-center justify-end focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-lg"
                     >
                       <span className={`figure text-[10px] md:text-[11px] font-bold mb-2 transition-colors ${selectedMonth === month.month ? 'text-ink' : 'text-ink-mute group-hover:text-ink'}`}>
                         {month.total > 0 ? formatCompactKrw(month.total) : '—'}
