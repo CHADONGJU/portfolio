@@ -1,15 +1,15 @@
 import { useMemo } from 'react';
-import { getCategoryColor, getCategoryDetailColor } from '../constants';
-import { getDividendExDate, getDividendReportingDate } from '../utils/dividendDates';
-import { sortDividendRecordsNewestFirst } from '../utils/dividendRecords';
-import { calculateAnnualDividendYield } from '../utils/annualDividendYield';
+import { getCategoryColor, getCategoryDetailColor } from '../constants.js';
+import { getDividendExDate, getDividendReportingDate } from '../utils/dividendDates.js';
+import { sortDividendRecordsNewestFirst } from '../utils/dividendRecords.js';
+import { calculateAnnualDividendYield } from '../utils/annualDividendYield.js';
 import {
   buildCanonicalTradeRows,
   buildKrwCostBasisByAsset,
   buildPositionFromTradeRows,
   getTradeAssetKey,
   getTradeRound,
-} from '../utils/tradeReconciliation';
+} from '../utils/tradeReconciliation.js';
 
 const parseMetricNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
 
@@ -68,6 +68,19 @@ const getRecordKrwPnl = (record = {}, rateByCurrency) => {
     return exactKrwPnl;
   }
   return (Number(record.pnl) || 0) * getRecordKrwRate(record, rateByCurrency);
+};
+
+/**
+ * 월 단위로 날짜를 옮기되 말일을 넘기지 않는다.
+ * setMonth(getMonth() + 1)은 1월 31일에서 3월 3일로 튀어서 2월을 통째로 건너뛴다.
+ */
+const addMonthsClamped = (date, months) => {
+  const year = date.getFullYear();
+  const month = date.getMonth() + months;
+  const day = date.getDate();
+  const lastDayOfTargetMonth = new Date(year, month + 1, 0).getDate();
+
+  return new Date(year, month, Math.min(day, lastDayOfTargetMonth));
 };
 
 const withRunningPercent = (items, total, getValue) => {
@@ -325,7 +338,10 @@ export const usePortfolioMetrics = ({
 
       const unrealizedKRW = assetRows.reduce((sum, asset) => sum + asset.profitKRW, 0);
       const realizedKRW = sellRows.reduce((sum, trade) => sum + getRecordKrwPnl(trade, getRecordRate), 0);
-      const dividendKRW = dividendRows.reduce((sum, dividend) => sum + (dividend.amount * getRecordKrwRate(dividend, getRecordRate)), 0);
+      // amount가 비어 있는 기록 한 건이면 이 종목의 배당·합계가 통째로 NaN이 된다.
+      const dividendKRW = dividendRows.reduce((sum, dividend) => (
+        sum + ((Number(dividend.amount) || 0) * getRecordKrwRate(dividend, getRecordRate))
+      ), 0);
       const totalKRW = unrealizedKRW + realizedKRW + dividendKRW;
 
       const unrealizedNative = assetRows.reduce((sum, asset) => sum + asset.profitNative, 0);
@@ -334,7 +350,7 @@ export const usePortfolioMetrics = ({
         .reduce((sum, trade) => sum + (Number(trade.pnl) || 0), 0);
       const dividendNative = dividendRows
         .filter(dividend => dividend.currency === currency)
-        .reduce((sum, dividend) => sum + dividend.amount, 0);
+        .reduce((sum, dividend) => sum + (Number(dividend.amount) || 0), 0);
 
       const totalSellQuantity = sellRows.reduce((sum, record) => sum + (Number(record.quantity) || 0), 0);
       const heldQuantity = position.hasBuyRows
@@ -470,10 +486,12 @@ export const usePortfolioMetrics = ({
         else if (daysDiff >= 330) monthDiff = 12;
       }
 
-      const nextDate = new Date(lastDate);
-      nextDate.setMonth(nextDate.getMonth() + monthDiff);
-      const nextMonth = nextDate.getMonth() + 1;
-      const nextYear = nextDate.getFullYear();
+      // 배당락일을 모르는 기록(지급일만 있는 수입 내역 등)은 다음 배당을 예측할 수 없다.
+      // 예전에는 Invalid Date가 그대로 흘러 "NaN월 배당락 예상"이 화면에 떴다.
+      const hasLastExDate = Number.isFinite(lastDate.getTime());
+      const nextDate = hasLastExDate ? addMonthsClamped(lastDate, monthDiff) : null;
+      const nextMonth = nextDate ? nextDate.getMonth() + 1 : 0;
+      const nextYear = nextDate ? nextDate.getFullYear() : 0;
       const currentAsset = enhancedAssets.find((candidate) => candidate.name === asset.name);
       const {
         expectedAnnualAmount,
@@ -490,6 +508,8 @@ export const usePortfolioMetrics = ({
         && lastReportingDate.getFullYear() === currentYear
       ) {
         status = '이번 달 배당 반영';
+      } else if (!nextDate) {
+        status = '다음 배당 일정 미확인';
       } else if (nextMonth === currentMonth && nextYear === currentYear) {
         status = '이번 달 배당락 예상';
       } else {
@@ -528,7 +548,7 @@ export const usePortfolioMetrics = ({
     const currentMonth = today.getMonth();
 
       const seen = new Set();
-      return sortDividendRecordsNewestFirst(summary.history.filter(d => {
+      return sortDividendRecordsNewestFirst(summary.history.filter((d, index) => {
         const divDate = new Date(`${getDividendReportingDate(d)}T00:00:00`);
         const matchesFilter = dividendFilter === '이번 달'
           ? divDate.getFullYear() === currentYear && divDate.getMonth() === currentMonth
@@ -536,11 +556,17 @@ export const usePortfolioMetrics = ({
             ? divDate.getFullYear() === currentYear
             : true;
         if (!matchesFilter) return false;
-        const key = [
-          d.ticker || d.name,
-          d.exDate || d.date,
-          d.currency,
-        ].join('::');
+        /**
+         * 배당락일이 없는 기록(지급일만 있는 수입 내역)은 예전에 키가
+         * "JEPI::undefined::USD"로 전부 같아져서, 서로 다른 달의 배당이
+         * 상세 표에서만 사라지고 합계에는 남는 불일치가 생겼다.
+         * 식별에 쓸 수 있는 날짜가 없으면 기록 자체를 키로 삼는다.
+         */
+        const dateKey = d.exDate || d.date || getDividendReportingDate(d);
+        const identity = d.id ?? d.sourceId ?? '';
+        const key = dateKey
+          ? [d.ticker || d.name, dateKey, d.currency].join('::')
+          : `id::${identity || index}`;
         if (seen.has(key)) return false;
         seen.add(key);
         return true;

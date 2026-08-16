@@ -1138,8 +1138,13 @@ const App = () => {
 
   // localStorage 저장 실패(용량 초과, 시크릿 모드)를 사용자에게 알린다.
   useEffect(() => {
-    setStorageErrorHandler(() => {
-      addLogRef.current('브라우저 저장 공간이 부족해 로컬 저장에 실패했습니다.', 'error');
+    setStorageErrorHandler((key, error, operation) => {
+      addLogRef.current(
+        operation === 'read'
+          ? '이 기기에 저장된 데이터 일부를 읽지 못해 기본값으로 시작했습니다.'
+          : '브라우저 저장 공간이 부족해 로컬 저장에 실패했습니다.',
+        'error',
+      );
     });
     return () => setStorageErrorHandler(null);
   }, []);
