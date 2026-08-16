@@ -1,9 +1,20 @@
+/**
+ * 환율 요청에 타임아웃이 없으면, 제공자가 연결만 받고 응답하지 않을 때 동기화 루프
+ * 전체가 영원히 pending 상태로 멈춘다. 그러면 "실행 중" 플래그가 풀리지 않아
+ * 페이지를 새로 열기 전까지 시세가 통째로 정지한다.
+ */
+const FX_TIMEOUT_MS = 8000;
+
 export const fetchKrwRate = async (currency = 'USD') => {
   const baseCurrency = String(currency || 'USD').toUpperCase();
   if (baseCurrency === 'KRW') return 1;
 
   try {
-    const primary = await fetch(`https://open.er-api.com/v6/latest/${baseCurrency}`);
+    const primary = await fetchWithTimeout(
+      `https://open.er-api.com/v6/latest/${baseCurrency}`,
+      {},
+      FX_TIMEOUT_MS,
+    );
     if (primary.ok) {
       const data = await primary.json();
       if (data?.rates?.KRW) return data.rates.KRW;
@@ -13,8 +24,10 @@ export const fetchKrwRate = async (currency = 'USD') => {
   }
 
   try {
-    const fallback = await fetch(
+    const fallback = await fetchWithTimeout(
       `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${baseCurrency.toLowerCase()}.json`,
+      {},
+      FX_TIMEOUT_MS,
     );
     if (fallback.ok) {
       const data = await fallback.json();
@@ -302,7 +315,7 @@ export const fetchUsdKrwRateByDate = async (date) => {
 
   for (const url of historicalUrls) {
     try {
-      const response = await fetch(url, { cache: 'no-store' });
+      const response = await fetchWithTimeout(url, { cache: 'no-store' }, FX_TIMEOUT_MS);
       if (!response.ok) continue;
 
       const data = await response.json();

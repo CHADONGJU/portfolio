@@ -156,6 +156,10 @@ const PORTFOLIO_STORAGE_KEYS = [
 // 로그인하지 않은 상태에서 쓰는 저장 영역. 계정 영역과 절대 섞이면 안 된다.
 const GUEST_STORAGE_SCOPE = 'guest';
 
+// 클라우드 저장 실패는 대부분 일시적인 네트워크 문제다. 재시도가 없으면 방금 추가한
+// 자산이 이 기기에만 남고, 나중에 원격 스냅샷에 덮여 사라진다.
+const CLOUD_SAVE_RETRY_DELAYS_MS = [3000, 10000, 30000];
+
 // 가상화폐 기능을 제거하면서, 기존에 남아 있는 가상화폐 데이터를 1회 정리한다.
 const CRYPTO_CATEGORY = '가상화폐';
 const CRYPTO_PURGE_FLAG_KEY = 'portfolio_crypto_purged_v1';
@@ -1607,7 +1611,7 @@ const buyLotDraftSummary = useMemo(() => {
     let cancelled = false;
     let isReloading = false;
 
-    return subscribePortfolioState(db, userId, async ({ exists, revision }) => {
+    const unsubscribe = subscribePortfolioState(db, userId, async ({ exists, revision }) => {
       if (cancelled || !exists || !revision || revision === cloudRevisionRef.current || isReloading) return;
       isReloading = true;
 
@@ -1671,8 +1675,19 @@ const buyLotDraftSummary = useMemo(() => {
         isReloading = false;
       }
     }, (error) => {
+      // 구독이 죽으면(토큰 만료, 규칙 변경) 기기 간 동기화가 조용히 멈춘다.
+      // 저장은 계속되므로, 사용자가 모른 채 두 기기가 갈라지는 게 최악이다.
       console.error('Realtime cloud portfolio subscription failed:', error);
+      if (cancelled) return;
+      addLogRef.current('실시간 동기화가 끊겼습니다. 다른 기기의 변경이 반영되지 않습니다.', 'error');
     });
+
+    // 구독만 끊고 끝내면, 진행 중이던 loadPortfolioState가 나중에 resolve되면서
+    // 이전 계정의 데이터를 새 계정 화면에 setState 해버린다.
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, [userId, userEmail, isCloudPortfolioLoaded, cloudLoadFailed, cloudPortfolioUserId]);
 
   useEffect(() => {
@@ -1682,29 +1697,58 @@ const buyLotDraftSummary = useMemo(() => {
       return undefined;
     }
 
-    const saveTimer = setTimeout(async () => {
+    let disposed = false;
+    let saveTimer = null;
+
+    const runSave = async (attempt) => {
       try {
         const compactedSnapshot = compactPortfolioSnapshot(portfolioSnapshot);
-        await savePortfolioStateDiff(
+        const result = await savePortfolioStateDiff(
           db,
           userId,
           compactedSnapshot,
           cloudSnapshotRef.current,
           userEmail,
         );
+        if (disposed) return;
+
         cloudSnapshotRef.current = compactedSnapshot;
+        // 내가 쓴 리비전을 기억해두지 않으면 실시간 구독이 이 저장을 '남의 변경'으로
+        // 착각해 포트폴리오 전체를 다시 내려받는다.
+        if (result?.revision) cloudRevisionRef.current = result.revision;
+        if (attempt > 0) addLogRef.current('클라우드 저장을 다시 시도해 성공했습니다.', 'success');
       } catch (error) {
+        if (disposed) return;
         console.error('Cloud portfolio save failed:', error);
+
+        // 규칙 위반이나 안전장치에 걸린 저장은 다시 시도해도 결과가 같다.
+        const isRetryable = error?.code !== 'unsafe-portfolio-shrink'
+          && error?.code !== 'permission-denied';
+
+        if (isRetryable && attempt < CLOUD_SAVE_RETRY_DELAYS_MS.length) {
+          addLogRef.current(
+            `클라우드 저장에 실패했습니다. ${Math.round(CLOUD_SAVE_RETRY_DELAYS_MS[attempt] / 1000)}초 뒤 다시 시도합니다.`,
+            'error',
+          );
+          saveTimer = setTimeout(() => runSave(attempt + 1), CLOUD_SAVE_RETRY_DELAYS_MS[attempt]);
+          return;
+        }
+
         const message = error?.code === 'unsafe-portfolio-shrink'
           ? '데이터가 비정상적으로 대량 감소해 클라우드 저장을 차단했습니다. 기존 기록은 유지됩니다.'
           : error?.code === 'permission-denied'
             ? '클라우드 저장 권한이 없습니다. Firestore 규칙을 확인해주세요.'
-            : '클라우드 저장에 실패했습니다. 잠시 후 다시 시도합니다.';
-        addLog(message, 'error');
+            : '클라우드 저장에 계속 실패했습니다. 이 기기에는 저장돼 있으니 연결을 확인해주세요.';
+        addLogRef.current(message, 'error');
       }
-    }, 700);
+    };
 
-    return () => clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => runSave(0), 700);
+
+    return () => {
+      disposed = true;
+      clearTimeout(saveTimer);
+    };
   }, [userId, userEmail, isCloudPortfolioLoaded, cloudLoadFailed, cloudPortfolioUserId, portfolioSnapshot]);
 
   useEffect(() => {
@@ -1741,7 +1785,9 @@ const buyLotDraftSummary = useMemo(() => {
   const exchangeRateRef = useRef(exchangeRate);
   const jpyKrwRateRef = useRef(jpyKrwRate);
   const currencyRatesRef = useRef(currencyRates);
-  const liveFetchInFlightRef = useRef(false);
+  // 시세 갱신은 겹쳐 돌면 안 되지만, 겹쳤다고 그냥 버려서도 안 된다.
+  // 실행을 직렬로 이어 붙여 마지막 요청이 반드시 한 번은 돌게 한다.
+  const liveFetchChainRef = useRef(Promise.resolve());
   const liveFetchRunIdRef = useRef(0);
   useEffect(() => { assetsRef.current = assets; }, [assets]);
   useEffect(() => { tradeLedgerRef.current = tradeLedger; }, [tradeLedger]);
@@ -1754,9 +1800,9 @@ const buyLotDraftSummary = useMemo(() => {
     if (!isCloudPortfolioLoaded) return undefined;
     let cancelled = false;
 
-    const fetchLiveData = async () => {
-      if (liveFetchInFlightRef.current) return;
-      liveFetchInFlightRef.current = true;
+    let queuedRun = false;
+
+    const runLiveSync = async () => {
       const runId = liveFetchRunIdRef.current + 1;
       liveFetchRunIdRef.current = runId;
       const isLatestRun = () => !cancelled && runId === liveFetchRunIdRef.current;
@@ -1969,13 +2015,29 @@ const buyLotDraftSummary = useMemo(() => {
         if (isLatestRun() && assetsRef.current.length > 0) addLog("네트워크 오류로 갱신 실패", "error");
       }
       finally {
-        if (runId === liveFetchRunIdRef.current) {
-          liveFetchInFlightRef.current = false;
-          setIsFetching(false);
-        }
+        if (runId === liveFetchRunIdRef.current) setIsFetching(false);
       }
     };
-    
+
+    /**
+     * 예전에는 실행 중이면 그냥 return 했다. 그래서 동기화 도중 새로고침을 누르면
+     * 이전 실행은 cancelled 처리로 결과를 버리고, 새 실행은 "이미 실행 중"이라며
+     * 즉시 빠져나가 아무것도 갱신되지 않았다(다음 자동 갱신까지 10분 무반응).
+     * 지금은 이전 실행 뒤에 이어 붙여, 요청이 반드시 한 번은 반영되게 한다.
+     */
+    const fetchLiveData = () => {
+      if (queuedRun) return liveFetchChainRef.current;
+      queuedRun = true;
+
+      const run = liveFetchChainRef.current
+        .catch(() => {})
+        .then(() => (cancelled ? undefined : runLiveSync()))
+        .finally(() => { queuedRun = false; });
+
+      liveFetchChainRef.current = run;
+      return run;
+    };
+
     fetchLiveData();
     let interval;
     if (isLiveMode) interval = setInterval(fetchLiveData, AUTO_SYNC_INTERVAL_MS); 

@@ -174,6 +174,28 @@ export const subscribePortfolioState = (database, userId, onChange, onError) => 
 export const migratePortfolioState = async (database, userId, snapshot, userEmail = '') => {
   const rootRef = doc(database, 'portfolioStates', userId);
 
+  const existingCollectionSnapshots = await Promise.all(
+    PORTFOLIO_COLLECTION_FIELDS.map(async (field) => [
+      field,
+      await getDocs(collection(database, 'portfolioStates', userId, field)),
+    ]),
+  );
+
+  /**
+   * 마이그레이션도 원격 문서를 지운다. 루트 문서만 없고 서브컬렉션은 남아 있는 상태
+   * (첫 마이그레이션이 중간에 끊기면 정확히 이 모양이 된다)에서 빈 로컬 스냅샷으로
+   * 이 함수가 돌면 남아 있던 기록이 전부 삭제된다. 원격에 실제로 들어 있는 내용을
+   * '이전 상태'로 삼아 저장 안전장치를 통과할 때만 진행한다. 아무것도 건드리기 전에
+   * 검사해야 실패해도 원격이 중간 상태로 남지 않는다.
+   */
+  const remoteSnapshot = Object.fromEntries(
+    existingCollectionSnapshots.map(([field, snapshotResult]) => [
+      field,
+      snapshotResult.docs.map((entry) => entry.data()),
+    ]),
+  );
+  assertSafePortfolioWrite(remoteSnapshot, snapshot);
+
   await setDoc(rootRef, {
     schemaVersion: SCHEMA_VERSION,
     migrationComplete: false,
@@ -182,12 +204,6 @@ export const migratePortfolioState = async (database, userId, snapshot, userEmai
     updatedAt: serverTimestamp(),
   }, { merge: true });
 
-  const existingCollectionSnapshots = await Promise.all(
-    PORTFOLIO_COLLECTION_FIELDS.map(async (field) => [
-      field,
-      await getDocs(collection(database, 'portfolioStates', userId, field)),
-    ]),
-  );
   const desiredDocumentIds = new Map();
   const writeOperations = PORTFOLIO_COLLECTION_FIELDS.flatMap((field) => {
     const documents = toDocumentMap(field, snapshot[field] || []);
@@ -246,10 +262,20 @@ export const savePortfolioStateDiff = async (
   }
 
   await commitOperations(database, operations);
-  await setDoc(
-    doc(database, 'portfolioStates', userId),
-    buildRootMetadata(nextSnapshot, userEmail),
-    { merge: true },
-  );
-  return { changed: true, operationCount: operations.length };
+  const rootRef = doc(database, 'portfolioStates', userId);
+  await setDoc(rootRef, buildRootMetadata(nextSnapshot, userEmail), { merge: true });
+
+  /**
+   * 방금 쓴 문서의 리비전을 돌려준다. 호출부가 이 값을 기억해두지 않으면,
+   * 서버 ack이 도착했을 때 실시간 구독이 "모르는 리비전"으로 보고 포트폴리오
+   * 전체(루트 + 서브컬렉션 7개)를 다시 내려받는다. 편집 한 번에 수천 건 읽기.
+   * 루트 1건만 더 읽어서 그 재조회를 통째로 없앤다.
+   */
+  const savedRoot = await getDoc(rootRef);
+
+  return {
+    changed: true,
+    operationCount: operations.length,
+    revision: savedRoot.exists() ? getPortfolioRevision(savedRoot.data()) : '',
+  };
 };
