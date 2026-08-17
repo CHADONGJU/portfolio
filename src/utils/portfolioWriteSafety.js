@@ -8,6 +8,8 @@ const GUARDED_FIELDS = [
   'autoDividends',
   'confirmedDividends',
   'dividendAssetRegistry',
+  'capitalFlows',
+  'portfolioSnapshots',
 ];
 const MINIMUM_BASELINE_COUNT = 8;
 const MAXIMUM_REMAINING_RATIO = 0.4;

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Check, LogOut, Pencil, Plus, RefreshCw, X } from 'lucide-react';
+import { Check, LogOut, Pencil, Plus, RefreshCw, UserRound, X } from 'lucide-react';
 import { DEFAULT_PORTFOLIO_NAME } from '../constants';
 
 const iconButton =
@@ -10,6 +10,7 @@ const DashboardHeader = ({
   isFetching,
   lastUpdated,
   onAddAsset,
+  onOpenAccountManager,
   onPortfolioNameChange,
   onRefresh,
   onSignOut,
@@ -137,6 +138,18 @@ const DashboardHeader = ({
         >
           <Plus size={17} aria-hidden="true" /> 자산 추가
         </button>
+
+        {onOpenAccountManager && (
+          <button
+            type="button"
+            onClick={onOpenAccountManager}
+            aria-label="계좌 관리"
+            title="계좌 관리"
+            className={`${iconButton} text-ink-mute hover:text-ink`}
+          >
+            <UserRound size={19} aria-hidden="true" />
+          </button>
+        )}
 
         {onSignOut && (
           <button

@@ -29,6 +29,16 @@ test('수량이 달라지면 다른 포트폴리오로 판단한다', () => {
   ), false);
 });
 
+test('입출금과 일별 평가 기록도 클라우드 변경으로 감지한다', () => {
+  assert.equal(arePortfolioSnapshotsEquivalent(
+    { capitalFlows: [], portfolioSnapshots: [] },
+    {
+      capitalFlows: [{ id: 'flow-1', date: '2026-08-18', amountKRW: 100000 }],
+      portfolioSnapshots: [{ id: 'snapshot-1', date: '2026-08-18', valueKRW: 100000 }],
+    },
+  ), false);
+});
+
 test('루트 필드 비교는 객체 키 순서 차이를 무시한다', () => {
   assert.equal(arePortfolioRootFieldsEquivalent(
     { portfolioName: 'A', targetPortfolio: { budget: 10, categories: [] } },

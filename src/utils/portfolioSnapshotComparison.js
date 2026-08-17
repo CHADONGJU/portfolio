@@ -6,6 +6,8 @@ export const PORTFOLIO_COLLECTION_FIELDS = [
   'autoDividends',
   'confirmedDividends',
   'dividendAssetRegistry',
+  'capitalFlows',
+  'portfolioSnapshots',
 ];
 
 const normalizeValue = (value) => {

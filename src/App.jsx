@@ -7,6 +7,9 @@ import {
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
 import ModalOverlay from './components/ModalOverlay';
+import AccountManagerPanel from './components/AccountManagerPanel';
+import AnnualReturnGoalCard from './components/AnnualReturnGoalCard';
+import AnnualReturnHistory from './components/AnnualReturnHistory';
 import AnnualDividendTrend from './components/AnnualDividendTrend';
 import FeatureInfo from './components/FeatureInfo';
 import ManualTradeEntryForm from './components/ManualTradeEntryForm';
@@ -18,6 +21,7 @@ import { useAuth } from './context/useAuth';
 import {
   AUTO_DIVIDENDS_STORAGE_KEY,
   ASSETS_STORAGE_KEY,
+  CAPITAL_FLOWS_STORAGE_KEY,
   CONFIRMED_DIVIDENDS_STORAGE_KEY,
   DEFAULT_PORTFOLIO_NAME,
   DIVIDEND_ASSET_REGISTRY_STORAGE_KEY,
@@ -26,6 +30,7 @@ import {
   getCategoryDetailColor,
   MEMOS_STORAGE_KEY,
   PORTFOLIO_NAME_STORAGE_KEY,
+  PORTFOLIO_SNAPSHOTS_STORAGE_KEY,
   TARGET_PORTFOLIO_STORAGE_KEY,
   TRADE_LEDGER_STORAGE_KEY,
   TRADES_STORAGE_KEY,
@@ -75,6 +80,11 @@ import {
   summarizeAnnualDividendTrend,
 } from './utils/annualDividendTrend';
 import { buildStockSearchOptions } from './utils/stockSearchOptions';
+import {
+  calculateAnnualPerformance,
+  getAnnualPerformanceYears,
+  upsertDailyPortfolioSnapshot,
+} from './utils/annualPerformance';
 import { combineTradesWithMemos } from './utils/tradeMemos';
 import {
   isDeletedMemoRecord,
@@ -159,6 +169,8 @@ const PORTFOLIO_STORAGE_KEYS = [
   DIVIDEND_ASSET_REGISTRY_STORAGE_KEY,
   PORTFOLIO_NAME_STORAGE_KEY,
   TARGET_PORTFOLIO_STORAGE_KEY,
+  CAPITAL_FLOWS_STORAGE_KEY,
+  PORTFOLIO_SNAPSHOTS_STORAGE_KEY,
 ];
 
 // 로그인하지 않은 상태에서 쓰는 저장 영역. 계정 영역과 절대 섞이면 안 된다.
@@ -662,6 +674,8 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
       mergeUniqueDividends(Array.isArray(snapshot.confirmedDividends) ? snapshot.confirmedDividends : []),
     ),
     dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], assets),
+    capitalFlows: mergeUniqueRecords(Array.isArray(snapshot.capitalFlows) ? snapshot.capitalFlows : []),
+    portfolioSnapshots: mergeUniqueRecords(Array.isArray(snapshot.portfolioSnapshots) ? snapshot.portfolioSnapshots : []),
     targetPortfolio: pruneTargetPortfolio(snapshot.targetPortfolio),
     portfolioName: normalizePortfolioName(snapshot.portfolioName),
   };
@@ -1053,6 +1067,8 @@ const emptyPortfolioSnapshot = () => ({
   autoDividends: [],
   confirmedDividends: [],
   dividendAssetRegistry: [],
+  capitalFlows: [],
+  portfolioSnapshots: [],
   targetPortfolio: DEFAULT_TARGET_PORTFOLIO,
 });
 
@@ -1097,6 +1113,8 @@ const readStoredPortfolio = (scope) => {
     autoDividends: read(AUTO_DIVIDENDS_STORAGE_KEY, []),
     confirmedDividends: read(CONFIRMED_DIVIDENDS_STORAGE_KEY, []),
     dividendAssetRegistry: read(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY, []),
+    capitalFlows: read(CAPITAL_FLOWS_STORAGE_KEY, []),
+    portfolioSnapshots: read(PORTFOLIO_SNAPSHOTS_STORAGE_KEY, []),
     targetPortfolio: read(TARGET_PORTFOLIO_STORAGE_KEY, DEFAULT_TARGET_PORTFOLIO),
   };
 };
@@ -1172,6 +1190,8 @@ const App = () => {
   ));
   const [selectedCalendarEventId, setSelectedCalendarEventId] = useState('');
   const [expandedCalendarDate, setExpandedCalendarDate] = useState('');
+  const [isAccountManagerOpen, setIsAccountManagerOpen] = useState(false);
+  const [annualReturnYear, setAnnualReturnYear] = useState(() => new Date().getFullYear());
 
   const [isAdding, setIsAdding] = useState(false);
   const defaultBuyDate = new Date().toISOString().split('T')[0];
@@ -1341,6 +1361,8 @@ const buyLotDraftSummary = useMemo(() => {
   const [tradeLedger, setTradeLedger] = useState(() => loadJson(scopedKey(TRADE_LEDGER_STORAGE_KEY), []));
   const [portfolioName, setPortfolioName] = useState(() => normalizePortfolioName(loadJson(scopedKey(PORTFOLIO_NAME_STORAGE_KEY), DEFAULT_PORTFOLIO_NAME)));
   const [targetPortfolio, setTargetPortfolio] = useState(() => loadJson(scopedKey(TARGET_PORTFOLIO_STORAGE_KEY), DEFAULT_TARGET_PORTFOLIO));
+  const [capitalFlows, setCapitalFlows] = useState(() => loadJson(scopedKey(CAPITAL_FLOWS_STORAGE_KEY), []));
+  const [portfolioSnapshots, setPortfolioSnapshots] = useState(() => loadJson(scopedKey(PORTFOLIO_SNAPSHOTS_STORAGE_KEY), []));
   const [dividendAssetRegistry, setDividendAssetRegistry] = useState(() => loadJson(scopedKey(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY), []));
   const targetPortfolioRef = useRef(targetPortfolio);
   const targetTickerSnapshotKey = useMemo(() => (
@@ -1360,8 +1382,10 @@ const buyLotDraftSummary = useMemo(() => {
     autoDividends,
     confirmedDividends,
     dividendAssetRegistry,
+    capitalFlows,
+    portfolioSnapshots,
     targetPortfolio,
-  }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, confirmedDividends, dividendAssetRegistry, targetPortfolio]);
+  }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, confirmedDividends, dividendAssetRegistry, capitalFlows, portfolioSnapshots, targetPortfolio]);
   const portfolioSnapshotRef = useRef(portfolioSnapshot);
   const cloudSnapshotRef = useRef(null);
   const cloudRevisionRef = useRef('');
@@ -1379,6 +1403,8 @@ const buyLotDraftSummary = useMemo(() => {
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(AUTO_DIVIDENDS_STORAGE_KEY), autoDividends);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(CONFIRMED_DIVIDENDS_STORAGE_KEY), confirmedDividends);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY), dividendAssetRegistry);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(CAPITAL_FLOWS_STORAGE_KEY), capitalFlows);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(PORTFOLIO_SNAPSHOTS_STORAGE_KEY), portfolioSnapshots);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(PORTFOLIO_NAME_STORAGE_KEY), portfolioName);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(TARGET_PORTFOLIO_STORAGE_KEY), targetPortfolio);
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
@@ -1392,6 +1418,8 @@ const buyLotDraftSummary = useMemo(() => {
     setAutoDividends([]);
     setConfirmedDividends([]);
     setDividendAssetRegistry([]);
+    setCapitalFlows([]);
+    setPortfolioSnapshots([]);
     setPortfolioName(DEFAULT_PORTFOLIO_NAME);
     setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
   };
@@ -1404,6 +1432,8 @@ const buyLotDraftSummary = useMemo(() => {
     setAutoDividends(stored.autoDividends);
     setConfirmedDividends(stored.confirmedDividends);
     setDividendAssetRegistry(stored.dividendAssetRegistry);
+    setCapitalFlows(stored.capitalFlows);
+    setPortfolioSnapshots(stored.portfolioSnapshots);
     setPortfolioName(stored.portfolioName);
     setTargetPortfolio(stored.targetPortfolio);
   };
@@ -1570,6 +1600,8 @@ const buyLotDraftSummary = useMemo(() => {
           setAutoDividends(protectedData.autoDividends);
           setConfirmedDividends(protectedData.confirmedDividends);
           setDividendAssetRegistry(protectedData.dividendAssetRegistry);
+          setCapitalFlows(protectedData.capitalFlows);
+          setPortfolioSnapshots(protectedData.portfolioSnapshots);
           setPortfolioName(protectedData.portfolioName);
           setTargetPortfolio(protectedData.targetPortfolio);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
@@ -1582,7 +1614,9 @@ const buyLotDraftSummary = useMemo(() => {
           const hasLocalData = (localSnapshot.assets?.length || 0) > 0
             || (localSnapshot.trades?.length || 0) > 0
             || (localSnapshot.memos?.length || 0) > 0
-            || (localSnapshot.tradeLedger?.length || 0) > 0;
+            || (localSnapshot.tradeLedger?.length || 0) > 0
+            || (localSnapshot.capitalFlows?.length || 0) > 0
+            || (localSnapshot.portfolioSnapshots?.length || 0) > 0;
 
           await migratePortfolioState(db, userId, localSnapshot, userEmail);
           if (cancelled) return;
@@ -1687,6 +1721,8 @@ const buyLotDraftSummary = useMemo(() => {
         setAutoDividends(protectedData.autoDividends);
         setConfirmedDividends(protectedData.confirmedDividends);
         setDividendAssetRegistry(protectedData.dividendAssetRegistry);
+        setCapitalFlows(protectedData.capitalFlows);
+        setPortfolioSnapshots(protectedData.portfolioSnapshots);
         setPortfolioName(protectedData.portfolioName);
         setTargetPortfolio(protectedData.targetPortfolio);
         addLog('다른 기기에서 변경된 포트폴리오를 반영했습니다.', 'success');
@@ -2279,6 +2315,36 @@ const buyLotDraftSummary = useMemo(() => {
       dividendByCurrency,
     };
   }, [enhancedAssets, receivedDividends, exchangeRate, jpyKrwRate, currencyRates]);
+  const annualPerformanceYears = useMemo(() => getAnnualPerformanceYears({
+    snapshots: portfolioSnapshots,
+    capitalFlows,
+    currentYear: new Date().getFullYear(),
+  }), [portfolioSnapshots, capitalFlows]);
+  const annualPerformances = useMemo(() => annualPerformanceYears.map((year) => (
+    calculateAnnualPerformance({ snapshots: portfolioSnapshots, capitalFlows, year })
+  )), [annualPerformanceYears, portfolioSnapshots, capitalFlows]);
+  const selectedAnnualPerformance = useMemo(() => (
+    annualPerformances.find((performance) => performance.year === annualReturnYear)
+    || calculateAnnualPerformance({ snapshots: portfolioSnapshots, capitalFlows, year: annualReturnYear })
+  ), [annualPerformances, annualReturnYear, portfolioSnapshots, capitalFlows]);
+  const manualPerformanceSnapshots = useMemo(() => (
+    portfolioSnapshots
+      .filter((snapshot) => snapshot.source === 'manual')
+      .sort((left, right) => String(right.date).localeCompare(String(left.date)))
+  ), [portfolioSnapshots]);
+
+  useEffect(() => {
+    if (!isStorageScopeReady || !isCloudPortfolioLoaded || cloudLoadFailed || isFetching || !lastUpdated) return;
+    if (!(Number(totalConvertedKRW) > 0)) return;
+
+    const date = formatDateKey(new Date());
+    setPortfolioSnapshots((previous) => upsertDailyPortfolioSnapshot(previous, {
+      id: `snapshot-${date}`,
+      date,
+      valueKRW: totalConvertedKRW,
+      source: 'auto',
+    }));
+  }, [isStorageScopeReady, isCloudPortfolioLoaded, cloudLoadFailed, isFetching, lastUpdated, totalConvertedKRW]);
   const dividendCurrencyParts = useMemo(() => (
     Object.entries(dashboardSummary.dividendByCurrency || {})
       .filter(([, amount]) => Math.abs(Number(amount) || 0) > 0.000001)
@@ -4133,6 +4199,52 @@ const buyLotDraftSummary = useMemo(() => {
     
   };
 
+  const saveCapitalFlow = (flow) => {
+    const now = new Date().toISOString();
+    setCapitalFlows((previous) => {
+      if (flow.id) {
+        return previous.map((entry) => (
+          entry.id === flow.id ? { ...entry, ...flow, updatedAt: now } : entry
+        ));
+      }
+      return [...previous, {
+        ...flow,
+        id: `capital-flow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        createdAt: now,
+        updatedAt: now,
+      }];
+    });
+    addLog(flow.id ? '입출금 기록을 수정했습니다.' : '입출금 기록을 추가했습니다.', 'success');
+  };
+
+  const deleteCapitalFlow = (id) => {
+    if (!window.confirm('이 입출금 기록을 삭제할까요?')) return;
+    setCapitalFlows((previous) => previous.filter((flow) => flow.id !== id));
+    addLog('입출금 기록을 삭제했습니다.', 'info');
+  };
+
+  const saveOpeningSnapshot = (year, valueKRW) => {
+    if (!Number.isInteger(year) || year < 2000 || year > new Date().getFullYear() || !(valueKRW >= 0)) {
+      addLog('연도와 연초 평가액을 확인해주세요.', 'error');
+      return;
+    }
+    const date = `${year}-01-01`;
+    setPortfolioSnapshots((previous) => upsertDailyPortfolioSnapshot(previous, {
+      id: `opening-${year}`,
+      date,
+      valueKRW,
+      source: 'manual',
+    }));
+    setAnnualReturnYear(year);
+    addLog(`${year}년 연초 평가액을 저장했습니다.`, 'success');
+  };
+
+  const deleteOpeningSnapshot = (id) => {
+    if (!window.confirm('이 연초 평가액을 삭제할까요?')) return;
+    setPortfolioSnapshots((previous) => previous.filter((snapshot) => snapshot.id !== id));
+    addLog('연초 평가액을 삭제했습니다.', 'info');
+  };
+
 
   return (
     <div className="min-h-[100dvh] bg-canvas px-4 pt-5 pb-[calc(4rem+env(safe-area-inset-bottom))] md:px-8 md:pt-8 md:pb-16 text-ink relative">
@@ -4152,6 +4264,7 @@ const buyLotDraftSummary = useMemo(() => {
             setIsAdding(true);
           }}
           onPortfolioNameChange={setPortfolioName}
+          onOpenAccountManager={() => setIsAccountManagerOpen(true)}
           onRefresh={() => setRefreshTrigger(t => t + 1)}
           userEmail={userEmail}
           onSignOut={handleSignOut}
@@ -4558,6 +4671,13 @@ const buyLotDraftSummary = useMemo(() => {
         {/* 수익 및 기록 탭 */}
         {activeTab === 'history' && (
           <div className="space-y-8 anim-fade">
+            <AnnualReturnHistory
+              year={annualReturnYear}
+              years={annualPerformanceYears}
+              performance={selectedAnnualPerformance}
+              performances={annualPerformances}
+              onYearChange={setAnnualReturnYear}
+            />
             
             <h3 className="text-lg md:text-xl font-bold text-ink flex items-center gap-2"><ArrowRightLeft className="text-ink-soft" size={20} /> 종목 매매(실현) 수익 요약</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
@@ -5117,6 +5237,19 @@ const buyLotDraftSummary = useMemo(() => {
 
         {activeTab === 'target' && (
           <div className="space-y-8 anim-fade">
+            <AnnualReturnGoalCard
+              year={annualReturnYear}
+              targetPercent={targetPortfolio.annualReturnGoals?.[annualReturnYear] || ''}
+              performance={selectedAnnualPerformance}
+              onYearChange={setAnnualReturnYear}
+              onTargetChange={(value) => setTargetPortfolio((previous) => ({
+                ...previous,
+                annualReturnGoals: {
+                  ...(previous.annualReturnGoals || {}),
+                  [annualReturnYear]: value,
+                },
+              }))}
+            />
             <div className="bg-surface rounded-[20px] overflow-hidden">
               <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-surface">
                 <div className="flex items-center gap-2">
@@ -5660,6 +5793,25 @@ const buyLotDraftSummary = useMemo(() => {
           </div>
         )}
       </div>
+
+      {isAccountManagerOpen && (
+        <ModalOverlay overlayClassName="z-[130]" labelledBy="account-manager-title" onClose={() => setIsAccountManagerOpen(false)}>
+          <AccountManagerPanel
+            capitalFlows={capitalFlows}
+            exchangeRates={{
+              KRW: 1,
+              USD: exchangeRate || currencyRates.USD || 0,
+              JPY: jpyKrwRate || currencyRates.JPY || 0,
+            }}
+            manualSnapshots={manualPerformanceSnapshots}
+            onClose={() => setIsAccountManagerOpen(false)}
+            onDeleteFlow={deleteCapitalFlow}
+            onDeleteSnapshot={deleteOpeningSnapshot}
+            onSaveFlow={saveCapitalFlow}
+            onSaveOpeningSnapshot={saveOpeningSnapshot}
+          />
+        </ModalOverlay>
+      )}
 
       {isAddingDividend && (
         <ModalOverlay overlayClassName="z-[110]" labelledBy="dividend-entry-title" onClose={() => setIsAddingDividend(false)}>

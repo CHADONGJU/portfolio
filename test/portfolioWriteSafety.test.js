@@ -32,6 +32,17 @@ test('실제 배당 내역 전체가 빈 배열로 덮이는 저장을 차단한
   );
 });
 
+test('누적된 일별 평가 기록이 통째로 사라지는 저장을 차단한다', () => {
+  assert.throws(
+    () => assertSafePortfolioWrite(
+      { portfolioSnapshots: Array.from({ length: 30 }, (_, id) => ({ id })) },
+      { portfolioSnapshots: [] },
+    ),
+    (error) => error.code === 'unsafe-portfolio-shrink'
+      && error.field === 'portfolioSnapshots',
+  );
+});
+
 test('자동 계산 배당 대부분이 한 번에 사라지는 저장도 차단한다', () => {
   assert.throws(
     () => assertSafePortfolioWrite(

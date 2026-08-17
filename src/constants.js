@@ -12,6 +12,8 @@ export const AUTO_DIVIDENDS_STORAGE_KEY = 'portfolio_auto_dividends_v1';
 export const CONFIRMED_DIVIDENDS_STORAGE_KEY = 'portfolio_confirmed_dividends_v1';
 export const DIVIDEND_ASSET_REGISTRY_STORAGE_KEY = 'portfolio_dividend_asset_registry_v1';
 export const TARGET_PORTFOLIO_STORAGE_KEY = 'portfolio_target_plan_v1';
+export const CAPITAL_FLOWS_STORAGE_KEY = 'portfolio_capital_flows_v1';
+export const PORTFOLIO_SNAPSHOTS_STORAGE_KEY = 'portfolio_value_snapshots_v1';
 
 export const ASSET_COLORS = [
   '#334155',
