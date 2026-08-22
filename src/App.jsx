@@ -88,6 +88,7 @@ import {
   getBrokerPreset,
   getSellTaxRatePercent,
   isDomesticEtfLikeAsset,
+  roundTradeCost,
 } from './utils/tradeCosts';
 import { summarizeDividendCalendarEvents } from './utils/dividendCalendar';
 import {
@@ -1301,6 +1302,7 @@ const sellFeePreview = useMemo(() => {
 
   return calculateSellCosts({
     category: selectedAssetToSell.category,
+    currency: selectedAssetToSell.currency,
     quantity,
     sellPrice,
     buyPrice,
@@ -1312,24 +1314,32 @@ const sellFeePreview = useMemo(() => {
  * 매수 수수료(현지 통화). 원화로 단가를 입력한 경우에도 최종적으로는 현지 통화
  * 매수금액에 요율을 곱한 값이라 결과가 같다.
  */
-const calculateBuyFee = (quantity, price, feeRatePercent) => {
+const calculateBuyFee = (quantity, price, feeRatePercent, currency = 'KRW') => {
   const amount = Math.max(0, parseNumber(quantity)) * Math.max(0, parseNumber(price));
   const rate = Math.max(0, parseNumber(feeRatePercent)) / 100;
-  return amount * rate;
+  return roundTradeCost(amount * rate, currency);
 };
 
+// 원화로 단가를 입력 중이면 그 금액도 원화라 원 단위로 절사한다.
+const newAssetFeeCurrency = newAsset.priceInputCurrency === 'KRW' ? 'KRW' : newAsset.currency;
 const newAssetBuyFeePreview = useMemo(() => calculateBuyFee(
   newAsset.quantity,
   newAsset.averagePrice,
   newAsset.brokerFeeRate,
-), [newAsset.quantity, newAsset.averagePrice, newAsset.brokerFeeRate]);
+  newAssetFeeCurrency,
+), [newAsset.quantity, newAsset.averagePrice, newAsset.brokerFeeRate, newAssetFeeCurrency]);
 
+const addBuyFeeCurrency = addBuyForm.priceInputCurrency === 'KRW'
+  ? 'KRW'
+  : (selectedAssetToUpdate?.currency || 'KRW');
 const addBuyFeePreview = useMemo(() => calculateBuyFee(
   addBuyForm.quantity,
   addBuyForm.averagePrice,
   addBuyForm.brokerFeeRate,
-), [addBuyForm.quantity, addBuyForm.averagePrice, addBuyForm.brokerFeeRate]);
+  addBuyFeeCurrency,
+), [addBuyForm.quantity, addBuyForm.averagePrice, addBuyForm.brokerFeeRate, addBuyFeeCurrency]);
 
+const managedAssetCurrency = selectedAssetToManageBuys?.currency || 'KRW';
 const buyLotDraftSummary = useMemo(() => {
   const totalQuantity = buyLotDrafts.reduce((sum, lot) => sum + parseNumber(lot.quantity), 0);
   const totalCost = buyLotDrafts.reduce((sum, lot) => (
@@ -1340,7 +1350,9 @@ const buyLotDraftSummary = useMemo(() => {
     sum + parseNumber(lot.quantity) * parseNumber(lot.price) * (Number(lot.fxRate) > 0 ? Number(lot.fxRate) : 0)
   ), 0);
   const totalBuyFee = buyLotDrafts.reduce((sum, lot) => (
-    sum + calculateBuyFee(lot.quantity, lot.price, lot.brokerFeeRatePercent)
+    sum + calculateBuyFee(
+      lot.quantity, lot.price, lot.brokerFeeRatePercent, managedAssetCurrency,
+    )
   ), 0);
   const hasMissingRate = buyLotDrafts.some((lot) => !(Number(lot.fxRate) > 0));
 
@@ -1351,7 +1363,7 @@ const buyLotDraftSummary = useMemo(() => {
     totalBuyFee,
     hasMissingRate,
   };
-}, [buyLotDrafts]);
+}, [buyLotDrafts, managedAssetCurrency]);
 
   /**
    * 국내/해외는 수수료율이 다르므로 카테고리를 바꾸면 증권사 기본 요율로 다시 채운다.
@@ -3704,7 +3716,10 @@ const buyLotDraftSummary = useMemo(() => {
       // 수량이나 단가를 고쳤으면 예전 수수료 금액은 더 이상 맞지 않는다. 요율로 다시 계산한다.
       brokerFeeRatePercent: parseNumber(lot.brokerFeeRatePercent),
       brokerFeeRate: parseNumber(lot.brokerFeeRatePercent) / 100,
-      brokerFee: calculateBuyFee(lot.quantity, lot.price, lot.brokerFeeRatePercent),
+      brokerFee: calculateBuyFee(
+        lot.quantity, lot.price, lot.brokerFeeRatePercent,
+        selectedAssetToManageBuys.currency,
+      ),
       createdAt: existingRow?.createdAt || now,
       updatedAt: now,
     };
@@ -3828,7 +3843,7 @@ const buyLotDraftSummary = useMemo(() => {
   const addBuyBrokerId = addBuyForm.brokerId || DEFAULT_BROKER_ID;
   const addBuyBrokerPreset = getBrokerPreset(addBuyBrokerId);
   const addBuyFeeRatePercent = parseNumber(addBuyForm.brokerFeeRate);
-  const addBuyBrokerFee = calculateBuyFee(addedQty, addedAvgNative, addBuyFeeRatePercent);
+  const addBuyBrokerFee = calculateBuyFee(addedQty, addedAvgNative, addBuyFeeRatePercent, addBuyCurrency);
 
   setAssets(prevAssets =>
     mergeUniqueAssets(prevAssets.map(asset => {
@@ -3938,6 +3953,7 @@ const buyLotDraftSummary = useMemo(() => {
   const sellTaxRatePercent = parseNumber(sellForm.sellTaxRate);
   const sellCosts = calculateSellCosts({
     category: selectedAssetToSell.category,
+    currency: selectedAssetToSell.currency,
     quantity: sellQty,
     sellPrice: sellPriceNative,
     buyPrice: avgBuyNative,
@@ -4267,7 +4283,7 @@ const buyLotDraftSummary = useMemo(() => {
     const buyBrokerId = newAsset.brokerId || DEFAULT_BROKER_ID;
     const buyBrokerPreset = getBrokerPreset(buyBrokerId);
     const buyFeeRatePercent = parseNumber(newAsset.brokerFeeRate);
-    const buyBrokerFee = calculateBuyFee(parsedQty, parsedAvgPrice, buyFeeRatePercent);
+    const buyBrokerFee = calculateBuyFee(parsedQty, parsedAvgPrice, buyFeeRatePercent, assetCurrency);
     // 저장되는 averagePrice/currentPrice는 이름과 달리 '현지 통화' 단가다.
     // (원화 환산은 화면 계산에서 환율을 곱해 따로 만든다.)
     const nativeAveragePrice = parsedAvgPrice;

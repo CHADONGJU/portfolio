@@ -19,8 +19,20 @@ export const isDomesticEtfLikeAsset = (asset = {}) => {
   return ETF_BRAND_PATTERN.test(name) || ETF_KEYWORD_PATTERN.test(name);
 };
 
+/**
+ * 증권사 수수료 프리셋.
+ *
+ * 국내 매매수수료가 면제(무료 이벤트·다이렉트 계좌 등)인 계좌는 위탁수수료가 0이고
+ * 유관기관제비용만 붙는다. 이때 일반 요율(0.014~0.015%)을 쓰면 실제보다 5배 넘게
+ * 차감되므로, 체결 시장별 유관기관 요율을 따로 고를 수 있게 둔다.
+ * (미래에셋증권 공시 기준 2025-03-04: KRX 0.0036396%, 우량클럽 0.00329%,
+ *  넥스트레이드 0.0027033%. 해외주식은 계좌마다 달라 기본값을 0으로 두고 직접 넣는다.)
+ */
 export const BROKER_FEE_PRESETS = [
   { id: 'custom', name: '직접 입력', domesticRatePercent: 0, overseasRatePercent: 0 },
+  { id: 'free-nxt', name: '수수료 무료 · 넥스트레이드(NXT)', domesticRatePercent: 0.0027033, overseasRatePercent: 0 },
+  { id: 'free-krx', name: '수수료 무료 · 한국거래소(KRX)', domesticRatePercent: 0.0036396, overseasRatePercent: 0 },
+  { id: 'free-krx-prime', name: '수수료 무료 · KRX 우량클럽', domesticRatePercent: 0.00329, overseasRatePercent: 0 },
   { id: 'toss', name: '토스증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
   { id: 'miraeasset', name: '미래에셋증권', domesticRatePercent: 0.014, overseasRatePercent: 0.25 },
   { id: 'shinhan', name: '신한증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
@@ -65,7 +77,20 @@ export const getBrokerFeeRatePercent = (brokerId, category) => {
 export const formatFeeRateInput = (rate) => {
   const value = Number(rate);
   if (!Number.isFinite(value)) return '0';
-  return String(Number(value.toFixed(4)));
+  // 유관기관제비용은 0.0027033% 처럼 소수점 아래가 길다.
+  // 네 자리에서 자르면 KRX 요율이 0.0036이 되어 수수료가 몇 원씩 어긋난다.
+  return String(Number(value.toFixed(6)));
+};
+
+/**
+ * 원화 거래의 수수료·제세금은 증권사가 원 단위로 절사한다.
+ * 소수점을 남겨두면 앱 손익이 증권사 화면과 몇 원씩 계속 어긋난다.
+ * 외화는 센트 단위로 부과되므로 절사하지 않는다.
+ */
+export const roundTradeCost = (amount, currency = 'KRW') => {
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return String(currency || 'KRW').toUpperCase() === 'KRW' ? Math.floor(value) : value;
 };
 
 export const getDomesticStockSellTaxRatePercent = (sellDate = '') => {
@@ -86,6 +111,7 @@ export const getSellTaxRatePercent = (asset = {}, sellDate = '') => {
 
 export const calculateSellCosts = ({
   category = '',
+  currency = 'KRW',
   quantity = 0,
   sellPrice = 0,
   buyPrice = 0,
@@ -99,9 +125,9 @@ export const calculateSellCosts = ({
   const taxRate = Math.max(0, Number(sellTaxRatePercent) || 0) / 100;
 
   const grossSellAmount = sellUnitPrice * sellQuantity;
-  const brokerFee = grossSellAmount * feeRate;
+  const brokerFee = roundTradeCost(grossSellAmount * feeRate, currency);
   const appliesSellTax = isDomesticStockCategory(category);
-  const sellTax = appliesSellTax ? grossSellAmount * taxRate : 0;
+  const sellTax = appliesSellTax ? roundTradeCost(grossSellAmount * taxRate, currency) : 0;
   const grossPnl = (sellUnitPrice - buyUnitPrice) * sellQuantity;
   // 매수 때 낸 수수료는 기록에 남아 있지 않아 여기서 빼지 못한다.
   const netPnl = grossPnl - brokerFee - sellTax;

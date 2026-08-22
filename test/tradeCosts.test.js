@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   calculateSellCosts,
+  formatFeeRateInput,
+  getBrokerFeeRatePercent,
   getDomesticStockSellTaxRatePercent,
   getSellTaxRatePercent,
 } from '../src/utils/tradeCosts.js';
@@ -73,4 +75,76 @@ test('브랜드명이 앞에 붙은 이름만 ETF로 보고, 일반 종목은 �
 test('증권거래세 인하는 2019-06-03 매매분부터 적용한다', () => {
   assert.equal(getDomesticStockSellTaxRatePercent('2019-06-02'), 0.3);
   assert.equal(getDomesticStockSellTaxRatePercent('2019-06-03'), 0.25);
+});
+
+test('수수료 무료 계좌 프리셋은 유관기관제비용만 매긴다', () => {
+  // 미래에셋 실계좌 대조: 5,274,000원 매도 시 수수료 142원, 제세금 10,548원.
+  const nxtRate = getBrokerFeeRatePercent('free-nxt', '국내주식');
+  const result = calculateSellCosts({
+    category: '국내주식',
+    currency: 'KRW',
+    quantity: 60,
+    sellPrice: 87_900,
+    buyPrice: 81_900,
+    brokerFeeRatePercent: nxtRate,
+    sellTaxRatePercent: 0.2,
+  });
+
+  assert.equal(result.brokerFee, 142);
+  assert.equal(result.sellTax, 10_548);
+  assert.equal(result.netPnl, 349_310);
+
+  // 일반 수수료율(0.014%)을 그대로 쓰면 596원이나 더 빠진다.
+  const general = calculateSellCosts({
+    category: '국내주식',
+    currency: 'KRW',
+    quantity: 60,
+    sellPrice: 87_900,
+    buyPrice: 81_900,
+    brokerFeeRatePercent: getBrokerFeeRatePercent('miraeasset', '국내주식'),
+    sellTaxRatePercent: 0.2,
+  });
+  assert.equal(general.brokerFee, 738);
+});
+
+test('요율 입력칸이 유관기관제비용의 소수점을 자르지 않는다', () => {
+  assert.equal(formatFeeRateInput(getBrokerFeeRatePercent('free-krx', '국내주식')), '0.00364');
+  assert.equal(formatFeeRateInput(getBrokerFeeRatePercent('free-nxt', '국내주식')), '0.002703');
+  assert.equal(formatFeeRateInput(0.015), '0.015');
+});
+
+test('원화 수수료·제세금은 증권사처럼 원 단위로 절사한다', () => {
+  const krw = calculateSellCosts({
+    category: '국내주식',
+    currency: 'KRW',
+    quantity: 1,
+    sellPrice: 5_274_000,
+    buyPrice: 5_000_000,
+    brokerFeeRatePercent: 0.0027033,
+    sellTaxRatePercent: 0.2,
+  });
+  assert.equal(krw.brokerFee, 142); // 142.57 → 142
+  assert.equal(Number.isInteger(krw.brokerFee), true);
+
+  // 외화는 센트 단위로 부과되므로 절사하지 않는다.
+  const usd = calculateSellCosts({
+    category: '해외주식',
+    currency: 'USD',
+    quantity: 10,
+    sellPrice: 120,
+    buyPrice: 100,
+    brokerFeeRatePercent: 0.25,
+  });
+  assert.equal(usd.brokerFee, 3);
+  assert.equal(usd.netPnl, 197);
+
+  const usdOdd = calculateSellCosts({
+    category: '해외주식',
+    currency: 'USD',
+    quantity: 3,
+    sellPrice: 111.11,
+    buyPrice: 100,
+    brokerFeeRatePercent: 0.25,
+  });
+  assert.ok(!Number.isInteger(usdOdd.brokerFee));
 });
