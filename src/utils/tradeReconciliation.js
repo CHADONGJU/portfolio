@@ -90,6 +90,28 @@ export const resolveNextTradeRound = ({ record = {}, assets = [], tradeLedger = 
   return Math.max(...knownRounds) + 1;
 };
 
+/**
+ * 사용자가 직접 확정한 투자 원금(manualPurchaseKRW)은 총액이라, 수량이 줄면
+ * 같은 비율로 함께 줄여야 한다. 그러지 않으면 일부만 매도해도 남은 보유분의
+ * 원금과 원화 평단가가 그대로 남아 수익률이 통째로 어긋난다.
+ */
+export const scaleManualPurchaseKRW = (manualPurchaseKRW, previousQuantity, nextQuantity) => {
+  const amount = parseTradeNumber(manualPurchaseKRW);
+  if (!(amount > 0)) return null;
+
+  const after = parseTradeNumber(nextQuantity);
+  // 전량 매도라 남길 원금이 없다.
+  if (!(after > EPSILON)) return null;
+
+  const before = parseTradeNumber(previousQuantity);
+  // 이전 수량을 알 수 없으면 비율을 못 구한다. 지우지 말고 그대로 둔다.
+  if (!(before > EPSILON)) return amount;
+  if (Math.abs(before - after) <= EPSILON) return amount;
+
+  const scaled = amount * (after / before);
+  return scaled > 0 ? scaled : null;
+};
+
 const getRecordSortTime = (record = {}) => {
   const dateTime = new Date(`${getTradeRecordDate(record)}T00:00:00`).getTime();
   if (Number.isFinite(dateTime)) return dateTime;
@@ -109,6 +131,13 @@ export const normalizeTradeRow = (record = {}) => {
     && recordedPnl !== '';
   const pnl = parseTradeNumber(record.pnl ?? record.realizedPnl);
   const brokerFee = parseTradeNumber(record.brokerFee ?? record.fee ?? record.commission);
+  // 매도 시점에 실현손익에 이미 반영한 매수 수수료. 나중에 매수 기록을 고쳐도
+  // 기록된 손익과 세금 필요경비가 서로 어긋나지 않도록 이 값을 우선한다.
+  const recordedBuyFeeApplied = record.buyFeeApplied;
+  const hasRecordedBuyFeeApplied = recordedBuyFeeApplied !== null
+    && recordedBuyFeeApplied !== undefined
+    && recordedBuyFeeApplied !== ''
+    && Number.isFinite(Number(recordedBuyFeeApplied));
   const sellTax = parseTradeNumber(record.sellTax ?? record.tax ?? record.transactionTax);
   const grossPnl = parseTradeNumber(record.grossPnl);
 
@@ -122,6 +151,9 @@ export const normalizeTradeRow = (record = {}) => {
     grossPnl,
     brokerFee,
     sellTax,
+    // 매수 행의 brokerFee는 그 매수 때 낸 수수료다(매도 행은 매도 수수료).
+    buyFeeApplied: parseTradeNumber(recordedBuyFeeApplied),
+    hasRecordedBuyFeeApplied,
     brokerFeeRate: parseTradeNumber(record.brokerFeeRate),
     brokerFeeRatePercent: parseTradeNumber(record.brokerFeeRatePercent),
     sellTaxRatePercent: parseTradeNumber(record.sellTaxRatePercent),
@@ -149,6 +181,11 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
   let quantity = 0;
   let cost = 0;
   let krwCost = 0;
+  // 아직 팔지 않은 물량에 붙어 있는 매수 수수료(취득 부대비용).
+  // 평단가는 증권사 화면과 맞추기 위해 수수료를 빼고 계산하고, 수수료는 여기에 따로 쌓아
+  // 매도할 때 판 수량만큼만 손익에서 덜어낸다.
+  let buyFeeCost = 0;
+  let krwBuyFeeCost = 0;
   // 매수 시점 환율을 못 구한 수량. 남아 있으면 원금이 "정확"하다고 말하지 않는다.
   let unknownRateQuantity = 0;
 
@@ -164,10 +201,12 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
       if (row.side === 'buy') {
         quantity += row.quantity;
         cost += row.quantity * row.price;
+        buyFeeCost += row.brokerFee;
         if (tracksKrwCost) {
           const rate = rateOf(row);
           if (rate > 0) {
             krwCost += row.quantity * row.price * rate;
+            krwBuyFeeCost += row.brokerFee * rate;
           } else {
             unknownRateQuantity += row.quantity;
           }
@@ -175,13 +214,21 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
         return { ...row, pnl: 0 };
       }
 
+      // 매도로 물량을 덜어내기 '전'의 미상 환율 수량. 아래에서 값이 바뀌므로 먼저 붙잡아 둔다.
+      const unknownRateQuantityBeforeSale = unknownRateQuantity;
       const averageCost = quantity > EPSILON ? cost / quantity : 0;
       const averageKrwCost = quantity > EPSILON ? krwCost / quantity : 0;
       const matchedQuantity = Math.min(row.quantity, quantity);
+      const soldRatio = quantity > EPSILON ? Math.min(1, matchedQuantity / quantity) : 0;
+      // 판 수량만큼의 매수 수수료. 증권사 실현손익과 같게 하려면 이것도 빼야 한다.
+      const proratedBuyFee = buyFeeCost * soldRatio;
+      const proratedKrwBuyFee = krwBuyFeeCost * soldRatio;
+      // 기록이 있으면 그것이 실제로 손익에 반영된 값이다.
+      const appliedBuyFee = row.hasRecordedBuyFeeApplied ? row.buyFeeApplied : proratedBuyFee;
       const computedGrossPnl = matchedQuantity > EPSILON
         ? (row.price - averageCost) * matchedQuantity
         : row.pnl;
-      const computedPnl = computedGrossPnl - row.brokerFee - row.sellTax;
+      const computedPnl = computedGrossPnl - row.brokerFee - row.sellTax - appliedBuyFee;
       const hasCalculatedPnl = matchedQuantity > EPSILON;
       const resolvedPnl = row.hasRecordedPnl ? row.pnl : computedPnl;
 
@@ -192,7 +239,16 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
        */
       const buyRate = averageCost > EPSILON ? averageKrwCost / averageCost : 0;
       const removedKrwCost = averageKrwCost * matchedQuantity;
-      const krwCharges = (row.brokerFee + row.sellTax) * buyRate;
+      /**
+       * 원화 환산은 '수수료를 낸 시점의 환율'로 해야 한다.
+       * buyRate는 매수금액 기준 가중평균이라, 수수료가 특정 매수 건에 몰려 있으면
+       * (최소 수수료, 무료 이벤트, 증권사 변경 등) 실제와 어긋난다.
+       * 그래서 비례 배분값의 환율 구성을 유지한 채 금액만 기록값에 맞춰 늘리고 줄인다.
+       */
+      const krwBuyFeeApplied = proratedBuyFee > EPSILON
+        ? proratedKrwBuyFee * (appliedBuyFee / proratedBuyFee)
+        : appliedBuyFee * buyRate;
+      const krwCharges = ((row.brokerFee + row.sellTax) * buyRate) + krwBuyFeeApplied;
       const krwPnl = (tracksKrwCost && buyRate > 0 && matchedQuantity > EPSILON && unknownRateQuantity <= EPSILON)
         ? (row.price * matchedQuantity * buyRate) - removedKrwCost - krwCharges
         : null;
@@ -209,11 +265,16 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
       quantity = Math.max(0, quantity - matchedQuantity);
       cost = Math.max(0, cost - (averageCost * matchedQuantity));
       krwCost = Math.max(0, krwCost - removedKrwCost);
+      // 남은 보유분에서 덜어내는 것은 언제나 비례 배분값이다(총액이 어긋나지 않게).
+      buyFeeCost = Math.max(0, buyFeeCost - proratedBuyFee);
+      krwBuyFeeCost = Math.max(0, krwBuyFeeCost - proratedKrwBuyFee);
       unknownRateQuantity = Math.max(0, unknownRateQuantity * remainingRatio);
       if (quantity <= EPSILON) {
         quantity = 0;
         cost = 0;
         krwCost = 0;
+        buyFeeCost = 0;
+        krwBuyFeeCost = 0;
         unknownRateQuantity = 0;
       }
 
@@ -226,6 +287,19 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
           ? 'recorded'
           : (hasCalculatedPnl ? 'calculated' : 'unavailable'),
         matchedQuantity,
+        // 양도소득세는 매수일 환율로 환산한 취득가액이 필요하다.
+        // 매수 시점 환율을 모르는 물량이 섞여 있으면 원가가 실제보다 작게 쌓여 있으므로,
+        // 그때는 넘기지 않고(null) 세금 계산이 근사값을 쓰도록 둔다.
+        krwCostRemoved: (buyRate > 0 && unknownRateQuantityBeforeSale <= EPSILON)
+          ? removedKrwCost
+          : null,
+        // 환율과 무관한 현지 통화 취득원가. 원화 원가를 모를 때의 대비책이다.
+        nativeCostRemoved: matchedQuantity > EPSILON ? averageCost * matchedQuantity : null,
+        // 이번 매도분에 배분된 매수 수수료. 양도소득세 필요경비이기도 하다.
+        buyFeeRemoved: appliedBuyFee,
+        krwBuyFeeRemoved: (buyRate > 0 && unknownRateQuantityBeforeSale <= EPSILON)
+          ? krwBuyFeeApplied
+          : null,
       };
     });
 
@@ -235,6 +309,9 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
     averagePrice: quantity > EPSILON ? cost / quantity : 0,
     // 남아 있는 보유분의 실제 투입 원화(= 투자 원금).
     krwCost,
+    // 남은 보유분에 붙어 있는 매수 수수료.
+    buyFeeCost,
+    krwBuyFeeCost,
     // 모든 매수 행의 시점 환율을 알고 있을 때만 원금을 신뢰할 수 있다.
     hasExactKrwCost: tracksKrwCost && quantity > EPSILON && unknownRateQuantity <= EPSILON,
     firstBuyDate: normalizedRows.find((row) => row.side === 'buy')?.date || '',
@@ -321,6 +398,11 @@ export const reconcileAssetsWithTradeLedger = (assets = [], tradeLedger = []) =>
         quantity: nextQuantity,
         averagePrice: nextAveragePrice,
         originalAveragePrice: nextAveragePrice,
+        manualPurchaseKRW: scaleManualPurchaseKRW(
+          asset.manualPurchaseKRW,
+          parseTradeNumber(asset.quantity),
+          nextQuantity,
+        ),
         buyDate: position.firstBuyDate || asset.buyDate,
         updatedAt: new Date().toISOString(),
       };

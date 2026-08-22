@@ -2,6 +2,23 @@ const isDomesticStockCategory = (category = '') => (
   String(category || '').includes('국내') && String(category || '').includes('주식')
 );
 
+/**
+ * 국내 상장 ETF/ETN은 매도해도 증권거래세를 내지 않는다(운용사가 대신 낸다).
+ * 카테고리만으로는 구분할 수 없으므로 종목명의 브랜드로 판별한다.
+ * 어디까지나 매도 모달의 "기본값"이라 사용자가 직접 고칠 수 있다.
+ */
+// 브랜드명은 반드시 이름 맨 앞에 오고 뒤에 공백/하이픈이 붙는다("KODEX 200").
+// 이 구분이 없으면 'BNK금융지주', '파워로직스' 같은 일반 종목까지 ETF로 잘못 잡아
+// 증권거래세를 0으로 만든다.
+const ETF_BRAND_PATTERN = /^(KODEX|TIGER|KBSTAR|KOSEF|ARIRANG|HANARO|ACE|RISE|PLUS|SOL|TIMEFOLIO|WOORI|BNK|FOCUS|VITA|UNICORN|히어로즈|마이다스|마이티|파워)[\s\-·]/i;
+const ETF_KEYWORD_PATTERN = /(^|[\s\-·(])(ETF|ETN)([\s\-·)]|$)/i;
+
+export const isDomesticEtfLikeAsset = (asset = {}) => {
+  if (!isDomesticStockCategory(asset.category)) return false;
+  const name = String(asset.name || '').trim();
+  return ETF_BRAND_PATTERN.test(name) || ETF_KEYWORD_PATTERN.test(name);
+};
+
 export const BROKER_FEE_PRESETS = [
   { id: 'custom', name: '직접 입력', domesticRatePercent: 0, overseasRatePercent: 0 },
   { id: 'toss', name: '토스증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
@@ -15,6 +32,10 @@ export const DEFAULT_BROKER_ID = 'custom';
 export const OVERSEAS_STOCK_CAPITAL_GAINS_DEDUCTION_KRW = 2500000;
 export const OVERSEAS_STOCK_CAPITAL_GAINS_TAX_RATE = 0.22;
 
+/**
+ * 증권거래세 + 농어촌특별세 합계(코스피·코스닥 동일).
+ * 최신 세율이 위에 오도록 내림차순으로 둔다.
+ */
 const DOMESTIC_STOCK_SELL_TAX_RATES = [
   // 2026년 세율 인상은 2026-01-02 결제분부터 적용된다.
   // 앱의 sellDate는 매도 체결일이므로 2025-12-29 체결분부터 새 세율을 쓴다.
@@ -22,7 +43,13 @@ const DOMESTIC_STOCK_SELL_TAX_RATES = [
   { from: '2025-01-01', ratePercent: 0.15 },
   { from: '2024-01-01', ratePercent: 0.18 },
   { from: '2023-01-01', ratePercent: 0.2 },
+  { from: '2021-01-01', ratePercent: 0.23 },
+  // 인하 시행일은 2019-06-03 매매분부터다(2019-05-30은 개정 공포일).
+  { from: '2019-06-03', ratePercent: 0.25 },
 ];
+
+// 2019-06-03 인하 이전 구간(코스피 0.15% + 농특세 0.15%).
+const LEGACY_DOMESTIC_STOCK_SELL_TAX_RATE_PERCENT = 0.3;
 
 export const getBrokerPreset = (brokerId) => (
   BROKER_FEE_PRESETS.find((broker) => broker.id === brokerId) || BROKER_FEE_PRESETS[0]
@@ -46,14 +73,16 @@ export const getDomesticStockSellTaxRatePercent = (sellDate = '') => {
     ? String(sellDate).slice(0, 10)
     : new Date().toISOString().slice(0, 10);
   const matched = DOMESTIC_STOCK_SELL_TAX_RATES.find(({ from }) => dateKey >= from);
-  return matched?.ratePercent ?? 0.2;
+  // 표에 없는 과거 날짜를 최신 세율로 계산하면 실제보다 세금이 적게 잡힌다.
+  return matched?.ratePercent ?? LEGACY_DOMESTIC_STOCK_SELL_TAX_RATE_PERCENT;
 };
 
-export const getSellTaxRatePercent = (asset = {}, sellDate = '') => (
-  isDomesticStockCategory(asset.category)
-    ? getDomesticStockSellTaxRatePercent(sellDate)
-    : 0
-);
+export const getSellTaxRatePercent = (asset = {}, sellDate = '') => {
+  if (!isDomesticStockCategory(asset.category)) return 0;
+  // 국내 상장 ETF/ETN은 증권거래세 면제 대상이다.
+  if (isDomesticEtfLikeAsset(asset)) return 0;
+  return getDomesticStockSellTaxRatePercent(sellDate);
+};
 
 export const calculateSellCosts = ({
   category = '',
@@ -68,12 +97,13 @@ export const calculateSellCosts = ({
   const buyUnitPrice = Math.max(0, Number(buyPrice) || 0);
   const feeRate = Math.max(0, Number(brokerFeeRatePercent) || 0) / 100;
   const taxRate = Math.max(0, Number(sellTaxRatePercent) || 0) / 100;
+
   const grossSellAmount = sellUnitPrice * sellQuantity;
   const brokerFee = grossSellAmount * feeRate;
-  const sellTax = isDomesticStockCategory(category)
-    ? grossSellAmount * taxRate
-    : 0;
+  const appliesSellTax = isDomesticStockCategory(category);
+  const sellTax = appliesSellTax ? grossSellAmount * taxRate : 0;
   const grossPnl = (sellUnitPrice - buyUnitPrice) * sellQuantity;
+  // 매수 때 낸 수수료는 기록에 남아 있지 않아 여기서 빼지 못한다.
   const netPnl = grossPnl - brokerFee - sellTax;
 
   return {
@@ -84,6 +114,6 @@ export const calculateSellCosts = ({
     grossPnl,
     netPnl,
     feeRatePercent: feeRate * 100,
-    sellTaxRatePercent: isDomesticStockCategory(category) ? taxRate * 100 : 0,
+    sellTaxRatePercent: appliesSellTax ? taxRate * 100 : 0,
   };
 };

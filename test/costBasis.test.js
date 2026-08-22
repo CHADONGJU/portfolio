@@ -5,6 +5,8 @@ import {
   buildKrwCostBasisByAsset,
   buildPositionFromTradeRows,
   getTradeAssetKey,
+  reconcileAssetsWithTradeLedger,
+  scaleManualPurchaseKRW,
 } from '../src/utils/tradeReconciliation.js';
 
 const usd = (o) => ({ name: 'SOXL', ticker: 'SOXL', currency: 'USD', ...o });
@@ -173,4 +175,161 @@ test('환율을 모두 아는 포지션은 부분 매도 후에도 원금이 정
   assert.equal(position.quantity, 5);
   assert.equal(position.hasExactKrwCost, true);
   assert.equal(position.krwCost, 5 * 100 * 1350);
+});
+
+test('일부 매도하면 확정 원금도 남은 수량 비율로 줄인다', () => {
+  assert.equal(scaleManualPurchaseKRW(1000000, 10, 4), 400000);
+  assert.equal(scaleManualPurchaseKRW(1000000, 10, 10), 1000000);
+  // 전량 매도하면 남길 원금이 없다.
+  assert.equal(scaleManualPurchaseKRW(1000000, 10, 0), null);
+  // 애초에 확정 원금이 없으면 만들어내지 않는다.
+  assert.equal(scaleManualPurchaseKRW(null, 10, 4), null);
+  assert.equal(scaleManualPurchaseKRW(0, 10, 4), null);
+});
+
+test('원장 정합으로 수량이 줄면 확정 원금도 함께 줄어든다', () => {
+  const assets = [{
+    id: 1,
+    name: 'NVDA',
+    ticker: 'NVDA',
+    category: '해외주식',
+    currency: 'USD',
+    quantity: 10,
+    averagePrice: 100,
+    originalAveragePrice: 100,
+    manualPurchaseKRW: 1400000,
+    buyDate: '2026-01-05',
+  }];
+  const ledger = [
+    { id: 'b1', name: 'NVDA', ticker: 'NVDA', category: '해외주식', currency: 'USD', side: 'buy', date: '2026-01-05', quantity: 10, price: 100, fxRate: 1400 },
+    { id: 's1', name: 'NVDA', ticker: 'NVDA', category: '해외주식', currency: 'USD', side: 'sell', date: '2026-06-01', quantity: 6, price: 150, fxRate: 1350 },
+  ];
+
+  const [reconciled] = reconcileAssetsWithTradeLedger(assets, ledger);
+
+  assert.equal(reconciled.quantity, 4);
+  assert.equal(reconciled.originalAveragePrice, 100);
+  assert.equal(reconciled.manualPurchaseKRW, 560000);
+});
+
+test('전량 매도 시 환율 미상 물량이 섞여 있으면 원화 취득원가를 넘기지 않는다', () => {
+  const position = buildPositionFromTradeRows([
+    usd({ id: 'b1', side: 'buy', date: '2026-01-05', quantity: 10, price: 100 }),
+    usd({ id: 'b2', side: 'buy', date: '2026-02-05', quantity: 10, price: 100, fxRate: 1400 }),
+    usd({ id: 's1', side: 'sell', date: '2026-06-01', quantity: 20, price: 200, fxRate: 1350 }),
+  ], { resolveKrwRate: rateOf });
+
+  const sell = position.rows.find((row) => row.side === 'sell');
+  assert.equal(sell.krwPnl, null);
+  // 절반의 환율만 알아 1,400,000원만 쌓였다. 그대로 넘기면 양도차익이 부풀려진다.
+  assert.equal(sell.krwCostRemoved, null);
+  assert.equal(sell.nativeCostRemoved, 2000);
+});
+
+test('환율을 모두 알면 원화 취득원가를 그대로 넘긴다', () => {
+  const position = buildPositionFromTradeRows([
+    usd({ id: 'b1', side: 'buy', date: '2026-01-05', quantity: 10, price: 100, fxRate: 1300 }),
+    usd({ id: 'b2', side: 'buy', date: '2026-02-05', quantity: 10, price: 100, fxRate: 1400 }),
+    usd({ id: 's1', side: 'sell', date: '2026-06-01', quantity: 10, price: 200, fxRate: 1350 }),
+  ], { resolveKrwRate: rateOf });
+
+  const sell = position.rows.find((row) => row.side === 'sell');
+  assert.equal(sell.krwCostRemoved, 1350000);
+  assert.equal(sell.nativeCostRemoved, 1000);
+});
+
+test('이전 수량을 알 수 없으면 확정 원금을 지우지 않는다', () => {
+  assert.equal(scaleManualPurchaseKRW(1000000, 0, 4), 1000000);
+  assert.equal(scaleManualPurchaseKRW(1000000, '', 4), 1000000);
+});
+
+test('매수 수수료는 평단가를 건드리지 않고 판 수량만큼만 손익에서 빠진다', () => {
+  const position = buildPositionFromTradeRows([
+    usd({ id: 'b1', side: 'buy', date: '2026-01-05', quantity: 10, price: 100, brokerFee: 2.5, fxRate: 1300 }),
+    usd({ id: 's1', side: 'sell', date: '2026-06-01', quantity: 4, price: 150, brokerFee: 1.5, fxRate: 1400 }),
+  ], { resolveKrwRate: rateOf });
+
+  // 평단가는 증권사 화면과 같게 수수료를 빼고 계산한다.
+  assert.equal(position.averagePrice, 100);
+  // 남은 6주에 붙어 있는 매수 수수료.
+  assert.equal(position.buyFeeCost, 1.5);
+
+  const sell = position.rows.find((row) => row.side === 'sell');
+  assert.equal(sell.grossPnl, 200);
+  // 200 - 매도수수료 1.5 - 배분된 매수수수료 1(=2.5×4/10)
+  assert.equal(sell.pnl, 197.5);
+  assert.equal(sell.buyFeeRemoved, 1);
+  assert.equal(sell.krwBuyFeeRemoved, 1300);
+  // 원화 실현손익도 매수일 환율 기준: (150×4 - 100×4 - 1.5)×1300 - 1300
+  assert.equal(Math.round(sell.krwPnl), Math.round((200 - 1.5) * 1300 - 1300));
+});
+
+test('전량 매도하면 매수 수수료가 남지 않는다', () => {
+  const position = buildPositionFromTradeRows([
+    usd({ id: 'b1', side: 'buy', date: '2026-01-05', quantity: 10, price: 100, brokerFee: 2.5, fxRate: 1300 }),
+    usd({ id: 's1', side: 'sell', date: '2026-06-01', quantity: 10, price: 150, fxRate: 1400 }),
+  ], { resolveKrwRate: rateOf });
+
+  assert.equal(position.buyFeeCost, 0);
+  assert.equal(position.krwBuyFeeCost, 0);
+  const sell = position.rows.find((row) => row.side === 'sell');
+  assert.equal(sell.buyFeeRemoved, 2.5);
+  assert.equal(sell.pnl, 497.5);
+});
+
+test('기록된 실현손익이 있으면 매수 수수료를 두 번 빼지 않는다', () => {
+  const position = buildPositionFromTradeRows([
+    usd({ id: 'b1', side: 'buy', date: '2026-01-05', quantity: 10, price: 100, brokerFee: 2.5 }),
+    // 앱이 매도할 때 이미 매수 수수료를 반영해 기록한 값.
+    usd({ id: 's1', side: 'sell', date: '2026-06-01', quantity: 10, price: 150, pnl: 497.5, buyFeeApplied: 2.5 }),
+  ]);
+
+  const sell = position.rows.find((row) => row.side === 'sell');
+  assert.equal(sell.pnl, 497.5);
+});
+
+test('기록된 매수 수수료 반영분이 있으면 재계산값보다 그것을 우선한다', () => {
+  const position = buildPositionFromTradeRows([
+    usd({ id: 'b1', side: 'buy', date: '2026-01-05', quantity: 10, price: 100, brokerFee: 5, fxRate: 1300 }),
+    // 매도 당시에는 매수 수수료가 2.5였고 손익도 그 기준으로 기록됐다.
+    // 이후 매수 기록을 고쳐 수수료가 5로 바뀌어도, 기록된 손익과 세금 필요경비는 어긋나면 안 된다.
+    usd({
+      id: 's1', side: 'sell', date: '2026-06-01', quantity: 5, price: 150,
+      pnl: 247.5, buyFeeApplied: 2.5, fxRate: 1400,
+    }),
+  ], { resolveKrwRate: rateOf });
+
+  const sell = position.rows.find((row) => row.side === 'sell');
+  assert.equal(sell.pnl, 247.5);
+  assert.equal(sell.buyFeeRemoved, 2.5);
+  assert.equal(sell.krwBuyFeeRemoved, 2.5 * 1300);
+  // 남은 보유분에서는 비례 배분값(5 × 5/10 = 2.5)을 덜어내 총액이 어긋나지 않게 한다.
+  assert.equal(position.buyFeeCost, 2.5);
+});
+
+test('매수 수수료 원화 환산은 수수료를 낸 시점 환율 구성을 지킨다', () => {
+  // 수수료는 환율 1,000원일 때만 냈고, 두 번째 매수는 환율 2,000원에 수수료가 없다.
+  const position = buildPositionFromTradeRows([
+    usd({ id: 'b1', side: 'buy', date: '2026-01-05', quantity: 10, price: 100, brokerFee: 10, fxRate: 1000 }),
+    usd({ id: 'b2', side: 'buy', date: '2026-02-05', quantity: 10, price: 100, fxRate: 2000 }),
+    usd({ id: 's1', side: 'sell', date: '2026-06-01', quantity: 10, price: 150, buyFeeApplied: 5, fxRate: 2100 }),
+  ], { resolveKrwRate: rateOf });
+
+  const sell = position.rows.find((row) => row.side === 'sell');
+  assert.equal(sell.buyFeeRemoved, 5);
+  // 매수금액 가중평균 환율(1,500원)이 아니라 수수료를 실제로 낸 1,000원이어야 한다.
+  assert.equal(sell.krwBuyFeeRemoved, 5000);
+});
+
+test('매도 행에 매수 수수료 기록이 아예 없으면 비례 배분값을 쓴다', () => {
+  const position = buildPositionFromTradeRows([
+    usd({ id: 'b1', side: 'buy', date: '2026-01-05', quantity: 10, price: 100, brokerFee: 10, fxRate: 1300 }),
+    // buyFeeApplied 키 자체가 없는 옛 기록(또는 수기 매도).
+    usd({ id: 's1', side: 'sell', date: '2026-06-01', quantity: 5, price: 150, fxRate: 1400 }),
+  ], { resolveKrwRate: rateOf });
+
+  const sell = position.rows.find((row) => row.side === 'sell');
+  assert.equal(sell.buyFeeRemoved, 5);
+  assert.equal(sell.krwBuyFeeRemoved, 6500);
+  assert.equal(position.buyFeeCost, 5);
 });

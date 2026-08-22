@@ -579,6 +579,8 @@ export const usePortfolioMetrics = ({
   // 자산 및 기록 삭제 로직 강화 
   return {
     enhancedAssets,
+    // 매수·매도가 이동평균으로 정리된 표준 거래 행. 세금 계산도 이 값을 쓴다.
+    canonicalTradeRows,
     totalConvertedKRW,
     currentChartData,
     subChartData,

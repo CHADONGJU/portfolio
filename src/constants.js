@@ -14,6 +14,9 @@ export const DIVIDEND_ASSET_REGISTRY_STORAGE_KEY = 'portfolio_dividend_asset_reg
 export const TARGET_PORTFOLIO_STORAGE_KEY = 'portfolio_target_plan_v1';
 export const CAPITAL_FLOWS_STORAGE_KEY = 'portfolio_capital_flows_v1';
 export const PORTFOLIO_SNAPSHOTS_STORAGE_KEY = 'portfolio_value_snapshots_v1';
+// 매수·매도 모달의 기본 증권사. 포트폴리오 데이터가 아니라 입력 편의용 설정이라
+// 클라우드 동기화 대상에는 넣지 않는다.
+export const PREFERRED_BROKER_STORAGE_KEY = 'portfolio_preferred_broker_v1';
 
 export const ASSET_COLORS = [
   '#334155',

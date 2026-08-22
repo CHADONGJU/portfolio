@@ -4,6 +4,18 @@
  * 페이지를 새로 열기 전까지 시세가 통째로 정지한다.
  */
 const FX_TIMEOUT_MS = 8000;
+const PROXY_TIMEOUT_MS = 7000;
+
+const fetchWithTimeout = async (url, options = {}, timeoutMs = PROXY_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
 
 export const fetchKrwRate = async (currency = 'USD') => {
   const baseCurrency = String(currency || 'USD').toUpperCase();
@@ -76,7 +88,6 @@ export const normalizeQuote = (price, currency, fallbackCurrency = '') => {
   return { price: numericPrice, currency: upperCurrency };
 };
 
-const PROXY_TIMEOUT_MS = 7000;
 // 직접 호출은 짧게 끊고 프록시로 넘어간다.
 const DIRECT_TIMEOUT_MS = 4000;
 const PROXY_BATCH_SIZE = 3;
@@ -166,17 +177,6 @@ export const selectValidatedDomesticQuote = (
     verified: false,
     validation: 'fresh-provider-timestamp',
   };
-};
-
-const fetchWithTimeout = async (url, options = {}, timeoutMs = PROXY_TIMEOUT_MS) => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timeoutId);
-  }
 };
 
 const buildProxyList = (url, { jinaFirst = false } = {}) => {

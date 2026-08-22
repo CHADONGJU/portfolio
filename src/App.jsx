@@ -10,6 +10,7 @@ import ModalOverlay from './components/ModalOverlay';
 import AccountManagerPanel from './components/AccountManagerPanel';
 import AnnualReturnGoalCard from './components/AnnualReturnGoalCard';
 import AnnualReturnHistory from './components/AnnualReturnHistory';
+import BrokerFeeFields from './components/BrokerFeeFields';
 import AnnualDividendTrend from './components/AnnualDividendTrend';
 import FeatureInfo from './components/FeatureInfo';
 import ManualTradeEntryForm from './components/ManualTradeEntryForm';
@@ -31,6 +32,7 @@ import {
   MEMOS_STORAGE_KEY,
   PORTFOLIO_NAME_STORAGE_KEY,
   PORTFOLIO_SNAPSHOTS_STORAGE_KEY,
+  PREFERRED_BROKER_STORAGE_KEY,
   TARGET_PORTFOLIO_STORAGE_KEY,
   TRADE_LEDGER_STORAGE_KEY,
   TRADES_STORAGE_KEY,
@@ -63,10 +65,13 @@ import {
 import { arePortfolioSnapshotsEquivalent } from './utils/portfolioSnapshotComparison';
 import {
   buildCanonicalTradeRows,
+  buildPositionFromTradeRows,
+  getTradeAssetKey,
   getTradeRecordDate,
   getTradeRound,
   reconcileAssetsWithTradeLedger,
   resolveNextTradeRound,
+  scaleManualPurchaseKRW,
 } from './utils/tradeReconciliation';
 import {
   addMonthsClamped,
@@ -82,6 +87,7 @@ import {
   getBrokerFeeRatePercent,
   getBrokerPreset,
   getSellTaxRatePercent,
+  isDomesticEtfLikeAsset,
 } from './utils/tradeCosts';
 import { summarizeDividendCalendarEvents } from './utils/dividendCalendar';
 import {
@@ -94,6 +100,7 @@ import {
   getAnnualPerformanceYears,
   upsertDailyPortfolioSnapshot,
 } from './utils/annualPerformance';
+import { calculateOverseasCapitalGainsTax } from './utils/overseasCapitalGainsTax';
 import { combineTradesWithMemos } from './utils/tradeMemos';
 import {
   isDeletedMemoRecord,
@@ -333,6 +340,7 @@ const buildLedgerEntry = ({
   brokerFee = 0,
   sellTaxRatePercent = 0,
   sellTax = 0,
+  buyFeeApplied = null,
 }) => ({
   id: sourceId || `${Date.now()}-${Math.random()}`,
   sourceId,
@@ -359,6 +367,14 @@ const buildLedgerEntry = ({
   brokerFee: Number(brokerFee) || 0,
   sellTaxRatePercent: Number(sellTaxRatePercent) || 0,
   sellTax: Number(sellTax) || 0,
+  /**
+   * 매도 행에만 붙는다. 이 매도 수량에 배분된 매수 수수료로, 실현손익에 이미 반영돼 있다.
+   * 값이 없으면 아예 키를 만들지 않는다. 0으로 채워 두면 "수수료 0원으로 기록됨"이 되어
+   * 실제로 낸 매수 수수료가 손익에서도 세금 필요경비에서도 통째로 증발한다.
+   */
+  ...(buyFeeApplied === null || buyFeeApplied === undefined || buyFeeApplied === ''
+    ? {}
+    : { buyFeeApplied: Number(buyFeeApplied) || 0 }),
   // 거래 시점의 원화 환율. 실현손익을 "오늘 환율"로 환산하면
   // 과거 누적 실현손익이 매일 바뀌므로 기록 시점 값을 함께 남긴다.
   fxRate: Number(fxRate) || 0,
@@ -390,6 +406,7 @@ const buildInitialTradeLedger = ({ assets, trades, memos }) => {
       brokerFee: memo.brokerFee,
       sellTaxRatePercent: memo.sellTaxRatePercent,
       sellTax: memo.sellTax,
+      buyFeeApplied: memo.buyFeeApplied ?? null,
     }));
   });
 
@@ -410,6 +427,7 @@ const buildInitialTradeLedger = ({ assets, trades, memos }) => {
       brokerFee: trade.brokerFee,
       sellTaxRatePercent: trade.sellTaxRatePercent,
       sellTax: trade.sellTax,
+      buyFeeApplied: trade.buyFeeApplied ?? null,
     }));
   });
 
@@ -444,6 +462,8 @@ const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}#
  * 원화를 고르면 매수일 환율로 환산한 결과를 바로 아래에 보여줘서
  * "원화로 적었는데 달러로 들어갔다"는 사고를 눈으로 막는다.
  */
+const getCurrencySymbol = (currency) => ({ USD: '$', JPY: '¥', KRW: '₩' }[currency] || currency);
+
 const PriceInputCurrencyToggle = ({ nativeCurrency, value, onChange }) => (
   <div className="seg inline-flex items-center p-0.5 rounded-[10px]" role="group" aria-label="입력 통화">
     {[
@@ -694,8 +714,6 @@ const normalizeInputTicker = (ticker = '') => String(ticker)
   .replace(/\.TYO$/, '.T')
   .replace(/\s+/g, '');
 
-const getCurrencySymbol = (currency) => ({ USD: '$', JPY: '¥', KRW: '₩' }[currency] || currency);
-
 /**
  * 원천징수율. 예전에는 두 분기가 모두 0.154를 돌려주는 죽은 조건문이었고,
  * 그 탓에 엔화 배당까지 한국 세율 15.4%로 계산됐다.
@@ -729,6 +747,16 @@ const getAssetLedgerRows = (asset, ledger = []) => ledger
   .filter((entry) => entry.date && isSameAssetRecord(asset, entry))
   .sort((a, b) => new Date(a.date) - new Date(b.date));
 
+const getDateTimestampSeconds = (date = '') => {
+  const rawDate = String(date || '').trim();
+  const dateParts = rawDate.match(/\d+/g);
+  const normalizedDate = dateParts?.length >= 3
+    ? `${dateParts[0].padStart(4, '0')}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`
+    : rawDate.replace(/\s*\/\s*/g, '-').replace(/\s+/g, '');
+  const timestamp = new Date(`${normalizedDate}T00:00:00`).getTime();
+  return Number.isFinite(timestamp) ? timestamp / 1000 : 0;
+};
+
 const getDividendStartDate = (asset, ledger = []) => {
   const firstBuy = getDividendLedgerRows(asset, ledger)
     .filter((entry) => getDividendTradeSide(entry) === 'buy')
@@ -755,15 +783,6 @@ const getAssetBuyLedgerRows = (asset, ledger = []) => getAssetLedgerRows(asset, 
     return String(a.id || a.sourceId || '').localeCompare(String(b.id || b.sourceId || ''));
   });
 
-const getDateTimestampSeconds = (date = '') => {
-  const rawDate = String(date || '').trim();
-  const dateParts = rawDate.match(/\d+/g);
-  const normalizedDate = dateParts?.length >= 3
-    ? `${dateParts[0].padStart(4, '0')}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`
-    : rawDate.replace(/\s*\/\s*/g, '-').replace(/\s+/g, '');
-  const timestamp = new Date(`${normalizedDate}T00:00:00`).getTime();
-  return Number.isFinite(timestamp) ? timestamp / 1000 : 0;
-};
 
 const buildAutoDividendRows = ({
   asset,
@@ -1022,6 +1041,11 @@ const purgeCryptoData = (snapshot = {}) => {
   return { snapshot: next, removedCount };
 };
 
+/**
+ * 화면 표시용 환율. 아직 받아오지 못한 통화는 1을 돌려주므로 금액이 실제보다
+ * 훨씬 작게 보일 수 있다(첫 동기화 전 또는 환율 조회 실패 시).
+ * 세금·손익처럼 틀리면 안 되는 계산에는 쓰지 말고 실측 환율만 쓸 것.
+ */
 const getCachedKrwRate = (currency, rates = {}, usdRate = 1350, yenRate = 9.5) => {
   if (currency === 'USD') return usdRate || rates.USD || 1350;
   if (currency === 'JPY') return yenRate || rates.JPY || 9.5;
@@ -1223,6 +1247,8 @@ const App = () => {
   buyDate: defaultBuyDate,
   memo: '',
   accountType: ACCOUNT_TYPE_GENERAL,
+  brokerId: DEFAULT_BROKER_ID,
+  brokerFeeRate: '0',
   // 해외 종목의 단가를 어떤 통화로 입력할지. 'NATIVE'는 달러/엔, 'KRW'는 원화.
   priceInputCurrency: 'NATIVE',
 };
@@ -1233,6 +1259,8 @@ const initialAddBuyState = {
   buyDate: defaultBuyDate,
   memo: '',
   priceInputCurrency: 'NATIVE',
+  brokerId: DEFAULT_BROKER_ID,
+  brokerFeeRate: '0',
 };
 
 const [addBuyForm, setAddBuyForm] = useState(initialAddBuyState);
@@ -1280,6 +1308,28 @@ const sellFeePreview = useMemo(() => {
     sellTaxRatePercent,
   });
 }, [selectedAssetToSell, sellForm]);
+/**
+ * 매수 수수료(현지 통화). 원화로 단가를 입력한 경우에도 최종적으로는 현지 통화
+ * 매수금액에 요율을 곱한 값이라 결과가 같다.
+ */
+const calculateBuyFee = (quantity, price, feeRatePercent) => {
+  const amount = Math.max(0, parseNumber(quantity)) * Math.max(0, parseNumber(price));
+  const rate = Math.max(0, parseNumber(feeRatePercent)) / 100;
+  return amount * rate;
+};
+
+const newAssetBuyFeePreview = useMemo(() => calculateBuyFee(
+  newAsset.quantity,
+  newAsset.averagePrice,
+  newAsset.brokerFeeRate,
+), [newAsset.quantity, newAsset.averagePrice, newAsset.brokerFeeRate]);
+
+const addBuyFeePreview = useMemo(() => calculateBuyFee(
+  addBuyForm.quantity,
+  addBuyForm.averagePrice,
+  addBuyForm.brokerFeeRate,
+), [addBuyForm.quantity, addBuyForm.averagePrice, addBuyForm.brokerFeeRate]);
+
 const buyLotDraftSummary = useMemo(() => {
   const totalQuantity = buyLotDrafts.reduce((sum, lot) => sum + parseNumber(lot.quantity), 0);
   const totalCost = buyLotDrafts.reduce((sum, lot) => (
@@ -1289,15 +1339,33 @@ const buyLotDraftSummary = useMemo(() => {
   const totalKrwCost = buyLotDrafts.reduce((sum, lot) => (
     sum + parseNumber(lot.quantity) * parseNumber(lot.price) * (Number(lot.fxRate) > 0 ? Number(lot.fxRate) : 0)
   ), 0);
+  const totalBuyFee = buyLotDrafts.reduce((sum, lot) => (
+    sum + calculateBuyFee(lot.quantity, lot.price, lot.brokerFeeRatePercent)
+  ), 0);
   const hasMissingRate = buyLotDrafts.some((lot) => !(Number(lot.fxRate) > 0));
 
   return {
     totalQuantity,
     averagePrice: totalQuantity > 0 ? totalCost / totalQuantity : 0,
     totalKrwCost,
+    totalBuyFee,
     hasMissingRate,
   };
 }, [buyLotDrafts]);
+
+  /**
+   * 국내/해외는 수수료율이 다르므로 카테고리를 바꾸면 증권사 기본 요율로 다시 채운다.
+   * 단 '직접 입력'은 사용자가 적어 넣은 값이므로 절대 건드리지 않는다.
+   * (예전에는 요율을 타이핑하는 순간 brokerId가 custom이 되면서 이 효과가 0으로 덮어썼다.)
+   */
+  useEffect(() => {
+    if (!isAdding) return;
+    setNewAsset((prev) => {
+      if (prev.brokerId === 'custom') return prev;
+      const nextRate = formatFeeRateInput(getBrokerFeeRatePercent(prev.brokerId, prev.category));
+      return prev.brokerFeeRate === nextRate ? prev : { ...prev, brokerFeeRate: nextRate };
+    });
+  }, [isAdding, newAsset.brokerId, newAsset.category]);
 
   useEffect(() => {
     const nextCurrency = getAssetInputCurrency(newAsset.category, newAsset.ticker);
@@ -1332,11 +1400,37 @@ const buyLotDraftSummary = useMemo(() => {
   const [trades, setTrades] = useState(() => loadJson(scopedKey(TRADES_STORAGE_KEY), []));
   const [memos, setMemos] = useState(() => loadJson(scopedKey(MEMOS_STORAGE_KEY), []));
   const [tradeLedger, setTradeLedger] = useState(() => loadJson(scopedKey(TRADE_LEDGER_STORAGE_KEY), []));
+
+  /**
+   * 이번 매도 수량에 배분되는 매수 수수료(현지 통화). 이동평균으로 비례 배분한다.
+   * tradeLedger를 읽으므로 반드시 그 선언 뒤에 있어야 한다(렌더 중 TDZ 오류 방지).
+   * 회차까지 같은 행만 봐야 매도 후 재매수한 물량의 수수료가 섞이지 않는다.
+   */
+  const getSellBuyFeeShare = (asset, sellQuantity) => {
+    if (!asset) return 0;
+    const assetKey = getTradeAssetKey(asset);
+    const rows = tradeLedger.filter((entry) => getTradeAssetKey(entry) === assetKey);
+    const position = buildPositionFromTradeRows(rows);
+    if (!(position.quantity > 0) || !(position.buyFeeCost > 0)) return 0;
+    const ratio = Math.min(1, Math.max(0, parseNumber(sellQuantity) / position.quantity));
+    return position.buyFeeCost * ratio;
+  };
+
+  const sellBuyFeeShare = useMemo(() => (
+    getSellBuyFeeShare(selectedAssetToSell, sellForm.quantity)
+    // getSellBuyFeeShare는 매 렌더 새로 만들어지므로 의존성에 넣으면 메모가 무의미해진다.
+    // 실제로 값을 바꾸는 입력은 아래 셋뿐이다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [selectedAssetToSell, sellForm.quantity, tradeLedger]);
   const [portfolioName, setPortfolioName] = useState(() => normalizePortfolioName(loadJson(scopedKey(PORTFOLIO_NAME_STORAGE_KEY), DEFAULT_PORTFOLIO_NAME)));
   const [targetPortfolio, setTargetPortfolio] = useState(() => loadJson(scopedKey(TARGET_PORTFOLIO_STORAGE_KEY), DEFAULT_TARGET_PORTFOLIO));
   const [capitalFlows, setCapitalFlows] = useState(() => loadJson(scopedKey(CAPITAL_FLOWS_STORAGE_KEY), []));
   const [portfolioSnapshots, setPortfolioSnapshots] = useState(() => loadJson(scopedKey(PORTFOLIO_SNAPSHOTS_STORAGE_KEY), []));
   const [dividendAssetRegistry, setDividendAssetRegistry] = useState(() => loadJson(scopedKey(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY), []));
+  // 매수·매도 모달이 공유하는 기본 증권사. 매번 고르지 않아도 되게 기억해 둔다.
+  const [preferredBrokerId, setPreferredBrokerId] = useState(() => (
+    getBrokerPreset(loadJson(scopedKey(PREFERRED_BROKER_STORAGE_KEY), DEFAULT_BROKER_ID)).id
+  ));
   const targetPortfolioRef = useRef(targetPortfolio);
   const targetTickerSnapshotKey = useMemo(() => (
     getTargetItemSnapshotKey(targetPortfolio)
@@ -1380,6 +1474,7 @@ const buyLotDraftSummary = useMemo(() => {
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(PORTFOLIO_SNAPSHOTS_STORAGE_KEY), portfolioSnapshots);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(PORTFOLIO_NAME_STORAGE_KEY), portfolioName);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(TARGET_PORTFOLIO_STORAGE_KEY), targetPortfolio);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(PREFERRED_BROKER_STORAGE_KEY), preferredBrokerId);
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
   useEffect(() => { portfolioSnapshotRef.current = portfolioSnapshot; }, [portfolioSnapshot]);
 
@@ -2105,6 +2200,7 @@ const buyLotDraftSummary = useMemo(() => {
     currentCategoryTotalConverted,
     currentCategoryProfitKRW,
     currentCategoryProfitUSD,
+    canonicalTradeRows,
     krwNetProfit,
     usdNetProfit,
     totalConvertedNetProfit,
@@ -2300,6 +2396,27 @@ const buyLotDraftSummary = useMemo(() => {
     annualPerformances.find((performance) => performance.year === annualReturnYear)
     || calculateAnnualPerformance({ snapshots: portfolioSnapshots, capitalFlows, year: annualReturnYear })
   ), [annualPerformances, annualReturnYear, portfolioSnapshots, capitalFlows]);
+  /**
+   * 해외주식 양도소득세(추정).
+   * 연간 해외 종목 손익을 통산해 250만원 기본공제를 뺀 뒤 22%를 매긴다.
+   * 화면의 실현손익과 달리 환차익도 과세 대상이라 매수일/매도일 환율을 각각 쓴다.
+   */
+  const overseasCapitalGainsTax = useMemo(() => calculateOverseasCapitalGainsTax({
+    rows: canonicalTradeRows,
+    year: annualReturnYear,
+    /**
+     * 화면 표시용 getCachedKrwRate는 모르는 통화에 1을 돌려준다(HK$1,000,000이 100만원이 된다).
+     * 세액에 그대로 흘러들면 안 되므로, 여기서는 실측 환율만 쓰고 모르면 0을 돌려
+     * 그 매도 건이 "계산에서 빠졌다"고 표시되게 한다.
+     */
+    resolveKrwRate: (currency) => {
+      const code = String(currency || 'KRW').toUpperCase();
+      if (code === 'KRW') return 1;
+      if (code === 'USD') return Number(exchangeRate) > 0 ? Number(exchangeRate) : 0;
+      if (code === 'JPY') return Number(jpyKrwRate) > 0 ? Number(jpyKrwRate) : 0;
+      return Number(currencyRates[code]) > 0 ? Number(currencyRates[code]) : 0;
+    },
+  }), [canonicalTradeRows, annualReturnYear, currencyRates, exchangeRate, jpyKrwRate]);
   const manualPerformanceSnapshots = useMemo(() => (
     portfolioSnapshots
       .filter((snapshot) => snapshot.source === 'manual')
@@ -3056,6 +3173,7 @@ const buyLotDraftSummary = useMemo(() => {
     brokerFee = 0,
     sellTaxRatePercent = 0,
     sellTax = 0,
+    buyFeeApplied = null,
   }) => {
     // 과거 날짜로 입력한 거래에 '오늘' 환율을 찍으면 원금이 통째로 틀어진다.
     // 거래일이 오늘일 때만 지금 환율을 쓰고, 지난 날짜는 0으로 두었다가 그날 환율을 받아 채운다.
@@ -3078,6 +3196,7 @@ const buyLotDraftSummary = useMemo(() => {
       brokerFee,
       sellTaxRatePercent,
       sellTax,
+      buyFeeApplied,
       // 환율을 아직 못 받아온 상태의 추정치(1350 등)를 각인하면 영영 보정되지 않으므로
       // 실측값이 있을 때만 남기고, 없으면 0으로 두어 나중에 백필이 처리하게 한다.
       fxRate: knownFxRate || (isTradedToday ? getMeasuredKrwRate(asset.currency) : 0),
@@ -3309,6 +3428,7 @@ const buyLotDraftSummary = useMemo(() => {
     brokerFee = 0,
     sellTaxRatePercent = 0,
     sellTax = 0,
+    buyFeeApplied = null,
   }) => {
     const normalizedMemo = memo?.trim() || '';
     if (!normalizedMemo) return;
@@ -3335,6 +3455,11 @@ const buyLotDraftSummary = useMemo(() => {
       brokerFee: Number(brokerFee) || 0,
       sellTaxRatePercent: Number(sellTaxRatePercent) || 0,
       sellTax: Number(sellTax) || 0,
+      // 원장을 통째로 다시 만들 때(buildInitialTradeLedger) 이 값이 없으면
+      // 과거 매도의 매수 수수료 반영분이 0으로 초기화된다.
+      ...(buyFeeApplied === null || buyFeeApplied === undefined
+        ? {}
+        : { buyFeeApplied: Number(buyFeeApplied) || 0 }),
       ledgerId,
       memo: normalizedMemo,
       createdAt: new Date().toISOString()
@@ -3402,17 +3527,27 @@ const buyLotDraftSummary = useMemo(() => {
   const openAddBuyModal = (asset) => {
   setSelectedAssetToUpdate(asset);
   setAddBuyForm({
-    quantity: '',
-    averagePrice: '',
+    ...initialAddBuyState,
     buyDate: new Date().toISOString().split('T')[0],
-    memo: '',
-    priceInputCurrency: 'NATIVE',
+    brokerId: preferredBrokerId,
+    brokerFeeRate: formatFeeRateInput(getBrokerFeeRatePercent(preferredBrokerId, asset.category)),
   });
   setIsUpdatingAsset(true);
 };
 
+  const openAddAssetModal = () => {
+  setNewAsset({
+    ...initialAssetState,
+    brokerId: preferredBrokerId,
+    brokerFeeRate: formatFeeRateInput(
+      getBrokerFeeRatePercent(preferredBrokerId, initialAssetState.category),
+    ),
+  });
+  setIsAdding(true);
+};
+
   const openSellModal = (asset) => {
-  const defaultBrokerId = DEFAULT_BROKER_ID;
+  const defaultBrokerId = preferredBrokerId;
   const sellDate = new Date().toISOString().split('T')[0];
   setSelectedAssetToSell(asset);
   setSellForm({
@@ -3448,6 +3583,8 @@ const buyLotDraftSummary = useMemo(() => {
     price: String(row.price ?? ''),
     // 이 매수 건에 실제로 적용된 환율. 0이면 아직 못 받아온 상태다.
     fxRate: Number(row.fxRate) > 0 ? Number(row.fxRate) : 0,
+    // 수량·단가를 고치면 수수료도 다시 계산해야 하므로 금액이 아니라 요율을 들고 다닌다.
+    brokerFeeRatePercent: Number(row.brokerFeeRatePercent) || 0,
   }));
 };
 
@@ -3485,6 +3622,8 @@ const buyLotDraftSummary = useMemo(() => {
       date: defaultBuyDate,
       quantity: '',
       price: '',
+      fxRate: 0,
+      brokerFeeRatePercent: 0,
     },
   ]);
 };
@@ -3492,6 +3631,13 @@ const buyLotDraftSummary = useMemo(() => {
   const removeBuyLotDraft = (draftId) => {
   setBuyLotDrafts(prevDrafts => prevDrafts.filter(lot => lot.draftId !== draftId));
 };
+
+  const getBuyDateFxKey = (currency, date) => `${currency || ''}::${date || ''}`;
+  const getBuyDateFxState = (currency, date) => {
+    if (!currency || currency === 'KRW') return { rate: 1, status: 'ready' };
+    if (!date) return { rate: 0, status: 'idle' };
+    return buyDateFxRates[getBuyDateFxKey(currency, date)] || { rate: 0, status: 'idle' };
+  };
 
   const handleSaveBuyLots = () => {
   if (!selectedAssetToManageBuys) return;
@@ -3555,6 +3701,10 @@ const buyLotDraftSummary = useMemo(() => {
       price: lot.price,
       date: lot.date,
       pnl: 0,
+      // 수량이나 단가를 고쳤으면 예전 수수료 금액은 더 이상 맞지 않는다. 요율로 다시 계산한다.
+      brokerFeeRatePercent: parseNumber(lot.brokerFeeRatePercent),
+      brokerFeeRate: parseNumber(lot.brokerFeeRatePercent) / 100,
+      brokerFee: calculateBuyFee(lot.quantity, lot.price, lot.brokerFeeRatePercent),
       createdAt: existingRow?.createdAt || now,
       updatedAt: now,
     };
@@ -3571,14 +3721,22 @@ const buyLotDraftSummary = useMemo(() => {
   setTradeLedger(nextLedger);
   // 원금 수동 입력값은 원장 재계산과 별개로 자산에 직접 붙여 둔다. 비우면 자동 계산으로 돌아간다.
   const manualPurchaseKRW = parseNumber(manualPurchaseKrwDraft);
+  // 원금 칸을 그대로 두고 매수 수량만 고친 경우, 예전 총액이 그대로 남아 원금이
+  // 부풀려졌다. 사용자가 원금을 직접 건드리지 않았다면 원장 재계산 결과를 따른다.
+  const openedManualPurchaseKRW = Math.round(parseNumber(selectedAssetToManageBuys.manualPurchaseKRW));
+  const keepsOpenedManualPurchase = Math.abs(manualPurchaseKRW - openedManualPurchaseKRW) <= 1;
   const manageIdentity = getAssetIdentity(selectedAssetToManageBuys);
   setAssets(prevAssets => reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), nextLedger).map((asset) => {
     if (asset.id !== selectedAssetToManageBuys.id && getAssetIdentity(asset) !== manageIdentity) return asset;
+    const reconciledManualPurchaseKRW = parseNumber(asset.manualPurchaseKRW);
+    const nextManualPurchaseKRW = keepsOpenedManualPurchase
+      ? reconciledManualPurchaseKRW
+      : manualPurchaseKRW;
     return {
       ...asset,
       accountType: normalizeAccountType(accountTypeDraft),
       accountTypeSource: 'user',
-      manualPurchaseKRW: manualPurchaseKRW > 0 ? manualPurchaseKRW : null,
+      manualPurchaseKRW: nextManualPurchaseKRW > 0 ? nextManualPurchaseKRW : null,
       updatedAt: new Date().toISOString(),
     };
   }));
@@ -3667,6 +3825,10 @@ const buyLotDraftSummary = useMemo(() => {
   const appliedFxRate = isKrwPriceInput ? addBuyFx.rate : 0;
   const addedAvgNative = isKrwPriceInput ? enteredPrice / appliedFxRate : enteredPrice;
   const addedPurchaseKRW = isKrwPriceInput ? enteredPrice * addedQty : 0;
+  const addBuyBrokerId = addBuyForm.brokerId || DEFAULT_BROKER_ID;
+  const addBuyBrokerPreset = getBrokerPreset(addBuyBrokerId);
+  const addBuyFeeRatePercent = parseNumber(addBuyForm.brokerFeeRate);
+  const addBuyBrokerFee = calculateBuyFee(addedQty, addedAvgNative, addBuyFeeRatePercent);
 
   setAssets(prevAssets =>
     mergeUniqueAssets(prevAssets.map(asset => {
@@ -3710,6 +3872,13 @@ const buyLotDraftSummary = useMemo(() => {
   );
 
   const ledgerId = `buy-${Date.now()}-${Math.random()}`;
+  const addBuyCostFields = {
+    brokerId: addBuyBrokerId,
+    brokerName: addBuyBrokerPreset.name,
+    brokerFeeRate: addBuyFeeRatePercent / 100,
+    brokerFeeRatePercent: addBuyFeeRatePercent,
+    brokerFee: addBuyBrokerFee,
+  };
   addTradeMemo({
     asset: selectedAssetToUpdate,
     ledgerId,
@@ -3717,7 +3886,8 @@ const buyLotDraftSummary = useMemo(() => {
     quantity: addedQty,
     price: addedAvgNative,
     date: addBuyForm.buyDate,
-    memo: addBuyForm.memo
+    memo: addBuyForm.memo,
+    ...addBuyCostFields,
   });
   addLedgerEntry({
     sourceId: ledgerId,
@@ -3727,7 +3897,9 @@ const buyLotDraftSummary = useMemo(() => {
     price: addedAvgNative,
     date: addBuyForm.buyDate,
     fxRate: appliedFxRate,
+    ...addBuyCostFields,
   });
+  setPreferredBrokerId(addBuyBrokerId);
 
   addLog(`'${selectedAssetToUpdate.name}' 추가 매수 반영 완료`, "success");
   setIsUpdatingAsset(false);
@@ -3775,7 +3947,9 @@ const buyLotDraftSummary = useMemo(() => {
   const brokerFeeNative = sellCosts.brokerFee;
   const sellTaxNative = sellCosts.sellTax;
   const grossPnlNative = sellCosts.grossPnl;
-  const pnlNative = sellCosts.netPnl;
+  // 이번에 파는 수량에 붙어 있던 매수 수수료도 실현손익에서 뺀다(증권사 화면과 같은 기준).
+  const buyFeeAppliedNative = getSellBuyFeeShare(selectedAssetToSell, sellQty);
+  const pnlNative = sellCosts.netPnl - buyFeeAppliedNative;
   const selectedAssetIdentity = getAssetIdentity(selectedAssetToSell);
   const updatedAt = new Date().toISOString();
 
@@ -3799,7 +3973,9 @@ const buyLotDraftSummary = useMemo(() => {
     brokerFeeRatePercent,
     brokerFee: brokerFeeNative,
     sellTaxRatePercent,
-    sellTax: sellTaxNative
+    sellTax: sellTaxNative,
+    // 이 매도에 반영된 매수 수수료. brokerFee(매도 수수료)와 섞이지 않게 따로 남긴다.
+    buyFeeApplied: buyFeeAppliedNative,
   };
 
   const remainingQty = currentQty - sellQty;
@@ -3814,7 +3990,18 @@ const buyLotDraftSummary = useMemo(() => {
     setAssets(prev =>
       mergeUniqueAssets(prev.map(asset =>
         asset.id === selectedAssetToSell.id || getAssetIdentity(asset) === selectedAssetIdentity
-          ? { ...asset, quantity: remainingQty, updatedAt }
+          ? {
+            ...asset,
+            quantity: remainingQty,
+            // 확정 원금은 총액이라 수량만 줄이면 남은 보유분의 원금과
+            // 원화 평단가가 그대로 남아 수익률이 통째로 부풀려진다.
+            manualPurchaseKRW: scaleManualPurchaseKRW(
+              asset.manualPurchaseKRW,
+              parseNumber(asset.quantity),
+              remainingQty,
+            ),
+            updatedAt,
+          }
           : asset
       ))
     );
@@ -3837,7 +4024,8 @@ const buyLotDraftSummary = useMemo(() => {
     brokerFeeRatePercent,
     brokerFee: brokerFeeNative,
     sellTaxRatePercent,
-    sellTax: sellTaxNative
+    sellTax: sellTaxNative,
+    buyFeeApplied: buyFeeAppliedNative,
   });
   addLedgerEntry({
     sourceId: ledgerId,
@@ -3855,8 +4043,10 @@ const buyLotDraftSummary = useMemo(() => {
     brokerFee: brokerFeeNative,
     sellTaxRatePercent,
     sellTax: sellTaxNative,
+    buyFeeApplied: buyFeeAppliedNative,
   });
 
+  setPreferredBrokerId(brokerId);
   addLog(`'${selectedAssetToSell.name}' 매도 반영 완료`, "success");
   setIsSellingAsset(false);
   setSelectedAssetToSell(null);
@@ -3982,12 +4172,6 @@ const buyLotDraftSummary = useMemo(() => {
    * 오늘 환율로 나누면 과거 매수건의 수량·평단이 통째로 어긋나므로
    * 매수일 환율을 받아올 때까지 저장을 막고, 받아온 값을 화면에도 보여준다.
    */
-  const getBuyDateFxKey = (currency, date) => `${currency || ''}::${date || ''}`;
-  const getBuyDateFxState = (currency, date) => {
-    if (!currency || currency === 'KRW') return { rate: 1, status: 'ready' };
-    if (!date) return { rate: 0, status: 'idle' };
-    return buyDateFxRates[getBuyDateFxKey(currency, date)] || { rate: 0, status: 'idle' };
-  };
 
   // 원화 입력이 켜져 있는 폼들이 필요로 하는 (통화, 날짜) 조합.
   const pendingBuyDateFxLookups = useMemo(() => {
@@ -4079,7 +4263,14 @@ const buyLotDraftSummary = useMemo(() => {
     const appliedFxRate = isKrwPriceInput ? buyDateFx.rate : 0;
     const parsedAvgPrice = isKrwPriceInput ? enteredPrice / appliedFxRate : enteredPrice;
     const manualPurchaseKRW = isKrwPriceInput ? enteredPrice * parsedQty : null;
-    const krwAveragePrice = parsedAvgPrice;
+    // 매수 수수료는 현지 통화로 남긴다. 나중에 실현손익과 양도소득세 필요경비에서 뺀다.
+    const buyBrokerId = newAsset.brokerId || DEFAULT_BROKER_ID;
+    const buyBrokerPreset = getBrokerPreset(buyBrokerId);
+    const buyFeeRatePercent = parseNumber(newAsset.brokerFeeRate);
+    const buyBrokerFee = calculateBuyFee(parsedQty, parsedAvgPrice, buyFeeRatePercent);
+    // 저장되는 averagePrice/currentPrice는 이름과 달리 '현지 통화' 단가다.
+    // (원화 환산은 화면 계산에서 환율을 곱해 따로 만든다.)
+    const nativeAveragePrice = parsedAvgPrice;
 
     // 이미 보유 중이면 그 회차에 합산(추가 매수)하고,
     // 전량 매도되어 남은 수량이 없으면 새 회차를 열어 이전 기록과 분리한다.
@@ -4100,9 +4291,9 @@ const buyLotDraftSummary = useMemo(() => {
       accountType: normalizeAccountType(newAsset.accountType),
       accountTypeSource: 'user',
       round: assetRound,
-      averagePrice: krwAveragePrice, 
+      averagePrice: nativeAveragePrice, 
       quantity: parsedQty, 
-      currentPrice: krwAveragePrice, 
+      currentPrice: nativeAveragePrice, 
       originalCurrency: assetCurrency, 
       originalAveragePrice: parsedAvgPrice, 
       originalCurrentPrice: parsedAvgPrice, 
@@ -4150,6 +4341,13 @@ const buyLotDraftSummary = useMemo(() => {
       )));
     });
     const ledgerId = `buy-${Date.now()}-${Math.random()}`;
+    const buyCostFields = {
+      brokerId: buyBrokerId,
+      brokerName: buyBrokerPreset.name,
+      brokerFeeRate: buyFeeRatePercent / 100,
+      brokerFeeRatePercent: buyFeeRatePercent,
+      brokerFee: buyBrokerFee,
+    };
     addTradeMemo({
       asset,
       ledgerId,
@@ -4157,7 +4355,8 @@ const buyLotDraftSummary = useMemo(() => {
       quantity: parsedQty,
       price: parsedAvgPrice,
       date: newAsset.buyDate,
-      memo: newAsset.memo
+      memo: newAsset.memo,
+      ...buyCostFields,
     });
     addLedgerEntry({
       sourceId: ledgerId,
@@ -4168,7 +4367,9 @@ const buyLotDraftSummary = useMemo(() => {
       date: newAsset.buyDate,
       // 원화로 입력했다면 그때 쓴 환율을 그대로 원장에 남긴다. 원금이 두 번 계산되지 않는다.
       fxRate: appliedFxRate,
+      ...buyCostFields,
     });
+    setPreferredBrokerId(buyBrokerId);
     setNewAsset(initialAssetState);
     setIsAdding(false);
     addLog(
@@ -4241,9 +4442,7 @@ const buyLotDraftSummary = useMemo(() => {
           isFetching={isFetching}
           lastUpdated={lastUpdated}
           portfolioName={portfolioName}
-          onAddAsset={() => {
-            setIsAdding(true);
-          }}
+          onAddAsset={openAddAssetModal}
           onPortfolioNameChange={setPortfolioName}
           onOpenAccountManager={() => setIsAccountManagerOpen(true)}
           onRefresh={() => setRefreshTrigger(t => t + 1)}
@@ -4683,6 +4882,48 @@ const buyLotDraftSummary = useMemo(() => {
                   {totalConvertedNetProfit > 0 ? '+' : ''}{formatMoney(totalConvertedNetProfit, 'KRW')}
                 </p>
               </div>
+            </div>
+
+            <div className="bg-surface rounded-[20px] overflow-hidden">
+              <div className="p-5 md:p-7 border-b border-line flex items-center gap-2">
+                <h3 className="text-base md:text-lg font-bold text-ink">
+                  {annualReturnYear}년 해외주식 양도소득세 (추정)
+                </h3>
+                <FeatureInfo text="같은 해 해외 종목 손익을 통산해 기본공제 250만원을 뺀 뒤 22%(양도세 20% + 지방소득세 2%)를 매깁니다. 국내주식과는 통산되지 않고, 환차익도 과세 대상이라 매수일·매도일 환율을 각각 적용합니다. 실제 신고는 이듬해 5월입니다." />
+              </div>
+              <div className="p-5 md:p-7 grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-[11px] font-bold text-ink-mute">통산 양도차익</p>
+                  <p className={`figure text-lg md:text-xl font-bold mt-1 ${overseasCapitalGainsTax.netGainKRW >= 0 ? 'text-up' : 'text-down'}`}>
+                    {overseasCapitalGainsTax.netGainKRW > 0 ? '+' : ''}{formatMoney(overseasCapitalGainsTax.netGainKRW, 'KRW')}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-bold text-ink-mute">남은 기본공제</p>
+                  <p className="figure text-lg md:text-xl font-bold text-ink mt-1">
+                    {formatMoney(overseasCapitalGainsTax.remainingDeductionKRW, 'KRW')}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-bold text-ink-mute">과세표준</p>
+                  <p className="figure text-lg md:text-xl font-bold text-ink mt-1">
+                    {formatMoney(overseasCapitalGainsTax.taxBaseKRW, 'KRW')}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-bold text-ink-mute">예상 세액</p>
+                  <p className="figure text-lg md:text-xl font-bold text-ink mt-1">
+                    {formatMoney(overseasCapitalGainsTax.taxKRW, 'KRW')}
+                  </p>
+                </div>
+              </div>
+              <p className="px-5 pb-5 md:px-7 md:pb-7 text-[11px] font-semibold text-ink-mute leading-relaxed">
+                매도 {overseasCapitalGainsTax.tradeCount.toLocaleString()}건 기준
+                {overseasCapitalGainsTax.estimated ? ' · 환율이나 취득가액이 없는 기록이 있어 일부는 추정했습니다.' : ''}
+                {overseasCapitalGainsTax.unresolvedCount > 0
+                  ? ` · 취득가액을 알 수 없는 ${overseasCapitalGainsTax.unresolvedCount.toLocaleString()}건은 뺐습니다.`
+                  : ''}
+              </p>
             </div>
 
             <div className="bg-surface rounded-[20px] overflow-hidden">
@@ -6106,6 +6347,20 @@ const buyLotDraftSummary = useMemo(() => {
             />
           </div>
 
+          {newAsset.category !== '현금' && (
+            <div className="mt-4">
+              <BrokerFeeFields
+                idPrefix="add-asset"
+                category={newAsset.category}
+                currency={newAsset.priceInputCurrency === 'KRW' && newAsset.currency !== 'KRW' ? 'KRW' : newAsset.currency}
+                brokerId={newAsset.brokerId}
+                feeRatePercent={newAsset.brokerFeeRate}
+                estimatedFee={newAssetBuyFeePreview}
+                onChange={(next) => setNewAsset((prev) => ({ ...prev, ...next }))}
+              />
+            </div>
+          )}
+
         </div>
 
 
@@ -6174,6 +6429,11 @@ const buyLotDraftSummary = useMemo(() => {
           <p className="mt-1 text-sm md:text-base font-bold text-ink">
             {buyLotDrafts.map(lot => lot.date).filter(Boolean).sort()[0] || '-'}
           </p>
+          {buyLotDraftSummary.totalBuyFee > 0 && (
+            <p className="text-[11px] font-bold text-ink-mute mt-1">
+              매수 수수료 {formatMoney(buyLotDraftSummary.totalBuyFee, selectedAssetToManageBuys.currency)}
+            </p>
+          )}
         </div>
       </div>
 
@@ -6249,10 +6509,11 @@ const buyLotDraftSummary = useMemo(() => {
       )}
 
       <div className="min-h-0 overflow-y-auto pr-1">
-        <div className="hidden md:grid grid-cols-[1.05fr_1fr_1fr_1fr_44px] gap-3 px-2 pb-2 text-[11px] font-bold text-ink-mute">
+        <div className="hidden md:grid grid-cols-[1.05fr_1fr_1fr_0.7fr_1fr_44px] gap-3 px-2 pb-2 text-[11px] font-bold text-ink-mute">
           <span>매수일</span>
           <span className="text-right">단가</span>
           <span className="text-right">수량</span>
+          <span className="text-right">수수료율(%)</span>
           <span className="text-right">매수금액</span>
           <span></span>
         </div>
@@ -6263,7 +6524,7 @@ const buyLotDraftSummary = useMemo(() => {
             const lotAmount = lotQuantity * lotPrice;
 
             return (
-              <div key={lot.draftId} className="grid grid-cols-1 md:grid-cols-[1.05fr_1fr_1fr_1fr_44px] gap-2 md:gap-3 items-end rounded-xl bg-canvas bg-canvas/70 p-3">
+              <div key={lot.draftId} className="grid grid-cols-1 md:grid-cols-[1.05fr_1fr_1fr_0.7fr_1fr_44px] gap-2 md:gap-3 items-end rounded-xl bg-canvas bg-canvas/70 p-3">
                 <div>
                   <label htmlFor={`buy-lot-${lot.draftId}-date`} className="md:hidden block text-[11px] font-bold text-ink-mute mb-1">매수일</label>
                   <input
@@ -6297,6 +6558,18 @@ const buyLotDraftSummary = useMemo(() => {
                     className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm text-right"
                     value={formatInputNumber(lot.quantity)}
                     onChange={(e) => updateBuyLotDraft(lot.draftId, 'quantity', sanitizeNumericInput(e.target.value))}
+                  />
+                </div>
+                <div>
+                  <label htmlFor={`buy-lot-${lot.draftId}-fee`} className="md:hidden block text-[11px] font-bold text-ink-mute mb-1">매수 수수료율(%)</label>
+                  <input
+                    id={`buy-lot-${lot.draftId}-fee`}
+                    aria-label={`${index + 1}번째 매수 기록의 매수 수수료율`}
+                    type="text"
+                    inputMode="decimal"
+                    className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm text-right"
+                    value={lot.brokerFeeRatePercent ?? 0}
+                    onChange={(e) => updateBuyLotDraft(lot.draftId, 'brokerFeeRatePercent', sanitizeNumericInput(e.target.value))}
                   />
                 </div>
                 <div className="px-3 py-2.5 rounded-xl bg-canvas text-right">
@@ -6436,6 +6709,18 @@ const buyLotDraftSummary = useMemo(() => {
               }))
             }
           />
+
+          <div className="mt-4">
+            <BrokerFeeFields
+              idPrefix="add-buy"
+              category={selectedAssetToUpdate.category}
+              currency={addBuyForm.priceInputCurrency === 'KRW' && selectedAssetToUpdate.currency !== 'KRW' ? 'KRW' : selectedAssetToUpdate.currency}
+              brokerId={addBuyForm.brokerId}
+              feeRatePercent={addBuyForm.brokerFeeRate}
+              estimatedFee={addBuyFeePreview}
+              onChange={(next) => setAddBuyForm((prev) => ({ ...prev, ...next }))}
+            />
+          </div>
         </div>
       </div>
 
@@ -6598,24 +6883,35 @@ const buyLotDraftSummary = useMemo(() => {
                 </span>
               </div>
               <div className="receipt-row text-xs md:text-sm">
-                <span className="font-semibold text-ink-mute">예상 제세금</span>
+                <span className="font-semibold text-ink-mute">
+                  예상 제세금
+                  {isDomesticEtfLikeAsset(selectedAssetToSell) ? ' · ETF 면제' : ''}
+                </span>
                 <span className="font-bold text-ink-soft">
                   −{formatMoney(sellFeePreview.sellTax, selectedAssetToSell.currency)}
                 </span>
               </div>
+              {sellBuyFeeShare > 0 && (
+                <div className="receipt-row text-xs md:text-sm">
+                  <span className="font-semibold text-ink-mute">매수 수수료(이번 매도분)</span>
+                  <span className="font-bold text-ink-soft">
+                    −{formatMoney(sellBuyFeeShare, selectedAssetToSell.currency)}
+                  </span>
+                </div>
+              )}
               <div className="receipt-row text-xs md:text-sm">
                 <span className="font-semibold text-ink-mute">총 차감액</span>
                 <span className="font-bold text-ink">
-                  −{formatMoney(sellFeePreview.totalCost, selectedAssetToSell.currency)}
+                  −{formatMoney(sellFeePreview.totalCost + sellBuyFeeShare, selectedAssetToSell.currency)}
                 </span>
               </div>
             </div>
 
             <div className="receipt-row receipt-total">
               <span className="text-xs md:text-sm font-bold text-ink">차감 후 손익</span>
-              <span className={`figure text-lg md:text-xl font-bold ${sellFeePreview.netPnl >= 0 ? 'text-up' : 'text-down'}`}>
-                {sellFeePreview.netPnl >= 0 ? '+' : ''}
-                {formatMoney(sellFeePreview.netPnl, selectedAssetToSell.currency)}
+              <span className={`figure text-lg md:text-xl font-bold ${sellFeePreview.netPnl - sellBuyFeeShare >= 0 ? 'text-up' : 'text-down'}`}>
+                {sellFeePreview.netPnl - sellBuyFeeShare >= 0 ? '+' : ''}
+                {formatMoney(sellFeePreview.netPnl - sellBuyFeeShare, selectedAssetToSell.currency)}
               </span>
             </div>
 

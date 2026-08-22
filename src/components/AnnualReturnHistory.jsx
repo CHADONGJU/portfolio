@@ -29,10 +29,13 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
             <>
               <p className={`figure text-3xl md:text-4xl font-bold mt-2 ${performance.returnPercent >= 0 ? 'text-up' : 'text-down'}`}>{performance.returnPercent >= 0 ? '+' : ''}{performance.returnPercent.toFixed(2)}%</p>
               <p className="text-xs font-semibold text-ink-mute mt-2">{performance.startDate} ~ {performance.endDate}{performance.estimated ? ' · 일부 구간 추정' : ''}</p>
+              {performance.carriedFrom && (
+                <p className="text-[11px] font-semibold text-ink-mute mt-1 leading-relaxed">연초 평가액이 없어 {performance.carriedFrom} 기록을 이월했습니다. 계좌 관리에서 연초 평가액을 넣으면 더 정확해집니다.</p>
+              )}
               <div className="mt-5 grid grid-cols-3 gap-2">
                 <div><p className="text-[10px] font-bold text-ink-mute">순수익</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.profitKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">입금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.depositsKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">출금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.withdrawalsKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">기간 내 입금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.depositsKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">기간 내 출금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.withdrawalsKRW, 'KRW')}</p></div>
               </div>
             </>
           ) : (
