@@ -1,9 +1,10 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
+const EPSILON = 1e-8;
 
 const toDateKey = (value) => String(value || '').slice(0, 10);
 
 const getTime = (value) => {
-  const time = new Date(`${toDateKey(value)}T00:00:00`).getTime();
+  const time = new Date(`${toDateKey(value)}T00:00:00Z`).getTime();
   return Number.isFinite(time) ? time : NaN;
 };
 
@@ -37,21 +38,29 @@ const normalizeFlows = (capitalFlows = [], year) => capitalFlows
 const calculateIntervalReturn = (start, end, flows) => {
   const startTime = getTime(start.date);
   const endTime = getTime(end.date);
-  const intervalDays = Math.max(1, (endTime - startTime) / DAY_MS);
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return null;
+
   const netFlow = flows.reduce((sum, flow) => sum + flow.signedAmountKRW, 0);
   const weightedFlow = flows.reduce((sum, flow) => {
     const flowTime = getTime(flow.date);
+    if (!Number.isFinite(flowTime)) return sum;
     const remainingWeight = Math.max(0, Math.min(1, (endTime - flowTime) / (endTime - startTime || DAY_MS)));
     return sum + flow.signedAmountKRW * remainingWeight;
   }, 0);
   const denominator = start.valueKRW + weightedFlow;
+  const profit = end.valueKRW - start.valueKRW - netFlow;
 
-  if (!(denominator > 0)) return null;
+  if (!(denominator > EPSILON)) {
+    return Math.abs(profit) <= EPSILON
+      ? { returnRate: 0, netFlow, estimated: false, inactive: true }
+      : null;
+  }
 
   return {
-    returnRate: (end.valueKRW - start.valueKRW - netFlow) / denominator,
+    returnRate: profit / denominator,
     netFlow,
-    estimated: intervalDays > 3 && flows.length > 0,
+    estimated: flows.some((flow) => flow.date > start.date && flow.date < end.date),
+    inactive: false,
   };
 };
 
@@ -83,6 +92,7 @@ export const calculateAnnualPerformance = ({ snapshots = [], capitalFlows = [], 
 
   let growthFactor = 1;
   let estimated = false;
+  let validIntervalCount = 0;
 
   for (let index = 1; index < yearSnapshots.length; index += 1) {
     const start = yearSnapshots[index - 1];
@@ -92,7 +102,14 @@ export const calculateAnnualPerformance = ({ snapshots = [], capitalFlows = [], 
     ));
     const interval = calculateIntervalReturn(start, end, intervalFlows);
     if (!interval) continue;
-    growthFactor *= 1 + interval.returnRate;
+
+    if (interval.inactive) continue;
+
+    const intervalGrowthFactor = 1 + interval.returnRate;
+    if (intervalGrowthFactor < 0) continue;
+
+    validIntervalCount += 1;
+    growthFactor *= intervalGrowthFactor;
     estimated ||= interval.estimated;
   }
 
@@ -107,6 +124,24 @@ export const calculateAnnualPerformance = ({ snapshots = [], capitalFlows = [], 
     .filter((flow) => flow.type === 'withdrawal')
     .reduce((sum, flow) => sum + flow.amountKRW, 0);
 
+  if (validIntervalCount === 0) {
+    return {
+      year: numericYear,
+      status: 'insufficient',
+      returnPercent: null,
+      profitKRW: last.valueKRW - first.valueKRW - netFlow,
+      depositsKRW: coveredDepositsKRW,
+      withdrawalsKRW: coveredWithdrawalsKRW,
+      startValueKRW: first.valueKRW,
+      endValueKRW: last.valueKRW,
+      startDate: first.date,
+      endDate: last.date,
+      snapshotCount: yearSnapshots.length,
+      intervalCount: 0,
+      estimated: false,
+    };
+  }
+
   return {
     year: numericYear,
     status: 'ready',
@@ -119,6 +154,7 @@ export const calculateAnnualPerformance = ({ snapshots = [], capitalFlows = [], 
     startDate: first.date,
     endDate: last.date,
     snapshotCount: yearSnapshots.length,
+    intervalCount: validIntervalCount,
     estimated,
   };
 };

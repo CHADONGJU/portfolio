@@ -77,6 +77,51 @@ test('종목별 실현손익이 헤더 합계와 같은 환율을 쓴다', () =>
   assert.equal(Math.round(soxl.realizedKRW), 260000);
 });
 
+test('해외 보유 평단은 달러 기준, 원화 평단은 매수일 환율 원금 기준이다', () => {
+  const assets = [{
+    id: 'soxl',
+    name: 'SOXL',
+    ticker: 'SOXL',
+    category: '해외주식',
+    currency: 'USD',
+    quantity: 2,
+    averagePrice: 150,
+    originalAveragePrice: 150,
+    currentPrice: 192000,
+    originalCurrentPrice: 160,
+    buyDate: '2026-01-05',
+  }];
+  const tradeLedger = [
+    {
+      id: 'b1', name: 'SOXL', ticker: 'SOXL', category: '해외주식', currency: 'USD',
+      side: 'buy', date: '2026-01-05', quantity: 1, price: 100, fxRate: 1300,
+    },
+    {
+      id: 'b2', name: 'SOXL', ticker: 'SOXL', category: '해외주식', currency: 'USD',
+      side: 'buy', date: '2026-02-05', quantity: 1, price: 200, fxRate: 1400,
+    },
+  ];
+
+  const metrics = runHook({
+    ...baseOptions,
+    assets,
+    tradeLedger,
+    exchangeRate: 1200,
+    currencyRates: { KRW: 1, USD: 1200 },
+  });
+  const soxl = metrics.enhancedAssets.find((row) => row.ticker === 'SOXL');
+
+  assert.ok(soxl);
+  assert.equal(soxl.nativeAveragePrice, 150);
+  assert.equal(soxl.purchaseNative, 300);
+  assert.equal(soxl.purchaseKRW, 100 * 1300 + 200 * 1400);
+  assert.equal(soxl.purchaseKRWSource, 'trade-date-rate');
+  assert.equal(soxl.krwAveragePrice, (100 * 1300 + 200 * 1400) / 2);
+  assert.equal(soxl.currentNative, 320);
+  assert.equal(soxl.currentKRW, 320 * 1200);
+  assert.equal(soxl.profitKRW, 320 * 1200 - (100 * 1300 + 200 * 1400));
+});
+
 test('배당 금액이 비어 있어도 합계가 NaN이 되지 않는다', () => {
   const receivedDividends = [
     {

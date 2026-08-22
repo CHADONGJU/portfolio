@@ -74,6 +74,15 @@ import {
 } from './utils/dividendInterval';
 import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
 import { buildTradeSummary } from './utils/tradeSummary';
+import {
+  BROKER_FEE_PRESETS,
+  DEFAULT_BROKER_ID,
+  calculateSellCosts,
+  formatFeeRateInput,
+  getBrokerFeeRatePercent,
+  getBrokerPreset,
+  getSellTaxRatePercent,
+} from './utils/tradeCosts';
 import { summarizeDividendCalendarEvents } from './utils/dividendCalendar';
 import {
   buildAnnualDividendEvents,
@@ -203,35 +212,6 @@ const AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 const CALENDAR_WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
 const parseNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
-const BROKER_FEE_PRESETS = [
-  { id: 'custom', name: '직접 입력', domesticRatePercent: 0, overseasRatePercent: 0 },
-  { id: 'toss', name: '토스증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
-  { id: 'miraeasset', name: '미래에셋증권', domesticRatePercent: 0.014, overseasRatePercent: 0.25 },
-  { id: 'shinhan', name: '신한증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
-  { id: 'kb', name: 'KB증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
-  { id: 'koreainvestment', name: '한국투자증권', domesticRatePercent: 0.014, overseasRatePercent: 0.25 },
-];
-const DEFAULT_BROKER_ID = 'custom';
-const getBrokerPreset = (brokerId) => (
-  BROKER_FEE_PRESETS.find((broker) => broker.id === brokerId) || BROKER_FEE_PRESETS[0]
-);
-const getBrokerFeeRatePercent = (brokerId, category) => {
-  const preset = getBrokerPreset(brokerId);
-  return isDomesticStockCategory(category)
-    ? preset.domesticRatePercent
-    : preset.overseasRatePercent;
-};
-const formatFeeRateInput = (rate) => {
-  const value = Number(rate);
-  if (!Number.isFinite(value)) return '0';
-  return String(Number(value.toFixed(4)));
-};
-const DOMESTIC_STOCK_SELL_TAX_RATE_PERCENT = 0.2;
-const getSellTaxRatePercent = (asset = {}) => (
-  isDomesticStockCategory(asset.category)
-    ? DOMESTIC_STOCK_SELL_TAX_RATE_PERCENT
-    : 0
-);
 const formatDateKey = (date) => {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -1290,22 +1270,15 @@ const sellFeePreview = useMemo(() => {
   const buyPrice = parseNumber(selectedAssetToSell.originalAveragePrice || selectedAssetToSell.averagePrice);
   const feeRatePercent = parseNumber(sellForm.brokerFeeRate);
   const sellTaxRatePercent = parseNumber(sellForm.sellTaxRate);
-  const grossSellAmount = sellPrice * quantity;
-  const brokerFee = grossSellAmount * (feeRatePercent / 100);
-  const sellTax = grossSellAmount * (sellTaxRatePercent / 100);
-  const grossPnl = (sellPrice - buyPrice) * quantity;
-  const netPnl = grossPnl - brokerFee - sellTax;
 
-  return {
-    grossSellAmount,
-    brokerFee,
-    sellTax,
-    totalCost: brokerFee + sellTax,
-    grossPnl,
-    netPnl,
-    feeRatePercent,
+  return calculateSellCosts({
+    category: selectedAssetToSell.category,
+    quantity,
+    sellPrice,
+    buyPrice,
+    brokerFeeRatePercent: feeRatePercent,
     sellTaxRatePercent,
-  };
+  });
 }, [selectedAssetToSell, sellForm]);
 const buyLotDraftSummary = useMemo(() => {
   const totalQuantity = buyLotDrafts.reduce((sum, lot) => sum + parseNumber(lot.quantity), 0);
@@ -3440,14 +3413,15 @@ const buyLotDraftSummary = useMemo(() => {
 
   const openSellModal = (asset) => {
   const defaultBrokerId = DEFAULT_BROKER_ID;
+  const sellDate = new Date().toISOString().split('T')[0];
   setSelectedAssetToSell(asset);
   setSellForm({
     sellPrice: '',
     quantity: '',
-    sellDate: new Date().toISOString().split('T')[0],
+    sellDate,
     brokerId: defaultBrokerId,
     brokerFeeRate: formatFeeRateInput(getBrokerFeeRatePercent(defaultBrokerId, asset.category)),
-    sellTaxRate: formatFeeRateInput(getSellTaxRatePercent(asset)),
+    sellTaxRate: formatFeeRateInput(getSellTaxRatePercent(asset, sellDate)),
     memo: ''
   });
   setIsSellingAsset(true);
@@ -3790,11 +3764,18 @@ const buyLotDraftSummary = useMemo(() => {
   const brokerFeeRatePercent = parseNumber(sellForm.brokerFeeRate);
   const brokerFeeRate = brokerFeeRatePercent / 100;
   const sellTaxRatePercent = parseNumber(sellForm.sellTaxRate);
-  const grossSellAmountNative = sellPriceNative * sellQty;
-  const brokerFeeNative = grossSellAmountNative * brokerFeeRate;
-  const sellTaxNative = grossSellAmountNative * (sellTaxRatePercent / 100);
-  const grossPnlNative = (sellPriceNative - avgBuyNative) * sellQty;
-  const pnlNative = grossPnlNative - brokerFeeNative - sellTaxNative;
+  const sellCosts = calculateSellCosts({
+    category: selectedAssetToSell.category,
+    quantity: sellQty,
+    sellPrice: sellPriceNative,
+    buyPrice: avgBuyNative,
+    brokerFeeRatePercent,
+    sellTaxRatePercent,
+  });
+  const brokerFeeNative = sellCosts.brokerFee;
+  const sellTaxNative = sellCosts.sellTax;
+  const grossPnlNative = sellCosts.grossPnl;
+  const pnlNative = sellCosts.netPnl;
   const selectedAssetIdentity = getAssetIdentity(selectedAssetToSell);
   const updatedAt = new Date().toISOString();
 
@@ -6639,7 +6620,7 @@ const buyLotDraftSummary = useMemo(() => {
             </div>
 
             <p className="mt-3 text-[11px] font-medium text-ink-mute leading-relaxed">
-              국내주식 제세금 기본값은 매도금액의 0.2%입니다. ETF, 우대계좌, 증권사 이벤트 조건이 다르면 바로 수정하세요.
+              국내주식 제세금 기본값은 매도일 기준 증권거래세율로 계산합니다. ETF, 우대계좌, 증권사 이벤트 조건이 다르면 바로 수정하세요.
             </p>
           </div>
         )}
@@ -6655,7 +6636,8 @@ const buyLotDraftSummary = useMemo(() => {
             onChange={(e) =>
               setSellForm((prev) => ({
                 ...prev,
-                sellDate: e.target.value
+                sellDate: e.target.value,
+                sellTaxRate: formatFeeRateInput(getSellTaxRatePercent(selectedAssetToSell, e.target.value)),
               }))
             }
           />

@@ -63,6 +63,56 @@ test('연초 0원에서 첫 입금으로 시작한 포트폴리오도 수익률�
   assert.equal(result.profitKRW, 100);
 });
 
+test('입금일에 평가 스냅샷이 있으면 다음 구간 수익만 연결한다', () => {
+  const result = calculateAnnualPerformance({
+    year: 2026,
+    snapshots: [
+      { date: '2026-01-01', valueKRW: 100 },
+      { date: '2026-07-01', valueKRW: 200 },
+      { date: '2026-12-31', valueKRW: 220 },
+    ],
+    capitalFlows: [
+      { date: '2026-07-01', type: 'deposit', amountKRW: 100 },
+    ],
+  });
+
+  assert.equal(result.status, 'ready');
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 10);
+  assert.equal(result.profitKRW, 20);
+  assert.equal(result.estimated, false);
+});
+
+test('스냅샷 사이 입출금은 수익률을 계산하되 추정으로 표시한다', () => {
+  const result = calculateAnnualPerformance({
+    year: 2026,
+    snapshots: [
+      { date: '2026-01-01', valueKRW: 100 },
+      { date: '2026-12-31', valueKRW: 220 },
+    ],
+    capitalFlows: [
+      { date: '2026-07-01', type: 'deposit', amountKRW: 100 },
+    ],
+  });
+
+  assert.equal(result.status, 'ready');
+  assert.equal(result.profitKRW, 20);
+  assert.equal(result.estimated, true);
+});
+
+test('투자 원금이 전혀 없으면 0% 수익률로 위장하지 않는다', () => {
+  const result = calculateAnnualPerformance({
+    year: 2026,
+    snapshots: [
+      { date: '2026-01-01', valueKRW: 0 },
+      { date: '2026-12-31', valueKRW: 0 },
+    ],
+  });
+
+  assert.equal(result.status, 'insufficient');
+  assert.equal(result.returnPercent, null);
+  assert.equal(result.intervalCount, 0);
+});
+
 test('입출금과 평가 기록에 포함된 연도를 최신순으로 돌려준다', () => {
   assert.deepEqual(getAnnualPerformanceYears({
     currentYear: 2026,

@@ -108,6 +108,22 @@ test('토스 SOXL 사례 재현: 원금 차이가 사라진다', () => {
   assert.ok(position.krwCost - oldWay > 100000); // 십만 원 단위 차이가 실제로 발생
 });
 
+test('해외 소수점 복수 매수 평단은 달러 기준 수량가중 평균이다', () => {
+  const rows = [
+    usd({ id: 'a', side: 'buy', date: '2026-07-07', quantity: 2, price: 134.69, fxRate: 1378 }),
+    usd({ id: 'b', side: 'buy', date: '2026-07-17', quantity: 0.477, price: 134.67, fxRate: 1386 }),
+    usd({ id: 'c', side: 'buy', date: '2026-07-21', quantity: 4.004914, price: 160.66, fxRate: 1410 }),
+  ];
+  const position = buildPositionFromTradeRows(rows, { resolveKrwRate: rateOf });
+  const totalQuantity = 2 + 0.477 + 4.004914;
+  const totalCost = 2 * 134.69 + 0.477 * 134.67 + 4.004914 * 160.66;
+
+  assert.equal(position.quantity, totalQuantity);
+  assert.equal(position.averagePrice, totalCost / totalQuantity);
+  assert.equal(position.hasExactKrwCost, true);
+  assert.equal(position.krwCost, 2 * 134.69 * 1378 + 0.477 * 134.67 * 1386 + 4.004914 * 160.66 * 1410);
+});
+
 test('원장 전체에서 매도 행의 krwPnl이 유지된다', () => {
   const ledger = [
     usd({ id: 'a', side: 'buy', date: '2025-02-10', quantity: 100, price: 20, fxRate: 1400 }),
@@ -118,22 +134,14 @@ test('원장 전체에서 매도 행의 krwPnl이 유지된다', () => {
   assert.equal(sell.krwPnl, 50 * (30 - 20) * 1400);
 });
 
-test('보유 중인 원금은 오늘 환율이 아무리 움직여도 그대로다', () => {
+test('보유 중인 원금과 원화 평단은 오늘 환율이 아무리 움직여도 그대로다', () => {
   const rows = [
     usd({ id: 'a', side: 'buy', date: '2025-02-10', quantity: 50, price: 30, fxRate: 1465 }),
   ];
   const position = buildPositionFromTradeRows(rows, { resolveKrwRate: rateOf });
 
-  // 표시 환율 = 원금 ÷ 달러 매입액. 오늘 환율이 무엇이든 이 값은 바뀌지 않는다.
-  const displayRate = position.krwCost / (50 * 30);
-  assert.equal(displayRate, 1465);
-
-  // 주가만 오른 경우: 평가금액도 같은 환율로 환산되어 환차익이 0이다.
-  const currentPriceUsd = 33;
-  const currentKRW = currentPriceUsd * 50 * displayRate;
-  const profitKRW = currentKRW - position.krwCost;
-  assert.equal(profitKRW, (33 - 30) * 50 * 1465);
-  assert.equal(profitKRW / position.krwCost, (33 - 30) / 30); // 원화 수익률 = 달러 수익률
+  assert.equal(position.krwCost, 50 * 30 * 1465);
+  assert.equal(position.krwCost / position.quantity, 30 * 1465);
 });
 
 test('환율을 모르는 매수분이 섞이면 부분 매도해도 원금이 "정확"해지지 않는다', () => {
