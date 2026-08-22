@@ -22,22 +22,14 @@ export const isDomesticEtfLikeAsset = (asset = {}) => {
 /**
  * 증권사 수수료 프리셋.
  *
- * 국내 매매수수료가 면제(무료 이벤트·다이렉트 계좌 등)인 계좌는 위탁수수료가 0이고
- * 유관기관제비용만 붙는다. 이때 일반 요율(0.014~0.015%)을 쓰면 실제보다 5배 넘게
- * 차감되므로, 체결 시장별 유관기관 요율을 따로 고를 수 있게 둔다.
- * (미래에셋증권 공시 기준 2025-03-04: KRX 0.0036396%, 넥스트레이드 0.0027033~0.0031833%.
- *  해외주식은 계좌마다 달라 기본값을 0으로 두고 직접 넣는다.)
- *
- * 다만 실제 요율은 체결된 시장·세션에 따라 건마다 달라진다. 실계좌 대조에서
- * 같은 계좌의 매도 두 건이 0.0026925%와 0.0031765%로 갈렸다.
- * 그래서 정확히 맞추려면 프리셋이 아니라 증권사 화면의 수수료 '금액'을 그대로
- * 넣을 수 있어야 한다(calculateSellCosts의 brokerFeeAmount).
+ * 요율은 어디까지나 대략적인 기본값이다. 수수료가 면제된 계좌는 유관기관제비용만
+ * 붙는데 그 요율이 체결된 시장·세션에 따라 건마다 달라진다(실계좌 대조에서 같은
+ * 계좌의 매도 두 건이 0.0026925%와 0.0031765%로 갈렸다).
+ * 증권사 화면과 원 단위까지 맞추려면 요율이 아니라 수수료 '금액'을 그대로 넣어야
+ * 한다(calculateSellCosts의 brokerFeeAmount). 프리셋으로는 해결되지 않는다.
  */
 export const BROKER_FEE_PRESETS = [
   { id: 'custom', name: '직접 입력', domesticRatePercent: 0, overseasRatePercent: 0 },
-  { id: 'free-nxt', name: '수수료 무료 · NXT 0.0027%', domesticRatePercent: 0.0027033, overseasRatePercent: 0 },
-  { id: 'free-nxt-high', name: '수수료 무료 · NXT 0.0032%', domesticRatePercent: 0.0031833, overseasRatePercent: 0 },
-  { id: 'free-krx', name: '수수료 무료 · KRX 0.0036%', domesticRatePercent: 0.0036396, overseasRatePercent: 0 },
   { id: 'toss', name: '토스증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
   { id: 'miraeasset', name: '미래에셋증권', domesticRatePercent: 0.014, overseasRatePercent: 0.25 },
   { id: 'shinhan', name: '신한증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },

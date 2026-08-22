@@ -79,40 +79,35 @@ test('증권거래세 인하는 2019-06-03 매매분부터 적용한다', () => 
   assert.equal(getDomesticStockSellTaxRatePercent('2019-06-03'), 0.25);
 });
 
-test('수수료 무료 계좌 프리셋은 유관기관제비용만 매긴다', () => {
-  // 미래에셋 실계좌 대조: 5,274,000원 매도 시 수수료 142원, 제세금 10,548원.
-  const nxtRate = getBrokerFeeRatePercent('free-nxt', '국내주식');
-  const result = calculateSellCosts({
+test('프리셋 요율은 실제 유관기관제비용과 크게 다를 수 있다', () => {
+  // 미래에셋 실계좌 대조: 5,274,000원 매도의 실제 수수료는 142원인데
+  // 프리셋 요율(0.014%)로는 738원이 잡힌다. 그래서 금액 입력이 필요하다.
+  const base = {
     category: '국내주식',
     currency: 'KRW',
     quantity: 60,
     sellPrice: 87_900,
     buyPrice: 81_900,
-    brokerFeeRatePercent: nxtRate,
     sellTaxRatePercent: 0.2,
-  });
-
-  assert.equal(result.brokerFee, 142);
-  assert.equal(result.sellTax, 10_548);
-  assert.equal(result.netPnl, 349_310);
-
-  // 일반 수수료율(0.014%)을 그대로 쓰면 596원이나 더 빠진다.
-  const general = calculateSellCosts({
-    category: '국내주식',
-    currency: 'KRW',
-    quantity: 60,
-    sellPrice: 87_900,
-    buyPrice: 81_900,
+  };
+  const preset = calculateSellCosts({
+    ...base,
     brokerFeeRatePercent: getBrokerFeeRatePercent('miraeasset', '국내주식'),
-    sellTaxRatePercent: 0.2,
   });
-  assert.equal(general.brokerFee, 738);
+  assert.equal(preset.brokerFee, 738);
+
+  const actual = calculateSellCosts({ ...base, brokerFeeAmount: 142 });
+  assert.equal(actual.brokerFee, 142);
+  assert.equal(actual.sellTax, 10_548);
+  assert.equal(actual.netPnl, 349_310);
 });
 
-test('요율 입력칸이 유관기관제비용의 소수점을 자르지 않는다', () => {
-  assert.equal(formatFeeRateInput(getBrokerFeeRatePercent('free-krx', '국내주식')), '0.00364');
-  assert.equal(formatFeeRateInput(getBrokerFeeRatePercent('free-nxt', '국내주식')), '0.002703');
+test('요율 입력칸이 소수점 여섯째 자리까지 남긴다', () => {
+  // 유관기관제비용은 0.0027033% 처럼 소수점이 길다. 넷째 자리에서 자르면 어긋난다.
+  assert.equal(formatFeeRateInput(0.0036396), '0.00364');
+  assert.equal(formatFeeRateInput(0.0027033), '0.002703');
   assert.equal(formatFeeRateInput(0.015), '0.015');
+  assert.equal(formatFeeRateInput(getBrokerFeeRatePercent('custom', '국내주식')), '0');
 });
 
 test('원화 수수료·제세금은 증권사처럼 원 단위로 절사한다', () => {
