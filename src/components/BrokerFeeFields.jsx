@@ -1,66 +1,105 @@
-import { BROKER_FEE_PRESETS, formatFeeRateInput, getBrokerFeeRatePercent } from '../utils/tradeCosts.js';
-import { formatMoney, sanitizeNumericInput } from '../utils/formatters.js';
+import {
+  BROKER_FEE_PRESETS,
+  formatFeeRateInput,
+  getBrokerFeeRatePercent,
+  resolveKnownFeeAmount,
+} from '../utils/tradeCosts.js';
+import { formatInputNumber, formatMoney, sanitizeNumericInput } from '../utils/formatters.js';
 
 /**
- * 매수 수수료 입력 한 벌(증권사 + 수수료율).
+ * 수수료 입력 한 벌(증권사 + 요율 또는 금액).
  *
- * 매수 수수료를 기록해 두지 않으면 나중에 실현손익에서 뺄 수도, 해외주식
- * 양도소득세의 필요경비로 넣을 수도 없다. 그래서 매수 시점에 함께 받는다.
- * 기본값은 '직접 입력'(0%)이라 예전처럼 비워 두어도 계산이 달라지지 않는다.
+ * 유관기관제비용 요율은 체결된 시장·세션에 따라 건마다 달라진다(실계좌에서
+ * 0.0027%와 0.0032%가 섞여 나왔다). 요율만으로는 증권사 화면과 원 단위까지
+ * 맞출 수 없어서, 수수료를 '금액'으로 바로 넣는 길을 함께 둔다.
  */
 const BrokerFeeFields = ({
   idPrefix,
+  label = '수수료',
   category,
   currency = 'KRW',
   brokerId,
   feeRatePercent,
+  feeAmount = '',
+  feeMode = 'rate',
   estimatedFee = 0,
   onChange,
-}) => (
-  <div className="grid grid-cols-2 gap-3">
-    <div>
-      <label htmlFor={`${idPrefix}-broker`} className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-        증권사
-      </label>
-      <select
-        id={`${idPrefix}-broker`}
-        className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-        value={brokerId}
-        onChange={(event) => {
-          const nextBrokerId = event.target.value;
-          onChange({
-            brokerId: nextBrokerId,
-            brokerFeeRate: formatFeeRateInput(getBrokerFeeRatePercent(nextBrokerId, category)),
-          });
-        }}
-      >
-        {BROKER_FEE_PRESETS.map((broker) => (
-          <option key={broker.id} value={broker.id}>{broker.name}</option>
-        ))}
-      </select>
+}) => {
+  const isAmountMode = feeMode === 'amount';
+  // ₩로 바꿔만 두고 아직 비워 뒀다면 요율 계산이 그대로 쓰인다.
+  // 그 사실을 말해주지 않으면 "0원이 들어갔겠지" 하고 넘어가게 된다.
+  const usesRateFallback = isAmountMode && resolveKnownFeeAmount(feeAmount) === null;
+
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <div>
+        <label htmlFor={`${idPrefix}-broker`} className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
+          증권사
+        </label>
+        <select
+          id={`${idPrefix}-broker`}
+          className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+          value={brokerId}
+          onChange={(event) => {
+            const nextBrokerId = event.target.value;
+            onChange({
+              brokerId: nextBrokerId,
+              brokerFeeRate: formatFeeRateInput(getBrokerFeeRatePercent(nextBrokerId, category)),
+              feeMode: 'rate',
+            });
+          }}
+        >
+          {BROKER_FEE_PRESETS.map((broker) => (
+            <option key={broker.id} value={broker.id}>{broker.name}</option>
+          ))}
+        </select>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between gap-2 mb-1.5 ml-1">
+          <label htmlFor={`${idPrefix}-fee`} className="block text-[11px] md:text-[12px] font-bold text-ink-mute">
+            {label}
+          </label>
+          <div className="seg inline-flex items-center p-0.5 rounded-[10px]" role="group" aria-label={`${label} 입력 방식`}>
+            {[{ key: 'rate', text: '%' }, { key: 'amount', text: '₩' }].map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                aria-pressed={feeMode === option.key}
+                onClick={() => onChange({ feeMode: option.key })}
+                className={`seg-item px-2 h-6 rounded-lg text-[11px] font-bold ${
+                  feeMode === option.key ? 'text-ink' : 'text-ink-mute'
+                }`}
+              >
+                {option.text}
+              </button>
+            ))}
+          </div>
+        </div>
+        <input
+          id={`${idPrefix}-fee`}
+          type="text"
+          inputMode="decimal"
+          className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+          value={isAmountMode ? formatInputNumber(feeAmount) : feeRatePercent}
+          placeholder={isAmountMode ? '증권사 화면의 수수료 금액' : '0'}
+          onChange={(event) => {
+            const next = sanitizeNumericInput(event.target.value);
+            onChange(isAmountMode
+              ? { brokerFeeAmount: next }
+              : { brokerId: 'custom', brokerFeeRate: next });
+          }}
+        />
+        {estimatedFee > 0 && (!isAmountMode || usesRateFallback) && (
+          <p className="text-[11px] font-semibold text-ink-mute mt-1.5 ml-1">
+            {usesRateFallback ? '금액을 비워둬 요율 기준 ' : '예상 수수료 '}
+            {formatMoney(estimatedFee, currency)}
+            {usesRateFallback ? ' 적용 중' : ''}
+          </p>
+        )}
+      </div>
     </div>
-    <div>
-      <label htmlFor={`${idPrefix}-fee`} className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-        매수 수수료율(%)
-      </label>
-      <input
-        id={`${idPrefix}-fee`}
-        type="text"
-        inputMode="decimal"
-        className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-        value={feeRatePercent}
-        onChange={(event) => onChange({
-          brokerId: 'custom',
-          brokerFeeRate: sanitizeNumericInput(event.target.value),
-        })}
-      />
-      {estimatedFee > 0 && (
-        <p className="text-[11px] font-semibold text-ink-mute mt-1.5 ml-1">
-          예상 수수료 {formatMoney(estimatedFee, currency)}
-        </p>
-      )}
-    </div>
-  </div>
-);
+  );
+};
 
 export default BrokerFeeFields;

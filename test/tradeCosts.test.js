@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   calculateSellCosts,
+  deriveFeeRatePercent,
   formatFeeRateInput,
   getBrokerFeeRatePercent,
   getDomesticStockSellTaxRatePercent,
   getSellTaxRatePercent,
+  resolveKnownFeeAmount,
 } from '../src/utils/tradeCosts.js';
 
 test('국내주식 제세금율은 매도일 기준으로 계산한다', () => {
@@ -147,4 +149,86 @@ test('원화 수수료·제세금은 증권사처럼 원 단위로 절사한다'
     brokerFeeRatePercent: 0.25,
   });
   assert.ok(!Number.isInteger(usdOdd.brokerFee));
+});
+
+test('수수료를 금액으로 넣으면 요율보다 우선하고 증권사 화면과 정확히 맞는다', () => {
+  // 미래에셋 실계좌 SK하이닉스: 3주 × 1,758,000, 수수료 142원, 세금 10,548원.
+  const sk = calculateSellCosts({
+    category: '국내주식',
+    currency: 'KRW',
+    quantity: 3,
+    sellPrice: 1_758_000,
+    buyPrice: 1_638_000,
+    brokerFeeRatePercent: 0.014, // 무시돼야 한다
+    brokerFeeAmount: 142,
+    sellTaxRatePercent: 0.2,
+  });
+  assert.equal(sk.brokerFee, 142);
+  assert.equal(sk.sellTax, 10_548);
+  assert.equal(sk.netPnl, 349_310);
+  // 매수 수수료 156원까지 빼면 증권사 손익금액과 같아진다.
+  assert.equal(sk.netPnl - 156, 349_154);
+  // 요율은 역산해 기록에 남긴다.
+  assert.equal(Number(sk.feeRatePercent.toFixed(7)), 0.0026925);
+
+  // 삼성전자: 25주 × 204,000, 수수료 162원, 세금 10,200원.
+  const samsung = calculateSellCosts({
+    category: '국내주식',
+    currency: 'KRW',
+    quantity: 25,
+    sellPrice: 204_000,
+    buyPrice: 160_000,
+    brokerFeeAmount: 162,
+    sellTaxRatePercent: 0.2,
+  });
+  assert.equal(samsung.brokerFee, 162);
+  assert.equal(samsung.sellTax, 10_200);
+  assert.equal(samsung.netPnl - 108, 1_089_530);
+});
+
+test('수수료 금액을 비워두면 예전처럼 요율로 계산한다', () => {
+  const base = {
+    category: '국내주식',
+    currency: 'KRW',
+    quantity: 3,
+    sellPrice: 1_758_000,
+    buyPrice: 1_638_000,
+    brokerFeeRatePercent: 0.014,
+    sellTaxRatePercent: 0.2,
+  };
+  assert.equal(calculateSellCosts(base).brokerFee, 738);
+  assert.equal(calculateSellCosts({ ...base, brokerFeeAmount: null }).brokerFee, 738);
+  assert.equal(calculateSellCosts({ ...base, brokerFeeAmount: '' }).brokerFee, 738);
+  // 0원은 "수수료가 없었다"는 뜻이므로 그대로 존중한다.
+  assert.equal(calculateSellCosts({ ...base, brokerFeeAmount: 0 }).brokerFee, 0);
+});
+
+test('빈 수수료 금액은 0원이 아니라 "아직 안 넣음"으로 본다', () => {
+  assert.equal(resolveKnownFeeAmount(''), null);
+  assert.equal(resolveKnownFeeAmount(null), null);
+  assert.equal(resolveKnownFeeAmount(undefined), null);
+  assert.equal(resolveKnownFeeAmount('abc'), null);
+  assert.equal(resolveKnownFeeAmount(-5), null);
+  // 직접 넣은 0은 "수수료가 없었다"는 뜻이라 그대로 존중한다.
+  assert.equal(resolveKnownFeeAmount(0), 0);
+  assert.equal(resolveKnownFeeAmount('142'), 142);
+});
+
+test('역산 요율은 기록된 수수료 금액을 설명할 수 있어야 한다', () => {
+  // 요율은 참고용이다. 원 단위 절사 때문에 요율로 되돌리면 1원씩 어긋날 수 있어,
+  // 어떤 코드도 이 요율로 수수료를 다시 계산하지 않는다(금액이 원본).
+  const cases = [
+    [142, 5_274_000],
+    [162, 5_100_000],
+    [156, 4_914_000],
+    [108, 4_000_000],
+    [738, 5_274_000],
+  ];
+  cases.forEach(([fee, amount]) => {
+    const rate = deriveFeeRatePercent(fee, amount);
+    assert.equal(Math.round(amount * (rate / 100)), fee);
+  });
+
+  assert.equal(deriveFeeRatePercent(0, 5_274_000), 0);
+  assert.equal(deriveFeeRatePercent(142, 0), 0);
 });

@@ -25,14 +25,19 @@ export const isDomesticEtfLikeAsset = (asset = {}) => {
  * 국내 매매수수료가 면제(무료 이벤트·다이렉트 계좌 등)인 계좌는 위탁수수료가 0이고
  * 유관기관제비용만 붙는다. 이때 일반 요율(0.014~0.015%)을 쓰면 실제보다 5배 넘게
  * 차감되므로, 체결 시장별 유관기관 요율을 따로 고를 수 있게 둔다.
- * (미래에셋증권 공시 기준 2025-03-04: KRX 0.0036396%, 우량클럽 0.00329%,
- *  넥스트레이드 0.0027033%. 해외주식은 계좌마다 달라 기본값을 0으로 두고 직접 넣는다.)
+ * (미래에셋증권 공시 기준 2025-03-04: KRX 0.0036396%, 넥스트레이드 0.0027033~0.0031833%.
+ *  해외주식은 계좌마다 달라 기본값을 0으로 두고 직접 넣는다.)
+ *
+ * 다만 실제 요율은 체결된 시장·세션에 따라 건마다 달라진다. 실계좌 대조에서
+ * 같은 계좌의 매도 두 건이 0.0026925%와 0.0031765%로 갈렸다.
+ * 그래서 정확히 맞추려면 프리셋이 아니라 증권사 화면의 수수료 '금액'을 그대로
+ * 넣을 수 있어야 한다(calculateSellCosts의 brokerFeeAmount).
  */
 export const BROKER_FEE_PRESETS = [
   { id: 'custom', name: '직접 입력', domesticRatePercent: 0, overseasRatePercent: 0 },
-  { id: 'free-nxt', name: '수수료 무료 · 넥스트레이드(NXT)', domesticRatePercent: 0.0027033, overseasRatePercent: 0 },
-  { id: 'free-krx', name: '수수료 무료 · 한국거래소(KRX)', domesticRatePercent: 0.0036396, overseasRatePercent: 0 },
-  { id: 'free-krx-prime', name: '수수료 무료 · KRX 우량클럽', domesticRatePercent: 0.00329, overseasRatePercent: 0 },
+  { id: 'free-nxt', name: '수수료 무료 · NXT 0.0027%', domesticRatePercent: 0.0027033, overseasRatePercent: 0 },
+  { id: 'free-nxt-high', name: '수수료 무료 · NXT 0.0032%', domesticRatePercent: 0.0031833, overseasRatePercent: 0 },
+  { id: 'free-krx', name: '수수료 무료 · KRX 0.0036%', domesticRatePercent: 0.0036396, overseasRatePercent: 0 },
   { id: 'toss', name: '토스증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
   { id: 'miraeasset', name: '미래에셋증권', domesticRatePercent: 0.014, overseasRatePercent: 0.25 },
   { id: 'shinhan', name: '신한증권', domesticRatePercent: 0.015, overseasRatePercent: 0.25 },
@@ -87,6 +92,35 @@ export const formatFeeRateInput = (rate) => {
  * 소수점을 남겨두면 앱 손익이 증권사 화면과 몇 원씩 계속 어긋난다.
  * 외화는 센트 단위로 부과되므로 절사하지 않는다.
  */
+/**
+ * "수수료 금액을 안다"와 "아직 안 넣었다"를 가른다.
+ * 빈 칸을 0으로 읽으면 ₩ 모드로 바꾸는 순간 수수료가 0원이 되어버린다.
+ * 반대로 사용자가 직접 넣은 0은 "수수료가 없었다"는 뜻이라 그대로 존중한다.
+ */
+export const resolveKnownFeeAmount = (value) => {
+  if (value === null || value === undefined) return null;
+  // 공백만 남은 칸은 빈 칸이고, '1,234'는 1234다. Number()는 둘 다 잘못 읽는다.
+  const text = String(value).replace(/,/g, '').trim();
+  if (text === '') return null;
+  const amount = Number(text);
+  return Number.isFinite(amount) && amount >= 0 ? amount : null;
+};
+
+/**
+ * 실제로 낸 수수료에서 요율을 역산한다.
+ *
+ * 수수료의 원본은 어디까지나 '금액'이다. 요율은 소수점을 자르는 순간 원 단위
+ * 절사와 어긋나므로(예: 156원 → 0.0031746% → 다시 계산하면 155원), 기록을 보고
+ * 무슨 요율이었는지 가늠하는 용도로만 쓴다. 어떤 코드도 이 요율로 수수료를
+ * 다시 계산해서는 안 된다.
+ */
+export const deriveFeeRatePercent = (feeAmount, tradeAmount) => {
+  const fee = Number(feeAmount);
+  const amount = Number(tradeAmount);
+  if (!Number.isFinite(fee) || !Number.isFinite(amount) || amount <= 0 || fee <= 0) return 0;
+  return Number(((fee / amount) * 100).toFixed(7));
+};
+
 export const roundTradeCost = (amount, currency = 'KRW') => {
   const value = Number(amount);
   if (!Number.isFinite(value) || value <= 0) return 0;
@@ -116,6 +150,8 @@ export const calculateSellCosts = ({
   sellPrice = 0,
   buyPrice = 0,
   brokerFeeRatePercent = 0,
+  // 증권사 화면의 수수료 금액을 그대로 아는 경우. 요율보다 우선한다.
+  brokerFeeAmount = null,
   sellTaxRatePercent = 0,
 } = {}) => {
   const sellQuantity = Math.max(0, Number(quantity) || 0);
@@ -125,7 +161,10 @@ export const calculateSellCosts = ({
   const taxRate = Math.max(0, Number(sellTaxRatePercent) || 0) / 100;
 
   const grossSellAmount = sellUnitPrice * sellQuantity;
-  const brokerFee = roundTradeCost(grossSellAmount * feeRate, currency);
+  const knownFeeAmount = resolveKnownFeeAmount(brokerFeeAmount);
+  const brokerFee = knownFeeAmount === null
+    ? roundTradeCost(grossSellAmount * feeRate, currency)
+    : roundTradeCost(knownFeeAmount, currency);
   const appliesSellTax = isDomesticStockCategory(category);
   const sellTax = appliesSellTax ? roundTradeCost(grossSellAmount * taxRate, currency) : 0;
   const grossPnl = (sellUnitPrice - buyUnitPrice) * sellQuantity;
@@ -139,7 +178,8 @@ export const calculateSellCosts = ({
     totalCost: brokerFee + sellTax,
     grossPnl,
     netPnl,
-    feeRatePercent: feeRate * 100,
+    // 실제 차감된 수수료에서 역산한 요율. 기록된 금액을 늘 재현할 수 있어야 한다.
+    feeRatePercent: deriveFeeRatePercent(brokerFee, grossSellAmount),
     sellTaxRatePercent: appliesSellTax ? taxRate * 100 : 0,
   };
 };
