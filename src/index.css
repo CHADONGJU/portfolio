@@ -1,56 +1,58 @@
 @import "tailwindcss";
 
 /*
- * 디자인 토큰 — 그래파이트 모노.
- * 브랜드에서 색을 걷어내고 무채색만 남겼다. 화면에서 유일하게 색을 갖는 건
- * 등락 숫자뿐이라 시선이 자연스럽게 수치로 간다.
+ * 디자인 토큰 — 토스 라이트.
+ * 토스(TDS) 그레이 스케일을 기준으로 삼는다: 연회색 캔버스 위에 테두리 없는
+ * 흰 카드, 본문은 블루-그레이 잉크, 포인트는 토스 블루 하나만 쓴다.
  * 한국 증시 관례에 따라 상승은 빨강(up), 하락은 파랑(down)이다.
+ * 등락 색은 토스 레드/블루에서 출발하되, 11~12px 굵은 숫자에도 쓰이므로
+ * 흰 배경 대비 4.5:1(WCAG AA)을 넘도록 살짝만 깊게 눌렀다.
  * 삭제/오류(danger)는 up과 같은 계열이지만 의미가 달라 이름을 분리해 둔다.
  */
 @theme {
-  /* 면 — 완전 무채색 */
-  --color-canvas: #f4f4f5;
+  /* 면 — 토스 그레이 (blue cast) */
+  --color-canvas: #f2f4f6;
   --color-surface: #ffffff;
-  --color-line: #e4e4e7;
-  --color-line-soft: #f0f0f2;
+  --color-line: #e5e8eb;
+  --color-line-soft: #eef1f4;
 
-  /* 글자 */
-  --color-ink: #0c0d10;
-  --color-ink-soft: #52555d;
-  /* 11~12px 작은 글씨에 광범위하게 쓰인다. #8b8e97은 흰 배경 3.27:1,
-     캔버스 2.98:1로 WCAG AA(4.5:1) 미달이었다. 같은 회색 계열에서 최소한만 어둡게. */
-  --color-ink-mute: #6c6f77;
+  /* 글자 — grey900 / grey700 / grey600 */
+  --color-ink: #191f28;
+  --color-ink-soft: #4e5968;
+  /* 11~12px 작은 글씨에 광범위하게 쓰인다. 토스 grey500(#8b95a1)은
+     흰 배경 3.1:1로 AA 미달이라 grey600으로 한 단계 내렸다(흰 배경 4.6:1). */
+  --color-ink-mute: #6b7684;
 
-  /* 브랜드 — 그래파이트. 색을 쓰지 않으니 수익률 숫자만 색으로 튄다. */
-  --color-brand: #26282e;
-  --color-brand-strong: #111318;
-  --color-brand-soft: #f1f1f3;
+  /* 브랜드 — 토스 블루. 버튼·활성 탭·포커스에만 쓴다. */
+  --color-brand: #3182f6;
+  --color-brand-strong: #1b64da;
+  --color-brand-soft: #e8f3ff;
 
-  /* 등락 — 채도를 낮춘 딥 레드 / 슬레이트 블루 */
-  --color-up: #c8433f;
-  --color-up-soft: #fbeeed;
-  --color-down: #3f6fa8;
-  --color-down-soft: #eef2f8;
+  /* 등락 — 토스 레드/블루를 AA(4.5:1)까지 눌러 놓은 값 */
+  --color-up: #d63c44;
+  --color-up-soft: #fdecee;
+  --color-down: #2f6fd0;
+  --color-down-soft: #e8f1fd;
 
-  --color-danger: #c8433f;
-  --color-danger-soft: #fbeeed;
+  --color-danger: #d63c44;
+  --color-danger-soft: #fdecee;
   /* #b0761c는 3.85:1로 AA 미달이었다. */
   --color-warn: #956317;
   --color-warn-soft: #f9f3e8;
 
   /* 밤 화면(로그인) 전용 잉크 */
-  --color-night: #0b0c0e;
+  --color-night: #101013;
 
-  /* 그림자 — 한 겹은 접지선, 한 겹은 공기 */
+  /* 그림자 — 토스 카드처럼 옅고 넓게, 잉크는 블루-그레이 */
   --shadow-card:
-    0 1px 1px rgba(12, 13, 16, 0.03),
-    0 6px 20px -14px rgba(12, 13, 16, 0.2);
+    0 1px 2px rgba(25, 31, 40, 0.03),
+    0 8px 24px -18px rgba(25, 31, 40, 0.14);
   --shadow-lift:
-    0 1px 2px rgba(12, 13, 16, 0.05),
-    0 14px 32px -18px rgba(12, 13, 16, 0.3);
+    0 1px 2px rgba(25, 31, 40, 0.04),
+    0 14px 32px -18px rgba(25, 31, 40, 0.22);
   --shadow-modal:
-    0 2px 6px rgba(12, 13, 16, 0.08),
-    0 32px 64px -24px rgba(12, 13, 16, 0.34);
+    0 2px 6px rgba(25, 31, 40, 0.07),
+    0 32px 64px -24px rgba(25, 31, 40, 0.3);
 
   --font-sans:
     'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
@@ -84,7 +86,7 @@ body {
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--color-ink) 14%, transparent);
+  background: color-mix(in srgb, var(--color-brand) 18%, transparent);
   color: var(--color-ink);
 }
 
@@ -144,22 +146,15 @@ body {
  * components 레이어라서 JSX에 적힌 유틸리티가 언제나 우선한다.
  */
 @layer components {
-  /* 앱 셸 — 위쪽이 아주 살짝 밝은 캔버스 */
+  /* 앱 셸 — 토스처럼 거의 평평한 연회색. 위쪽만 아주 살짝 밝다. */
   .min-h-\[100dvh\].bg-canvas {
     background-color: var(--color-canvas);
-    background-image:
-      radial-gradient(
-        120rem 40rem at 50% -18rem,
-        rgba(12, 13, 16, 0.05),
-        transparent 70%
-      ),
-      linear-gradient(180deg, #fafafa 0%, var(--color-canvas) 26rem);
-    background-attachment: fixed, scroll;
+    background-image: linear-gradient(180deg, #f7f9fa 0%, var(--color-canvas) 22rem);
   }
 
-  /* 카드 */
+  /* 카드 — 토스처럼 테두리 없이 면 대비와 옅은 그림자로만 뜬다 */
   .bg-surface.rounded-\[20px\] {
-    border: 1px solid var(--color-line-soft);
+    border: 1px solid transparent;
     box-shadow: var(--shadow-card);
   }
 
@@ -168,7 +163,6 @@ body {
   a.bg-surface.rounded-\[20px\]:hover,
   button.bg-surface.rounded-\[20px\]:hover {
     box-shadow: var(--shadow-lift);
-    border-color: var(--color-line);
   }
 
   /* 모달·시트 */
@@ -185,45 +179,25 @@ body {
     -webkit-backdrop-filter: blur(6px) saturate(120%);
   }
 
-  /* 브랜드 버튼 — 위쪽 광택 한 겹 + 색 그림자 */
+  /* 브랜드 버튼 — 토스처럼 광택 없는 순색 블루. 그림자만 블루로 한 겹. */
   button.bg-brand,
   a.bg-brand {
-    background-image: linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.16),
-      rgba(255, 255, 255, 0) 55%,
-      rgba(0, 0, 0, 0.06)
-    );
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.18),
-      0 1px 2px rgba(16, 21, 31, 0.12),
-      0 10px 22px -12px rgba(12, 13, 16, 0.5);
+    box-shadow: 0 8px 20px -12px rgba(49, 130, 246, 0.55);
   }
 
   button.bg-brand:active,
   a.bg-brand:active {
-    box-shadow:
-      inset 0 1px 2px rgba(0, 0, 0, 0.18),
-      0 1px 2px rgba(16, 21, 31, 0.1);
+    box-shadow: 0 3px 10px -8px rgba(49, 130, 246, 0.5);
   }
 
   button.bg-brand:disabled {
     box-shadow: none;
-    background-image: none;
   }
 
-  /* 잉크 버튼 */
+  /* 잉크 버튼 — 브랜드 버튼과 같은 평면 마감 */
   button.bg-ink,
   a.bg-ink {
-    background-image: linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.14),
-      rgba(255, 255, 255, 0) 60%
-    );
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.14),
-      0 1px 2px rgba(16, 21, 31, 0.16),
-      0 10px 20px -14px rgba(16, 21, 31, 0.6);
+    box-shadow: 0 8px 20px -14px rgba(25, 31, 40, 0.55);
   }
 
   /* 배지·칩 — 테두리 없이 떠 있는 대신 아주 옅은 안쪽 선 */
@@ -303,7 +277,7 @@ body {
   overflow: hidden;
 }
 
-/* 광원 두 개 — 인디고를 위에서, 아주 옅은 청록을 아래에서 */
+/* 광원 두 개 — 토스 블루를 위에서, 아주 옅은 블루-그레이를 아래에서 */
 .auth-screen::before {
   content: '';
   position: absolute;
@@ -311,9 +285,9 @@ body {
   height: 120%;
   z-index: -2;
   background:
-    radial-gradient(48rem 36rem at 50% 50%, rgba(154, 162, 178, 0.26), transparent 64%),
-    radial-gradient(34rem 26rem at 16% 22%, rgba(122, 130, 146, 0.17), transparent 62%),
-    radial-gradient(32rem 24rem at 86% 26%, rgba(110, 118, 134, 0.14), transparent 62%);
+    radial-gradient(48rem 36rem at 50% 50%, rgba(49, 130, 246, 0.22), transparent 64%),
+    radial-gradient(34rem 26rem at 16% 22%, rgba(49, 130, 246, 0.12), transparent 62%),
+    radial-gradient(32rem 24rem at 86% 26%, rgba(110, 126, 152, 0.14), transparent 62%);
   filter: blur(6px);
   animation: auth-drift 20s ease-in-out infinite alternate;
 }
@@ -324,7 +298,7 @@ body {
   inset: auto -20% -32% -20%;
   height: 62%;
   z-index: -2;
-  background: radial-gradient(42rem 24rem at 55% 92%, rgba(120, 128, 144, 0.14), transparent 66%);
+  background: radial-gradient(42rem 24rem at 55% 92%, rgba(80, 120, 180, 0.14), transparent 66%);
   filter: blur(10px);
 }
 
@@ -357,7 +331,7 @@ body {
   -webkit-backdrop-filter: blur(26px) saturate(150%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.2),
-    0 0 90px -10px rgba(150, 158, 175, 0.22),
+    0 0 90px -10px rgba(49, 130, 246, 0.2),
     0 44px 88px -34px rgba(0, 0, 0, 0.85);
 }
 
@@ -377,13 +351,13 @@ body {
   );
 }
 
-/* 로고 마크 */
+/* 로고 마크 — 토스 블루 그라데이션 */
 .auth-mark {
   background:
-    linear-gradient(155deg, #8d939c 0%, #383c44 48%, #15171b 100%);
+    linear-gradient(155deg, #6aa8ff 0%, #3182f6 48%, #1b64da 100%);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.32),
-    inset 0 -8px 20px rgba(0, 0, 0, 0.35),
+    inset 0 -8px 20px rgba(0, 30, 80, 0.35),
     0 14px 30px -12px rgba(0, 0, 0, 0.9);
 }
 
@@ -520,7 +494,7 @@ select:is(.bg-canvas, .bg-surface) {
   appearance: none;
   -webkit-appearance: none;
   padding-right: 2.25rem;
-  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b8e97' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b95a1' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.75rem center;
   background-size: 15px 15px;
@@ -531,8 +505,10 @@ select:is(.bg-canvas, .bg-surface) {
  * 선택된 쪽만 흰 알약으로 떠오르게 해서 상태가 한눈에 읽히게 한다.
  */
 .seg {
-  background: var(--color-brand-soft);
-  box-shadow: inset 0 0 0 1px rgba(16, 21, 31, 0.045);
+  /* brand-soft가 블루 틴트가 되면서 세그먼트가 파랗게 물들지 않도록
+     토스 세그먼트처럼 중립 회색 트랙을 쓴다. */
+  background: var(--color-canvas);
+  box-shadow: inset 0 0 0 1px rgba(25, 31, 40, 0.04);
 }
 
 .seg-item {
