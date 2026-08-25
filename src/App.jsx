@@ -2700,6 +2700,61 @@ const buyLotDraftSummary = useMemo(() => {
       const targetValue = targetBudgetKRW * ((Number(categoryTarget.percent) || 0) / 100);
       const groups = getTargetGroups(targetPortfolio, categoryTarget.id);
       const groupTotalPercent = groups.reduce((sum, group) => sum + (Number(group.percent) || 0), 0);
+      // 목표 종목에 실제로 연결된(매칭된) 보유 자산을 추적해, 계획에 아예 없는
+      // 보유 종목(리밸런싱 계획이 놓치고 있는 것)을 따로 골라낼 수 있게 한다.
+      const matchedAssets = new Set();
+
+      const enrichedGroups = groups.map((group) => {
+        const groupTargetValue = targetValue * ((Number(group.percent) || 0) / 100);
+        const items = group.items || [];
+        const itemTotalPercent = items.reduce((sum, item) => sum + (Number(item.percent) || 0), 0);
+        const enrichedItems = items.map((item) => {
+          const itemCurrency = getTargetItemCurrency(categoryTarget.id, item.ticker, item.currency);
+          const matchedAsset = categoryAssets.find((asset) => (
+            asset.name === item.name || (item.ticker && asset.ticker?.toUpperCase() === item.ticker.toUpperCase())
+          ));
+          if (matchedAsset) matchedAssets.add(matchedAsset);
+          const currentItemValue = matchedAsset?.currentKRW || 0;
+          const itemTargetValue = itemTotalPercent > 0
+            ? groupTargetValue * ((Number(item.percent) || 0) / itemTotalPercent)
+            : 0;
+          const gapValue = itemTargetValue - currentItemValue;
+          const currentPriceKRW = matchedAsset
+            ? toKrwPrice(matchedAsset.nativeCurrentPrice, matchedAsset.currency)
+            : parseNumber(item.price);
+          const currentPriceNative = matchedAsset
+            ? matchedAsset.nativeCurrentPrice
+            : (parseNumber(item.nativePrice) || toNativePrice(currentPriceKRW, itemCurrency));
+
+          return {
+            ...item,
+            currency: itemCurrency,
+            currentValue: currentItemValue,
+            targetValue: itemTargetValue,
+            gapValue,
+            currentPriceKRW,
+            currentPriceNative,
+            quantityToBuy: gapValue > 0 && currentPriceKRW > 0 ? gapValue / currentPriceKRW : 0,
+            quantityToSell: gapValue < 0 && currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
+            adjustmentSide: gapValue > 0 ? 'buy' : gapValue < 0 ? 'sell' : 'hold',
+            adjustmentQuantity: currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
+            matchedQuantity: matchedAsset?.quantity || 0,
+            // 이름·티커가 어긋나 매칭이 조용히 실패하면 "매수 필요"가 실제보다
+            // 크게 나오는데, 화면에는 원인이 안 보인다. 매칭 성공 여부를 그대로 넘긴다.
+            isMatched: Boolean(matchedAsset),
+          };
+        });
+
+        return {
+          ...group,
+          targetValue: groupTargetValue,
+          currentValue: enrichedItems.reduce((sum, item) => sum + item.currentValue, 0),
+          itemTotalPercent,
+          items: enrichedItems,
+        };
+      });
+
+      const unassignedAssets = categoryAssets.filter((asset) => !matchedAssets.has(asset));
 
       return {
         ...categoryTarget,
@@ -2708,54 +2763,42 @@ const buyLotDraftSummary = useMemo(() => {
         gapValue: targetValue - currentValue,
         currentPercent: targetBudgetKRW > 0 ? (currentValue / targetBudgetKRW) * 100 : 0,
         groupTotalPercent,
-        groups: groups.map((group) => {
-          const groupTargetValue = targetValue * ((Number(group.percent) || 0) / 100);
-          const items = group.items || [];
-          const itemTotalPercent = items.reduce((sum, item) => sum + (Number(item.percent) || 0), 0);
-          const enrichedItems = items.map((item) => {
-            const itemCurrency = getTargetItemCurrency(categoryTarget.id, item.ticker, item.currency);
-            const matchedAsset = categoryAssets.find((asset) => (
-              asset.name === item.name || (item.ticker && asset.ticker?.toUpperCase() === item.ticker.toUpperCase())
-            ));
-            const currentItemValue = matchedAsset?.currentKRW || 0;
-            const itemTargetValue = itemTotalPercent > 0
-              ? groupTargetValue * ((Number(item.percent) || 0) / itemTotalPercent)
-              : 0;
-            const gapValue = itemTargetValue - currentItemValue;
-            const currentPriceKRW = matchedAsset
-              ? toKrwPrice(matchedAsset.nativeCurrentPrice, matchedAsset.currency)
-              : parseNumber(item.price);
-            const currentPriceNative = matchedAsset
-              ? matchedAsset.nativeCurrentPrice
-              : (parseNumber(item.nativePrice) || toNativePrice(currentPriceKRW, itemCurrency));
-
-            return {
-              ...item,
-              currency: itemCurrency,
-              currentValue: currentItemValue,
-              targetValue: itemTargetValue,
-              gapValue,
-              currentPriceKRW,
-              currentPriceNative,
-              quantityToBuy: gapValue > 0 && currentPriceKRW > 0 ? gapValue / currentPriceKRW : 0,
-              quantityToSell: gapValue < 0 && currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
-              adjustmentSide: gapValue > 0 ? 'buy' : gapValue < 0 ? 'sell' : 'hold',
-              adjustmentQuantity: currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
-              matchedQuantity: matchedAsset?.quantity || 0,
-            };
-          });
-
-          return {
-            ...group,
-            targetValue: groupTargetValue,
-            currentValue: enrichedItems.reduce((sum, item) => sum + item.currentValue, 0),
-            itemTotalPercent,
-            items: enrichedItems,
-          };
-        }),
+        groups: enrichedGroups,
+        // 목표 계획(폴더·종목)에 하나도 안 걸린 보유 자산. 팔아야 할지 계획에
+        // 추가해야 할지는 사용자가 판단하되, 최소한 눈에는 보이게 한다.
+        unassignedAssets,
+        unassignedValue: unassignedAssets.reduce((sum, asset) => sum + asset.currentKRW, 0),
       };
     });
   }, [targetPortfolio, enhancedAssets, targetBudgetKRW, exchangeRate, jpyKrwRate, currencyRates]);
+  // 매수·매도 필요 종목이 폴더 안에 하나씩 흩어져 있으면 전체 실행 계획을 보려고
+  // 표 전체를 스크롤해야 한다. 금액이 큰 순서로 한곳에 모아 바로 실행할 수 있게 한다.
+  const targetRebalancePlan = useMemo(() => {
+    const actions = [];
+    targetPortfolioGuide.forEach((category) => {
+      category.groups.forEach((group) => {
+        group.items.forEach((item) => {
+          if (item.adjustmentSide === 'hold' || !(Math.abs(item.gapValue) > 1)) return;
+          actions.push({
+            key: `${category.id}-${group.id}-${item.id}`,
+            categoryId: category.id,
+            groupName: group.name,
+            name: item.name || item.ticker || '이름 없음',
+            ticker: item.ticker,
+            side: item.adjustmentSide,
+            amountKRW: Math.abs(item.gapValue),
+            quantity: item.adjustmentQuantity,
+            currency: item.currency,
+            isMatched: item.isMatched,
+          });
+        });
+      });
+    });
+    return {
+      buys: actions.filter((action) => action.side === 'buy').sort((a, b) => b.amountKRW - a.amountKRW),
+      sells: actions.filter((action) => action.side === 'sell').sort((a, b) => b.amountKRW - a.amountKRW),
+    };
+  }, [targetPortfolioGuide]);
   const targetCurrentChartData = useMemo(() => {
     let cumulativePercent = 0;
     const grouped = Object.values(enhancedAssets.reduce((acc, asset) => {
@@ -2853,6 +2896,67 @@ const buyLotDraftSummary = useMemo(() => {
       };
     });
   }, [selectedTargetGuide, selectedTargetGroupGuide, targetGoalChartData]);
+  // "현재 포트폴리오" 파이도 "목표" 파이와 같은 카테고리/폴더 선택을 그대로 따라가며
+  // 드릴다운한다 — 같은 구간을 눌러야 두 파이를 나란히 비교할 수 있다.
+  const targetCurrentDrilldownChartData = useMemo(() => {
+    if (!selectedTargetGuide) return targetCurrentChartData;
+
+    let cumulativePercent = 0;
+    if (selectedTargetGroupGuide) {
+      const items = selectedTargetGroupGuide.items.length > 0
+        ? selectedTargetGroupGuide.items
+        : [{ id: `${selectedTargetGroupGuide.id}-empty`, name: '종목 없음', currentValue: 0 }];
+      const itemTotalValue = items.reduce((sum, item) => sum + (Number(item.currentValue) || 0), 0);
+
+      return items.map((item, index) => {
+        const percent = itemTotalValue > 0 ? ((Number(item.currentValue) || 0) / itemTotalValue) * 100 : 0;
+        const startPercent = cumulativePercent;
+        cumulativePercent += percent;
+
+        return {
+          id: `current-item-${item.id}`,
+          name: item.name || item.ticker || '이름 없음',
+          value: item.currentValue,
+          percent,
+          startPercent,
+          color: getCategoryDetailColor(selectedTargetGuide.id, index),
+        };
+      });
+    }
+
+    const groupSlices = selectedTargetGuide.groups.map((group) => ({
+      id: `current-drill-${group.id}`,
+      name: group.name || '미분류',
+      groupId: group.id,
+      value: group.currentValue,
+    }));
+    // 목표 폴더 어디에도 안 걸린 보유 자산은 "미분류"로 따로 보여준다 — 클릭은
+    // 안 되지만(목표 폴더가 아니므로), 값이 존재한다는 것 자체가 신호다.
+    if (selectedTargetGuide.unassignedValue > 0) {
+      groupSlices.push({
+        id: `current-drill-unassigned`,
+        name: '미분류(계획 없음)',
+        value: selectedTargetGuide.unassignedValue,
+      });
+    }
+    const slices = groupSlices.length > 0
+      ? groupSlices
+      : [{ id: `${selectedTargetGuide.id}-empty`, name: '보유 없음', value: 0 }];
+    const totalValue = slices.reduce((sum, slice) => sum + (Number(slice.value) || 0), 0);
+
+    return slices.map((slice, index) => {
+      const percent = totalValue > 0 ? ((Number(slice.value) || 0) / totalValue) * 100 : 0;
+      const startPercent = cumulativePercent;
+      cumulativePercent += percent;
+
+      return {
+        ...slice,
+        percent,
+        startPercent,
+        color: getCategoryDetailColor(selectedTargetGuide.id, index),
+      };
+    });
+  }, [selectedTargetGuide, selectedTargetGroupGuide, targetCurrentChartData]);
 
   useEffect(() => {
     if (!selectedTargetCategory) return;
@@ -3410,6 +3514,66 @@ const buyLotDraftSummary = useMemo(() => {
         category.id === categoryId ? { ...category, percent: sanitizeNumericInput(percent) } : category
       )),
     }));
+  };
+
+  /**
+   * 목표 비중을 손으로 100%까지 맞추기 번거로우니, 지금 넣은 값들의 비율은
+   * 그대로 두고 합만 100%로 비례 배분한다. 아직 아무것도 안 넣었으면(합계 0)
+   * 똑같이 나눈다.
+   */
+  const normalizePercentsToHundred = (entries, getPercent) => {
+    if (entries.length === 0) return [];
+    const total = entries.reduce((sum, entry) => sum + (Number(getPercent(entry)) || 0), 0);
+    if (!(total > 0)) {
+      const equalShare = Math.round((100 / entries.length) * 10) / 10;
+      return entries.map(() => equalShare);
+    }
+    return entries.map((entry) => Math.round(((Number(getPercent(entry)) || 0) / total) * 1000) / 10);
+  };
+
+  const normalizeCategoryPercents = () => {
+    setTargetPortfolio((prev) => {
+      const scaled = normalizePercentsToHundred(prev.categories, (category) => category.percent);
+      return {
+        ...prev,
+        categories: prev.categories.map((category, index) => ({ ...category, percent: scaled[index] })),
+      };
+    });
+  };
+
+  const normalizeGroupPercents = (categoryId) => {
+    setTargetPortfolio((prev) => {
+      const groups = getTargetGroups(prev, categoryId);
+      const scaled = normalizePercentsToHundred(groups, (group) => group.percent);
+      return {
+        ...prev,
+        groups: {
+          ...prev.groups,
+          [categoryId]: groups.map((group, index) => ({ ...group, percent: scaled[index] })),
+        },
+      };
+    });
+  };
+
+  const normalizeItemPercents = (categoryId, groupId) => {
+    setTargetPortfolio((prev) => {
+      const groups = getTargetGroups(prev, categoryId);
+      const targetGroup = groups.find((group) => group.id === groupId);
+      if (!targetGroup) return prev;
+      const items = targetGroup.items || [];
+      const scaled = normalizePercentsToHundred(items, (item) => item.percent);
+      return {
+        ...prev,
+        groups: {
+          ...prev.groups,
+          [categoryId]: groups.map((group) => (
+            group.id === groupId
+              ? { ...group, items: items.map((item, index) => ({ ...item, percent: scaled[index] })) }
+              : group
+          )),
+        },
+      };
+    });
   };
 
   const addTargetCategory = () => {
@@ -5641,6 +5805,15 @@ const buyLotDraftSummary = useMemo(() => {
                   <div className={`px-5 py-3 rounded-xl border text-xs md:text-sm font-bold ${Math.abs(targetCategoryTotalPercent - 100) < 0.001 ? 'bg-brand-soft text-brand' : 'bg-warn-soft text-warn'}`}>
                     전체 목표 {targetCategoryTotalPercent.toFixed(1)}%
                   </div>
+                  {Math.abs(targetCategoryTotalPercent - 100) >= 0.001 && targetPortfolio.categories.length > 0 && (
+                    <button
+                      onClick={normalizeCategoryPercents}
+                      className="px-4 py-3 bg-line-soft text-ink-soft rounded-xl font-bold text-xs hover:bg-line transition-colors"
+                      title="지금 넣은 비율은 유지한 채 합만 100%로 맞춥니다"
+                    >
+                      100%로 맞추기
+                    </button>
+                  )}
                   {targetPriceSyncStatus && (
                     <div className="px-5 py-3 rounded-xl border bg-canvas border-line text-ink-soft text-xs md:text-sm font-bold">
                       {targetPriceSyncStatus}
@@ -5663,10 +5836,74 @@ const buyLotDraftSummary = useMemo(() => {
                 </div>
               </div>
 
+              {(targetRebalancePlan.buys.length > 0 || targetRebalancePlan.sells.length > 0) && (
+                <div className="p-5 md:p-7 border-b border-line bg-canvas/40">
+                  <div className="flex items-center gap-2 mb-4">
+                    <h4 className="text-sm md:text-base font-bold text-ink">리밸런싱 실행 계획</h4>
+                    <FeatureInfo text="폴더 안에 흩어진 매수·매도 필요 종목을 금액이 큰 순서로 모았습니다." />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-surface rounded-2xl p-4 md:p-5">
+                      <p className="text-[11px] font-bold text-up mb-3">매수 필요 · {targetRebalancePlan.buys.length}건</p>
+                      <div className="space-y-2">
+                        {targetRebalancePlan.buys.map((action) => (
+                          <div key={action.key} className="flex items-center justify-between gap-3 text-xs md:text-sm">
+                            <div className="min-w-0">
+                              <p className="font-bold text-ink truncate">
+                                {action.name}
+                                {!action.isMatched && <span className="ml-1.5 text-[10px] font-bold text-warn">미연동</span>}
+                              </p>
+                              <p className="text-[11px] text-ink-mute font-semibold truncate">{action.categoryId} · {action.groupName}</p>
+                            </div>
+                            <p className="shrink-0 font-bold text-up">+{formatMoney(action.amountKRW, 'KRW')}</p>
+                          </div>
+                        ))}
+                        {targetRebalancePlan.buys.length === 0 && (
+                          <p className="text-xs font-semibold text-ink-mute">매수가 필요한 종목이 없습니다.</p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-surface rounded-2xl p-4 md:p-5">
+                      <p className="text-[11px] font-bold text-down mb-3">매도 필요 · {targetRebalancePlan.sells.length}건</p>
+                      <div className="space-y-2">
+                        {targetRebalancePlan.sells.map((action) => (
+                          <div key={action.key} className="flex items-center justify-between gap-3 text-xs md:text-sm">
+                            <div className="min-w-0">
+                              <p className="font-bold text-ink truncate">
+                                {action.name}
+                                {!action.isMatched && <span className="ml-1.5 text-[10px] font-bold text-warn">미연동</span>}
+                              </p>
+                              <p className="text-[11px] text-ink-mute font-semibold truncate">{action.categoryId} · {action.groupName}</p>
+                            </div>
+                            <p className="shrink-0 font-bold text-down">-{formatMoney(action.amountKRW, 'KRW')}</p>
+                          </div>
+                        ))}
+                        {targetRebalancePlan.sells.length === 0 && (
+                          <p className="text-xs font-semibold text-ink-mute">매도가 필요한 종목이 없습니다.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {targetViewMode === 'chart' && (
                 <div className="p-5 md:p-7 border-b border-line grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {[
-                    { title: '현재 포트폴리오', data: targetCurrentChartData, center: formatMoney(totalConvertedKRW, 'KRW') },
+                    {
+                      title: selectedTargetGroupGuide
+                        ? `${selectedTargetGroupGuide.name || '미분류'} 현재 보유`
+                        : selectedTargetGuide
+                          ? `${selectedTargetGuide.id} 현재 보유`
+                          : '현재 포트폴리오',
+                      data: selectedTargetGuide ? targetCurrentDrilldownChartData : targetCurrentChartData,
+                      center: selectedTargetGroupGuide
+                        ? formatMoney(selectedTargetGroupGuide.currentValue, 'KRW')
+                        : selectedTargetGuide
+                          ? formatMoney(selectedTargetGuide.currentValue, 'KRW')
+                          : formatMoney(totalConvertedKRW, 'KRW'),
+                      drilldown: true,
+                    },
                     {
                       title: selectedTargetGroupGuide
                         ? `${selectedTargetGroupGuide.name || '미분류'} 세부 종목`
@@ -5680,12 +5917,13 @@ const buyLotDraftSummary = useMemo(() => {
                           ? formatMoney(selectedTargetGuide.targetValue, 'KRW')
                           : formatMoney(targetBudgetKRW, 'KRW'),
                       drilldown: true,
+                      showBackButton: true,
                     },
                   ].map((chart) => (
                     <div key={chart.title} className="bg-canvas rounded-2xl p-5 md:p-6">
                       <div className="flex items-center justify-between gap-3 mb-5">
                         <h4 className="text-sm md:text-base font-bold text-ink">{chart.title}</h4>
-                        {chart.drilldown && selectedTargetGuide ? (
+                        {chart.showBackButton && selectedTargetGuide ? (
                           <button
                             onClick={() => {
                               if (selectedTargetGroupGuide) {
@@ -5764,6 +6002,51 @@ const buyLotDraftSummary = useMemo(() => {
                 </div>
               )}
 
+              {targetViewMode === 'chart' && (
+                <div className="p-5 md:p-7 border-b border-line">
+                  <h4 className="text-sm md:text-base font-bold text-ink mb-1">카테고리별 현재 vs 목표 비중</h4>
+                  <p className="text-[11px] md:text-xs font-semibold text-ink-mute mb-5">두 파이그래프만으로는 비교하기 어려운 차이를 막대로 바로 보여줍니다.</p>
+                  <div className="space-y-5">
+                    {targetPortfolioGuide.map((category) => {
+                      const currentPct = Math.max(0, Math.min(100, category.currentPercent));
+                      const targetPct = Math.max(0, Math.min(100, Number(category.percent) || 0));
+                      const gapPercentPoint = category.currentPercent - targetPct;
+                      return (
+                        <div key={category.id}>
+                          <div className="flex items-center justify-between gap-3 mb-2">
+                            <span className="text-xs md:text-sm font-bold text-ink">{category.id}</span>
+                            {Math.abs(gapPercentPoint) > 0.05 && (
+                              <span className="text-[11px] md:text-xs font-bold text-ink-mute">
+                                목표 대비 {gapPercentPoint > 0 ? '+' : ''}{gapPercentPoint.toFixed(1)}%p
+                              </span>
+                            )}
+                          </div>
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-2">
+                              <span className="w-9 shrink-0 text-[10px] font-bold text-ink-mute">현재</span>
+                              <div className="flex-1 h-2.5 rounded-full bg-line-soft overflow-hidden">
+                                <div className="h-full rounded-full bg-brand" style={{ width: `${Math.max(currentPct, currentPct > 0 ? 1 : 0)}%` }} />
+                              </div>
+                              <span className="w-14 shrink-0 text-right text-[11px] font-bold text-ink">{category.currentPercent.toFixed(1)}%</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="w-9 shrink-0 text-[10px] font-bold text-ink-mute">목표</span>
+                              <div className="flex-1 h-2.5 rounded-full bg-line-soft overflow-hidden">
+                                <div className="h-full rounded-full bg-ink" style={{ width: `${Math.max(targetPct, targetPct > 0 ? 1 : 0)}%` }} />
+                              </div>
+                              <span className="w-14 shrink-0 text-right text-[11px] font-bold text-ink">{targetPct.toFixed(1)}%</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {targetPortfolioGuide.length === 0 && (
+                      <p className="text-xs font-bold text-ink-mute">분류를 추가하면 여기에 비교 막대가 표시됩니다.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {targetViewMode === 'table' && (
               <div className="divide-y divide-line-soft">
                 {targetPortfolioGuide.map((category) => (
@@ -5820,12 +6103,23 @@ const buyLotDraftSummary = useMemo(() => {
                             폴더 목표 합계 {category.groupTotalPercent.toFixed(1)}%
                           </p>
                         </div>
-                        <button
-                          onClick={() => addTargetGroup(category.id)}
-                          className="px-4 py-2.5 bg-line-soft text-ink-soft rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-line transition-colors"
-                        >
-                          <Plus size={14} /> 폴더 추가
-                        </button>
+                        <div className="flex items-center gap-2">
+                          {Math.abs(category.groupTotalPercent - 100) >= 0.001 && category.groups.length > 0 && (
+                            <button
+                              onClick={() => normalizeGroupPercents(category.id)}
+                              className="px-4 py-2.5 bg-line-soft text-ink-soft rounded-xl font-bold text-xs hover:bg-line transition-colors"
+                              title="지금 넣은 비율은 유지한 채 합만 100%로 맞춥니다"
+                            >
+                              100%로 맞추기
+                            </button>
+                          )}
+                          <button
+                            onClick={() => addTargetGroup(category.id)}
+                            className="px-4 py-2.5 bg-line-soft text-ink-soft rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-line transition-colors"
+                          >
+                            <Plus size={14} /> 폴더 추가
+                          </button>
+                        </div>
                       </div>
 
                       {category.groups.map((group) => (
@@ -5866,20 +6160,40 @@ const buyLotDraftSummary = useMemo(() => {
                             <span className="bg-surface rounded-xl px-3 py-2 text-ink-soft">폴더 목표 {Number(group.percent || 0).toFixed(1)}%</span>
                             <span className="bg-surface rounded-xl px-3 py-2 text-ink">목표 {formatMoney(group.targetValue, 'KRW')}</span>
                             <span className="bg-surface rounded-xl px-3 py-2 text-ink-soft">현재 {formatMoney(group.currentValue, 'KRW')}</span>
-                            <span className={`${Math.abs(group.itemTotalPercent - 100) < 0.001 || group.items.length === 0 ? 'text-ink-soft' : 'text-warn'} bg-surface rounded-xl px-3 py-2`}>
-                              종목 합계 {group.itemTotalPercent.toFixed(1)}%
-                            </span>
+                            {Math.abs(group.itemTotalPercent - 100) >= 0.001 && group.items.length > 0 ? (
+                              <button
+                                onClick={() => normalizeItemPercents(category.id, group.id)}
+                                className="bg-warn-soft text-warn rounded-xl px-3 py-2 text-left hover:opacity-80 transition-opacity"
+                                title="지금 넣은 비율은 유지한 채 합만 100%로 맞춥니다"
+                              >
+                                종목 합계 {group.itemTotalPercent.toFixed(1)}% · 100%로 맞추기
+                              </button>
+                            ) : (
+                              <span className="text-ink-soft bg-surface rounded-xl px-3 py-2">
+                                종목 합계 {group.itemTotalPercent.toFixed(1)}%
+                              </span>
+                            )}
                           </div>
 
                           <div className="space-y-2 pl-3 md:pl-5 border-l-2 border-line">
                             {group.items.map((item) => (
                               <div key={item.id} className="grid grid-cols-1 lg:grid-cols-[1fr_0.8fr_0.55fr_0.8fr_auto] gap-2 bg-surface rounded-2xl p-3">
-                                <input
-                                  value={item.name}
-                                  onChange={(e) => updateTargetItem(category.id, group.id, item.id, { name: e.target.value })}
-                                  placeholder="종목명"
-                                  className="px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
-                                />
+                                <div className="relative">
+                                  <input
+                                    value={item.name}
+                                    onChange={(e) => updateTargetItem(category.id, group.id, item.id, { name: e.target.value })}
+                                    placeholder="종목명"
+                                    className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
+                                  />
+                                  {!item.isMatched && (item.name || item.ticker) && (
+                                    <span
+                                      className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded-full bg-warn-soft text-warn text-[9px] font-bold"
+                                      title="현재 보유 종목과 자동으로 매칭되지 않았습니다. 종목명 또는 티커를 확인하세요."
+                                    >
+                                      미연동
+                                    </span>
+                                  )}
+                                </div>
                                 <input
                                   value={item.ticker}
                                   onChange={(e) => updateTargetItem(category.id, group.id, item.id, { ticker: e.target.value.toUpperCase() })}
@@ -5942,6 +6256,28 @@ const buyLotDraftSummary = useMemo(() => {
                         </div>
                       ))}
                     </div>
+
+                    {category.unassignedAssets.length > 0 && (
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-xs md:text-sm font-bold text-ink">계획에 없는 보유 종목</p>
+                          <p className="text-[12px] md:text-xs font-bold text-warn mt-1">
+                            이 분류에 속하지만 목표 계획(폴더·종목)에 연결되지 않은 보유 자산입니다 · 합계 {formatMoney(category.unassignedValue, 'KRW')}
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          {category.unassignedAssets.map((asset) => (
+                            <div key={asset.id || `${asset.name}-${asset.ticker}`} className="flex items-center justify-between gap-3 bg-warn-soft/40 rounded-xl px-4 py-3">
+                              <div className="min-w-0">
+                                <p className="text-xs md:text-sm font-bold text-ink truncate">{asset.name}</p>
+                                {asset.ticker && <p className="text-[11px] font-bold text-ink-mute mt-0.5">{asset.ticker}</p>}
+                              </div>
+                              <p className="text-xs md:text-sm font-bold text-ink-soft shrink-0">{formatMoney(asset.currentKRW, 'KRW')}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
