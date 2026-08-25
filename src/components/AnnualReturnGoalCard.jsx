@@ -45,7 +45,7 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
             <p className="text-[11px] font-bold text-ink-mute">현재 수익률</p>
             <p className={`figure text-3xl font-bold mt-1 ${actual === null ? 'text-ink-mute' : actual >= 0 ? 'text-up' : 'text-down'}`}>{actual === null ? '계산 준비 중' : `${actual >= 0 ? '+' : ''}${actual.toFixed(2)}%`}</p>
           </div>
-          <p className="text-xs md:text-sm font-bold text-ink-soft">{target > 0 && actual !== null ? `달성률 ${Math.round((actual / target) * 100)}%` : '목표와 평가 기록이 필요합니다.'}</p>
+          <p className="text-xs md:text-sm font-bold text-ink-soft">{target > 0 && actual !== null ? `달성률 ${Math.round((actual / target) * 100)}%` : '목표와 매매 기록이 필요합니다.'}</p>
         </div>
         <div className="relative h-5 rounded-full bg-line-soft overflow-visible">
           <span className="absolute top-0 h-full w-px bg-ink/40" style={{ left: `${zeroPosition}%` }} />

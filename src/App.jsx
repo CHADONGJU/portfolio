@@ -97,11 +97,11 @@ import {
   summarizeAnnualDividendTrend,
 } from './utils/annualDividendTrend';
 import { buildStockSearchOptions } from './utils/stockSearchOptions';
+import { upsertDailyPortfolioSnapshot } from './utils/annualPerformance';
 import {
-  calculateAnnualPerformance,
-  getAnnualPerformanceYears,
-  upsertDailyPortfolioSnapshot,
-} from './utils/annualPerformance';
+  calculateAnnualTradeReturn,
+  getAnnualTradeYears,
+} from './utils/annualTradeReturn';
 import { calculateOverseasCapitalGainsTax } from './utils/overseasCapitalGainsTax';
 import { combineTradesWithMemos } from './utils/tradeMemos';
 import {
@@ -2403,18 +2403,19 @@ const buyLotDraftSummary = useMemo(() => {
       dividendByCurrency,
     };
   }, [enhancedAssets, receivedDividends, exchangeRate, jpyKrwRate, currencyRates]);
-  const annualPerformanceYears = useMemo(() => getAnnualPerformanceYears({
-    snapshots: portfolioSnapshots,
-    capitalFlows,
+  // 연도별 수익률은 평가액 스냅샷(TWR) 대신 매매 기록으로 계산한다.
+  // 기록만 있으면 바로 나오고, "그 해 매수금액 대비 실현 총손익"이라 직관적이다.
+  const annualPerformanceYears = useMemo(() => getAnnualTradeYears({
+    rows: canonicalTradeRows,
     currentYear: new Date().getFullYear(),
-  }), [portfolioSnapshots, capitalFlows]);
+  }), [canonicalTradeRows]);
   const annualPerformances = useMemo(() => annualPerformanceYears.map((year) => (
-    calculateAnnualPerformance({ snapshots: portfolioSnapshots, capitalFlows, year })
-  )), [annualPerformanceYears, portfolioSnapshots, capitalFlows]);
+    calculateAnnualTradeReturn({ rows: canonicalTradeRows, year, exchangeRate, jpyKrwRate, currencyRates })
+  )), [annualPerformanceYears, canonicalTradeRows, exchangeRate, jpyKrwRate, currencyRates]);
   const selectedAnnualPerformance = useMemo(() => (
     annualPerformances.find((performance) => performance.year === annualReturnYear)
-    || calculateAnnualPerformance({ snapshots: portfolioSnapshots, capitalFlows, year: annualReturnYear })
-  ), [annualPerformances, annualReturnYear, portfolioSnapshots, capitalFlows]);
+    || calculateAnnualTradeReturn({ rows: canonicalTradeRows, year: annualReturnYear, exchangeRate, jpyKrwRate, currencyRates })
+  ), [annualPerformances, annualReturnYear, canonicalTradeRows, exchangeRate, jpyKrwRate, currencyRates]);
   /**
    * 해외주식 양도소득세(추정).
    * 연간 해외 종목 손익을 통산해 250만원 기본공제를 뺀 뒤 22%를 매긴다.

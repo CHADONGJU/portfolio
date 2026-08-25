@@ -12,7 +12,7 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
           <BarChart3 size={18} className="text-ink-soft" />
           <div>
             <h3 className="text-base md:text-lg font-bold text-ink">연도별 수익률</h3>
-            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">입출금을 수익과 분리한 TWR 기준입니다.</p>
+            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">그 해 매수금액 대비 실현 총손익 기준입니다.</p>
           </div>
         </div>
         <div className="seg inline-flex self-start sm:self-auto items-center p-1 rounded-[14px]">
@@ -28,20 +28,20 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
           {performance.status === 'ready' ? (
             <>
               <p className={`figure text-3xl md:text-4xl font-bold mt-2 ${performance.returnPercent >= 0 ? 'text-up' : 'text-down'}`}>{performance.returnPercent >= 0 ? '+' : ''}{performance.returnPercent.toFixed(2)}%</p>
-              <p className="text-xs font-semibold text-ink-mute mt-2">{performance.startDate} ~ {performance.endDate}{performance.estimated ? ' · 일부 구간 추정' : ''}</p>
-              {performance.carriedFrom && (
-                <p className="text-[11px] font-semibold text-ink-mute mt-1 leading-relaxed">연초 평가액이 없어 {performance.carriedFrom} 기록을 이월했습니다. 계좌 관리에서 연초 평가액을 넣으면 더 정확해집니다.</p>
+              <p className="text-xs font-semibold text-ink-mute mt-2">매매 {performance.tradeCount}건 (매수 {performance.buyCount} · 매도 {performance.sellCount}){performance.approximate ? ' · 일부 환율 근사' : ''}</p>
+              {performance.buyKRW <= 0 && performance.sellCount > 0 && (
+                <p className="text-[11px] font-semibold text-ink-mute mt-1 leading-relaxed">이 해에 매수가 없어 매도한 물량의 원금 대비로 계산했습니다.</p>
               )}
               <div className="mt-5 grid grid-cols-3 gap-2">
-                <div><p className="text-[10px] font-bold text-ink-mute">순수익</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.profitKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">기간 내 입금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.depositsKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">기간 내 출금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.withdrawalsKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">매수금액</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.buyKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">매도금액</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.sellKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">총손익</p><p className={`text-xs md:text-sm font-bold mt-1 ${performance.profitKRW >= 0 ? 'text-up' : 'text-down'}`}>{performance.profitKRW > 0 ? '+' : ''}{formatMoney(performance.profitKRW, 'KRW')}</p></div>
               </div>
             </>
           ) : (
             <div className="py-8">
-              <p className="text-xl font-bold text-ink">평가 기록이 더 필요합니다.</p>
-              <p className="text-xs font-semibold text-ink-mute mt-2 leading-relaxed">헤더의 계좌 관리에서 연초 평가액을 넣으면 자동으로 저장되는 현재 평가액과 연결해 계산합니다.</p>
+              <p className="text-xl font-bold text-ink">이 해의 매매 기록이 없습니다.</p>
+              <p className="text-xs font-semibold text-ink-mute mt-2 leading-relaxed">매수·매도 기록을 넣으면 그 해 매수금액 대비 실현 총손익으로 수익률을 계산합니다.</p>
             </div>
           )}
         </div>
@@ -53,7 +53,7 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
             const width = Number.isFinite(value) ? (Math.abs(value) / maxAbs) * 50 : 0;
             return (
               <button key={itemYear} type="button" onClick={() => onYearChange(itemYear)} className={`w-full rounded-xl px-4 py-3 text-left transition-colors ${itemYear === year ? 'bg-canvas ring-1 ring-line' : 'hover:bg-canvas'}`}>
-                <div className="flex items-center justify-between gap-3 mb-2"><span className="text-xs md:text-sm font-bold text-ink">{itemYear}{itemYear === currentYear ? ' YTD' : ''}</span><span className={`figure text-xs md:text-sm font-bold ${!Number.isFinite(value) ? 'text-ink-mute' : value >= 0 ? 'text-up' : 'text-down'}`}>{Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '자료 부족'}</span></div>
+                <div className="flex items-center justify-between gap-3 mb-2"><span className="text-xs md:text-sm font-bold text-ink">{itemYear}{itemYear === currentYear ? ' YTD' : ''}</span><span className={`figure text-xs md:text-sm font-bold ${!Number.isFinite(value) ? 'text-ink-mute' : value >= 0 ? 'text-up' : 'text-down'}`}>{Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '매매 없음'}</span></div>
                 <div className="relative h-2 rounded-full bg-line-soft overflow-hidden"><span className="absolute left-1/2 top-0 h-full w-px bg-ink/20" />{Number.isFinite(value) && <span className={`absolute top-0 h-full rounded-full ${value >= 0 ? 'bg-up' : 'bg-down'}`} style={{ left: value >= 0 ? '50%' : `${50 - width}%`, width: `${Math.max(width, 1)}%` }} />}</div>
               </button>
             );
