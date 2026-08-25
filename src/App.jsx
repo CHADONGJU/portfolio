@@ -2437,12 +2437,6 @@ const buyLotDraftSummary = useMemo(() => {
       return Number(currencyRates[code]) > 0 ? Number(currencyRates[code]) : 0;
     },
   }), [canonicalTradeRows, annualReturnYear, currencyRates, exchangeRate, jpyKrwRate]);
-  const manualPerformanceSnapshots = useMemo(() => (
-    portfolioSnapshots
-      .filter((snapshot) => snapshot.source === 'manual')
-      .sort((left, right) => String(right.date).localeCompare(String(left.date)))
-  ), [portfolioSnapshots]);
-
   useEffect(() => {
     if (!isStorageScopeReady || !isCloudPortfolioLoaded || cloudLoadFailed || isFetching || !lastUpdated) return;
     if (!(Number(totalConvertedKRW) > 0)) return;
@@ -4413,53 +4407,6 @@ const buyLotDraftSummary = useMemo(() => {
     
   };
 
-  const saveCapitalFlow = (flow) => {
-    const now = new Date().toISOString();
-    setCapitalFlows((previous) => {
-      if (flow.id) {
-        return previous.map((entry) => (
-          entry.id === flow.id ? { ...entry, ...flow, updatedAt: now } : entry
-        ));
-      }
-      return [...previous, {
-        ...flow,
-        id: `capital-flow-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        createdAt: now,
-        updatedAt: now,
-      }];
-    });
-    addLog(flow.id ? '입출금 기록을 수정했습니다.' : '입출금 기록을 추가했습니다.', 'success');
-  };
-
-  const deleteCapitalFlow = (id) => {
-    if (!window.confirm('이 입출금 기록을 삭제할까요?')) return;
-    setCapitalFlows((previous) => previous.filter((flow) => flow.id !== id));
-    addLog('입출금 기록을 삭제했습니다.', 'info');
-  };
-
-  const saveOpeningSnapshot = (year, valueKRW) => {
-    if (!Number.isInteger(year) || year < 2000 || year > new Date().getFullYear() || !(valueKRW >= 0)) {
-      addLog('연도와 연초 평가액을 확인해주세요.', 'error');
-      return;
-    }
-    const date = `${year}-01-01`;
-    setPortfolioSnapshots((previous) => upsertDailyPortfolioSnapshot(previous, {
-      id: `opening-${year}`,
-      date,
-      valueKRW,
-      source: 'manual',
-    }));
-    setAnnualReturnYear(year);
-    addLog(`${year}년 연초 평가액을 저장했습니다.`, 'success');
-  };
-
-  const deleteOpeningSnapshot = (id) => {
-    if (!window.confirm('이 연초 평가액을 삭제할까요?')) return;
-    setPortfolioSnapshots((previous) => previous.filter((snapshot) => snapshot.id !== id));
-    addLog('연초 평가액을 삭제했습니다.', 'info');
-  };
-
-
   return (
     <div className="min-h-[100dvh] bg-canvas px-4 pt-5 pb-[calc(4rem+env(safe-area-inset-bottom))] md:px-8 md:pt-8 md:pb-16 text-ink relative">
       
@@ -6050,20 +5997,7 @@ const buyLotDraftSummary = useMemo(() => {
 
       {isAccountManagerOpen && (
         <ModalOverlay overlayClassName="z-[130]" labelledBy="account-manager-title" onClose={() => setIsAccountManagerOpen(false)}>
-          <AccountManagerPanel
-            capitalFlows={capitalFlows}
-            exchangeRates={{
-              KRW: 1,
-              USD: exchangeRate || currencyRates.USD || 0,
-              JPY: jpyKrwRate || currencyRates.JPY || 0,
-            }}
-            manualSnapshots={manualPerformanceSnapshots}
-            onClose={() => setIsAccountManagerOpen(false)}
-            onDeleteFlow={deleteCapitalFlow}
-            onDeleteSnapshot={deleteOpeningSnapshot}
-            onSaveFlow={saveCapitalFlow}
-            onSaveOpeningSnapshot={saveOpeningSnapshot}
-          />
+          <AccountManagerPanel onClose={() => setIsAccountManagerOpen(false)} />
         </ModalOverlay>
       )}
 
