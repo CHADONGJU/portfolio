@@ -71,7 +71,7 @@ const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
             <BarChart3 size={18} className="text-ink-soft" />
             연간 배당 흐름
           </h3>
-          <FeatureInfo text="지급월별 세후 배당을 종목별로 쌓아 표시합니다. 확정 배당은 지급일 환율, 향후 예상은 현재 환율로 원화 환산합니다." />
+          <FeatureInfo text="지급월별 세후 배당 전망입니다. 실제 수령 기록과 최근 배당 주기를 반복한 향후 예상이 함께 있으며, 빗금은 아직 공시되지 않은 추정값입니다." />
         </div>
 
         <div className="seg inline-flex self-start lg:self-auto items-center gap-0.5 p-1 rounded-[14px]">
@@ -100,7 +100,7 @@ const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
       <div className="p-5 md:p-7">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
           <div className="bg-canvas rounded-2xl p-4 md:p-5">
-            <p className="text-[11px] md:text-xs font-bold text-ink-mute mb-1">연간 세후 배당 합계</p>
+            <p className="text-[11px] md:text-xs font-bold text-ink-mute mb-1">연간 세후 배당 전망</p>
             <p className="figure text-xl md:text-2xl font-bold text-ink">{formatMoney(trend.annualTotal, 'KRW')}</p>
             <p className="text-[11px] font-semibold text-ink-mute mt-1">
               확정 {formatMoney(trend.confirmedTotal, 'KRW')} · 예상 {formatMoney(trend.estimatedTotal, 'KRW')}
@@ -110,7 +110,7 @@ const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
             <p className="text-[11px] md:text-xs font-bold text-ink-mute mb-1">월평균 세후 배당</p>
             <p className="figure text-xl md:text-2xl font-bold text-ink">{formatMoney(trend.monthlyAverage, 'KRW')}</p>
             <p className="text-[11px] font-semibold text-ink-mute mt-1">
-              12개월 기준{isFxLoading ? ' · 지급일 환율 확인 중' : ''}
+              연간 전망 ÷ 12{isFxLoading ? ' · 지급일 환율 확인 중' : ''}
             </p>
           </div>
         </div>

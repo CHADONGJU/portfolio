@@ -38,3 +38,43 @@ export const addMonthsClamped = (date, months) => {
 
   return new Date(year, month, Math.min(day, lastDayOfTargetMonth));
 };
+
+/**
+ * 최근 배당락 주기를 반복해 오늘 이후의 예상 배당락일을 만든다.
+ *
+ * 달력은 예전에 가장 가까운 다음 1건만 계산해서 월배당 종목도 다음 달 이후에는
+ * 사라졌다. 연간 그래프와 같은 범위의 반복 일정을 만들되, 공시가 아닌 추정값임을
+ * 호출부가 명확히 표시할 수 있도록 날짜만 돌려준다.
+ */
+export const estimateFutureDividendDates = (
+  dateValues = [],
+  { today = new Date(), until = addMonthsClamped(today, 24) } = {},
+) => {
+  const sortedDates = dateValues
+    .map((value) => {
+      if (value instanceof Date) return new Date(value);
+      return new Date(`${String(value || '')}T00:00:00`);
+    })
+    .filter((date) => Number.isFinite(date.getTime()))
+    .sort((left, right) => right - left);
+  if (sortedDates.length === 0) return [];
+
+  const start = today instanceof Date ? new Date(today) : new Date(today);
+  const limit = until instanceof Date ? new Date(until) : new Date(until);
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(limit.getTime())) return [];
+
+  const intervalMonths = estimateDividendIntervalMonths(sortedDates[1], sortedDates[0]);
+  let nextDate = addMonthsClamped(sortedDates[0], intervalMonths);
+
+  while (nextDate < start && nextDate <= limit) {
+    nextDate = addMonthsClamped(nextDate, intervalMonths);
+  }
+
+  const estimates = [];
+  while (nextDate <= limit) {
+    estimates.push(nextDate);
+    nextDate = addMonthsClamped(nextDate, intervalMonths);
+  }
+
+  return estimates;
+};

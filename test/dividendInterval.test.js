@@ -4,6 +4,7 @@ import {
   DEFAULT_DIVIDEND_INTERVAL_MONTHS,
   addMonthsClamped,
   estimateDividendIntervalMonths,
+  estimateFutureDividendDates,
 } from '../src/utils/dividendInterval.js';
 
 const date = (value) => new Date(`${value}T00:00:00`);
@@ -42,4 +43,37 @@ test('연도 경계를 넘어서도 정확하다', () => {
   assert.equal(previous.getFullYear(), 2025);
   assert.equal(previous.getMonth() + 1, 12);
   assert.equal(previous.getDate(), 31);
+});
+
+test('월배당 예상 일정을 다음 1회가 아니라 조회 범위 끝까지 만든다', () => {
+  const estimates = estimateFutureDividendDates(
+    ['2026-08-03', '2026-07-01'],
+    {
+      today: date('2026-08-20'),
+      until: date('2026-12-31'),
+    },
+  );
+
+  assert.deepEqual(estimates.map((item) => [
+    item.getFullYear(),
+    String(item.getMonth() + 1).padStart(2, '0'),
+    String(item.getDate()).padStart(2, '0'),
+  ].join('-')), [
+    '2026-09-03',
+    '2026-10-03',
+    '2026-11-03',
+    '2026-12-03',
+  ]);
+});
+
+test('과거 달을 조회할 때 미래 예상 일정을 만들지 않는다', () => {
+  const estimates = estimateFutureDividendDates(
+    ['2026-08-03', '2026-07-01'],
+    {
+      today: date('2026-08-20'),
+      until: date('2026-07-31'),
+    },
+  );
+
+  assert.deepEqual(estimates, []);
 });

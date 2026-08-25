@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ArrowDownToLine, ArrowUpFromLine, Pencil, Plus, Trash2, UserRound, X } from 'lucide-react';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from '../utils/formatters.js';
+import { summarizeCapitalFlows } from '../utils/annualPerformance.js';
 
 const todayKey = () => new Date().toISOString().slice(0, 10);
 
@@ -16,6 +17,7 @@ const emptyFlowForm = () => ({
 
 const AccountManagerPanel = ({
   capitalFlows,
+  currentPrincipalKRW,
   exchangeRates,
   manualSnapshots,
   onClose,
@@ -32,12 +34,7 @@ const AccountManagerPanel = ({
   const sortedFlows = useMemo(() => (
     [...capitalFlows].sort((left, right) => String(right.date).localeCompare(String(left.date)))
   ), [capitalFlows]);
-  const totals = useMemo(() => capitalFlows.reduce((summary, flow) => {
-    const amount = Number(flow.amountKRW) || 0;
-    if (flow.type === 'withdrawal') summary.withdrawal += amount;
-    else summary.deposit += amount;
-    return summary;
-  }, { deposit: 0, withdrawal: 0 }), [capitalFlows]);
+  const totals = useMemo(() => summarizeCapitalFlows(capitalFlows), [capitalFlows]);
 
   const applyCurrency = (currency) => {
     const rate = currency === 'KRW' ? 1 : Number(exchangeRates[currency]) || 0;
@@ -77,7 +74,7 @@ const AccountManagerPanel = ({
           <div className="w-11 h-11 rounded-2xl bg-ink text-surface grid place-items-center"><UserRound size={20} /></div>
           <div>
             <h2 id="account-manager-title" className="text-lg md:text-xl font-bold text-ink">계좌 관리</h2>
-            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">입출금과 연초 평가액은 연도별 수익률 계산에만 사용됩니다.</p>
+            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">투자원금과 수익률 계산에 쓰는 계좌 입출금을 관리합니다.</p>
           </div>
         </div>
         <button type="button" onClick={onClose} aria-label="계좌 관리 닫기" className="w-10 h-10 rounded-xl bg-canvas text-ink-mute grid place-items-center hover:text-ink"><X size={18} /></button>
@@ -85,16 +82,25 @@ const AccountManagerPanel = ({
 
       <div className="overflow-y-auto scroll-soft p-5 md:p-7 space-y-7">
         <section>
-          <div className="grid grid-cols-2 gap-3 mb-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-2">
+            <div className="bg-ink rounded-2xl p-4 text-surface">
+              <p className="text-[11px] font-bold text-ink-mute">현재 투자원금</p>
+              <p className="figure text-lg font-bold mt-1">{formatMoney(currentPrincipalKRW, 'KRW')}</p>
+            </div>
+            <div className="bg-canvas rounded-2xl p-4">
+              <p className="text-[11px] font-bold text-ink-mute">순입금 원금</p>
+              <p className="figure text-lg font-bold text-ink mt-1">{formatMoney(totals.netPrincipalKRW, 'KRW')}</p>
+            </div>
             <div className="bg-canvas rounded-2xl p-4">
               <p className="text-[11px] font-bold text-ink-mute">누적 입금</p>
-              <p className="figure text-lg font-bold text-ink mt-1">{formatMoney(totals.deposit, 'KRW')}</p>
+              <p className="figure text-lg font-bold text-ink mt-1">{formatMoney(totals.depositsKRW, 'KRW')}</p>
             </div>
             <div className="bg-canvas rounded-2xl p-4">
               <p className="text-[11px] font-bold text-ink-mute">누적 출금</p>
-              <p className="figure text-lg font-bold text-ink mt-1">{formatMoney(totals.withdrawal, 'KRW')}</p>
+              <p className="figure text-lg font-bold text-ink mt-1">{formatMoney(totals.withdrawalsKRW, 'KRW')}</p>
             </div>
           </div>
+          <p className="text-[11px] font-semibold text-ink-mute mb-4">현재 투자원금은 보유 중인 자산 원금의 합계입니다(해외 자산 일부는 매수 시점 환율 기록이 없어 오늘 환율로 근사). 순입금 원금은 누적 입금−출금이며 매매손익·배당·예수금 이자를 더하지 않습니다. 환율 근사 때문에 두 값이 정확히 일치하지 않을 수 있습니다.</p>
 
           <form onSubmit={submitFlow} className="rounded-2xl border border-line p-4 md:p-5 space-y-3">
             <div className="flex items-center justify-between gap-3">
@@ -142,18 +148,18 @@ const AccountManagerPanel = ({
         </section>
 
         <section className="border-t border-line pt-6">
-          <h3 className="text-sm md:text-base font-bold text-ink">연초 평가액</h3>
-          <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">과거 연도는 1월 1일 기준 평가액이 있어야 연간 수익률을 시작할 수 있습니다.</p>
+          <h3 className="text-sm md:text-base font-bold text-ink">과거 수익률 기준값 (선택)</h3>
+          <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">첫 입금부터 기록했다면 입력하지 않아도 자동 계산됩니다. 입출금 기록을 시작하기 전부터 투자 중이었다면 해당 연도 시작 시점의 계좌 총평가액만 입력하세요.</p>
           <form onSubmit={(event) => { event.preventDefault(); if (openingValue !== '' && Number(openingValue) >= 0) { onSaveOpeningSnapshot(Number(openingYear), Number(openingValue)); setOpeningValue(''); } }} className="mt-3 grid grid-cols-[110px_1fr_auto] gap-2.5">
             <input inputMode="numeric" value={openingYear} onChange={(event) => setOpeningYear(event.target.value.replace(/\D/g, '').slice(0, 4))} className="h-12 px-3 bg-canvas rounded-xl text-sm font-bold text-ink outline-none focus:ring-2 focus:ring-brand" />
-            <input inputMode="decimal" value={formatInputNumber(openingValue)} onChange={(event) => setOpeningValue(sanitizeNumericInput(event.target.value))} placeholder="1월 1일 평가액" className="h-12 px-3 bg-canvas rounded-xl text-sm font-bold text-ink outline-none focus:ring-2 focus:ring-brand" />
-            <button type="submit" className="h-12 px-4 bg-line-soft text-ink rounded-xl text-sm font-bold hover:bg-line">저장</button>
+            <input inputMode="decimal" value={formatInputNumber(openingValue)} onChange={(event) => setOpeningValue(sanitizeNumericInput(event.target.value))} placeholder="연도 시작 평가액" className="h-12 px-3 bg-canvas rounded-xl text-sm font-bold text-ink outline-none focus:ring-2 focus:ring-brand" />
+            <button type="submit" className="h-12 px-4 bg-line-soft text-ink rounded-xl text-sm font-bold hover:bg-line">기준값 저장</button>
           </form>
           <div className="mt-3 flex flex-wrap gap-2">
             {manualSnapshots.map((snapshot) => (
               <span key={snapshot.id} className="inline-flex items-center gap-2 bg-canvas rounded-xl px-3 py-2 text-xs font-bold text-ink-soft">
-                {snapshot.date.slice(0, 4)}년 {formatMoney(snapshot.valueKRW, 'KRW')}
-                <button type="button" onClick={() => onDeleteSnapshot(snapshot.id)} aria-label="연초 평가액 삭제" className="text-ink-mute hover:text-down"><X size={13} /></button>
+                {snapshot.date.slice(0, 4)}년 시작 {formatMoney(snapshot.valueKRW, 'KRW')}
+                <button type="button" onClick={() => onDeleteSnapshot(snapshot.id)} aria-label="과거 수익률 기준값 삭제" className="text-ink-mute hover:text-down"><X size={13} /></button>
               </span>
             ))}
           </div>

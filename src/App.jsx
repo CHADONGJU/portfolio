@@ -12,6 +12,7 @@ import AnnualReturnGoalCard from './components/AnnualReturnGoalCard';
 import AnnualReturnHistory from './components/AnnualReturnHistory';
 import BrokerFeeFields from './components/BrokerFeeFields';
 import AnnualDividendTrend from './components/AnnualDividendTrend';
+import DividendSummaryGrid from './components/DividendSummaryGrid';
 import FeatureInfo from './components/FeatureInfo';
 import ManualTradeEntryForm from './components/ManualTradeEntryForm';
 import StockFilterCombobox from './components/StockFilterCombobox';
@@ -48,6 +49,7 @@ import {
 import {
   loadPortfolioState,
   migratePortfolioState,
+  saveJoinedAt,
   savePortfolioStateDiff,
   subscribePortfolioState,
 } from './services/portfolioStore';
@@ -101,6 +103,7 @@ import {
   calculateAnnualPerformance,
   getAnnualPerformanceYears,
   upsertDailyPortfolioSnapshot,
+  withCurrentPortfolioSnapshot,
 } from './utils/annualPerformance';
 import { calculateOverseasCapitalGainsTax } from './utils/overseasCapitalGainsTax';
 import { combineTradesWithMemos } from './utils/tradeMemos';
@@ -1142,6 +1145,9 @@ const App = () => {
   const [cloudPortfolioUserId, setCloudPortfolioUserId] = useState('');
   const [cloudLoadFailed, setCloudLoadFailed] = useState(false);
   const [cloudRetryToken, setCloudRetryToken] = useState(0);
+  // 연 수익률 계산의 시작점. 클라우드 문서에 이미 저장된 값을 최우선으로 쓰고,
+  // 처음 보는 계정이면 Firebase 가입일(없으면 지금)로 1회만 기록한다.
+  const [joinedAt, setJoinedAt] = useState('');
   const loadedUserIdRef = useRef('');
   const [assetPendingRemoval, setAssetPendingRemoval] = useState(null);
 
@@ -1354,21 +1360,14 @@ const buyLotDraftSummary = useMemo(() => {
   const totalCost = buyLotDrafts.reduce((sum, lot) => (
     sum + parseNumber(lot.quantity) * parseNumber(lot.price)
   ), 0);
-  // 각 매수 건에 적용된 환율로 계산한 원화 원금. 환율을 모르는 건이 하나라도 있으면 합계를 믿을 수 없다.
-  const totalKrwCost = buyLotDrafts.reduce((sum, lot) => (
-    sum + parseNumber(lot.quantity) * parseNumber(lot.price) * (Number(lot.fxRate) > 0 ? Number(lot.fxRate) : 0)
-  ), 0);
   const totalBuyFee = buyLotDrafts.reduce((sum, lot) => (
     sum + roundTradeCost(parseNumber(lot.brokerFee), managedAssetCurrency)
   ), 0);
-  const hasMissingRate = buyLotDrafts.some((lot) => !(Number(lot.fxRate) > 0));
 
   return {
     totalQuantity,
     averagePrice: totalQuantity > 0 ? totalCost / totalQuantity : 0,
-    totalKrwCost,
     totalBuyFee,
-    hasMissingRate,
   };
 }, [buyLotDrafts, managedAssetCurrency]);
 
@@ -1509,6 +1508,9 @@ const buyLotDraftSummary = useMemo(() => {
     setPortfolioSnapshots([]);
     setPortfolioName(DEFAULT_PORTFOLIO_NAME);
     setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
+    // 이전 계정의 가입일이 남아 있으면 로그아웃/계정 전환 뒤에도 그 날짜를
+    // 기준으로 연 수익률을 계산해 말도 안 되는 수익률이 뜬다.
+    setJoinedAt('');
   };
 
   const applyStoredPortfolio = (stored) => {
@@ -1607,6 +1609,7 @@ const buyLotDraftSummary = useMemo(() => {
     if (!userId || !db) {
       setIsCloudPortfolioLoaded(true);
       setCloudPortfolioUserId('');
+      setJoinedAt('');
       return undefined;
     }
 
@@ -1629,7 +1632,26 @@ const buyLotDraftSummary = useMemo(() => {
 
         if (cancelled) return;
 
+        const resolveJoinedAtFallback = () => {
+          const creationTime = user?.metadata?.creationTime;
+          const parsedCreation = creationTime ? new Date(creationTime) : null;
+          return parsedCreation && Number.isFinite(parsedCreation.getTime())
+            ? formatDateKey(parsedCreation)
+            : formatDateKey(new Date());
+        };
+
         if (cloudState.exists) {
+          const existingJoinedAt = String(cloudState.data?.joinedAt || '').slice(0, 10);
+          if (existingJoinedAt) {
+            setJoinedAt(existingJoinedAt);
+          } else {
+            const fallbackJoinedAt = resolveJoinedAtFallback();
+            setJoinedAt(fallbackJoinedAt);
+            saveJoinedAt(db, userId, fallbackJoinedAt).catch((error) => {
+              console.error('가입일 기록 실패:', error);
+            });
+          }
+
           const compactedData = compactPortfolioSnapshot(cloudState.data);
           const persistedCompactedData = {
             ...compactedData,
@@ -1707,6 +1729,11 @@ const buyLotDraftSummary = useMemo(() => {
 
           await migratePortfolioState(db, userId, localSnapshot, userEmail);
           if (cancelled) return;
+          const fallbackJoinedAt = resolveJoinedAtFallback();
+          setJoinedAt(fallbackJoinedAt);
+          saveJoinedAt(db, userId, fallbackJoinedAt).catch((error) => {
+            console.error('가입일 기록 실패:', error);
+          });
           cloudSnapshotRef.current = localSnapshot;
           cloudRevisionRef.current = '';
           applyingCloudSnapshotRef.current = true;
@@ -1743,7 +1770,7 @@ const buyLotDraftSummary = useMemo(() => {
     return () => {
       cancelled = true;
     };
-  }, [userId, userEmail, cloudRetryToken]);
+  }, [userId, userEmail, cloudRetryToken, user?.metadata?.creationTime]);
 
   useEffect(() => {
     if (!userId || !db || !isCloudPortfolioLoaded || cloudLoadFailed || cloudPortfolioUserId !== userId) {
@@ -2223,6 +2250,7 @@ const buyLotDraftSummary = useMemo(() => {
     krwNetProfit,
     usdNetProfit,
     totalConvertedNetProfit,
+    realizedGainKrwEvents,
     stockPerformanceSummary,
     dividendSummary,
     filteredHistory,
@@ -2241,20 +2269,33 @@ const buyLotDraftSummary = useMemo(() => {
     dividendFilter,
   });
 
-  const dividendSummaryGroups = useMemo(() => ([
-    {
-      id: 'domestic',
-      label: '국내 주식 배당',
-      description: '원화 · 국내 지급일 기준',
-      items: dividendSummary.filter((summary) => summary.currency === 'KRW'),
-    },
-    {
-      id: 'overseas',
-      label: '해외 주식 배당',
-      description: '현지 통화 · 한국 집계일 기준',
-      items: dividendSummary.filter((summary) => summary.currency !== 'KRW'),
-    },
-  ].filter((group) => group.items.length > 0)), [dividendSummary]);
+  // 지금 보유 중인 종목과, 예전엔 보유했지만 지금은 판 종목(수령 이력만 남음)을
+  // 나눠 보여준다 — 안 그러면 이미 정리한 종목이 지금 보유 목록 사이에 섞여 나온다.
+  const { currentDividendSummaryGroups, historicalDividendSummaryGroups } = useMemo(() => {
+    const groupsFor = (predicate) => [
+      {
+        id: 'domestic',
+        label: '국내 주식 배당',
+        description: '원화 · 국내 지급일 기준',
+        items: dividendSummary.filter((summary) => summary.currency === 'KRW' && predicate(summary)),
+      },
+      {
+        id: 'overseas',
+        label: '해외 주식 배당',
+        description: '현지 통화 · 한국 집계일 기준',
+        items: dividendSummary.filter((summary) => summary.currency !== 'KRW' && predicate(summary)),
+      },
+    ].filter((group) => group.items.length > 0);
+
+    return {
+      currentDividendSummaryGroups: groupsFor((summary) => summary.isCurrentHolding),
+      historicalDividendSummaryGroups: groupsFor((summary) => !summary.isCurrentHolding),
+    };
+  }, [dividendSummary]);
+  const historicalDividendCount = useMemo(
+    () => historicalDividendSummaryGroups.reduce((sum, group) => sum + group.items.length, 0),
+    [historicalDividendSummaryGroups],
+  );
 
   const annualDividendEvents = useMemo(() => buildAnnualDividendEvents({
     dividendSummary,
@@ -2383,6 +2424,15 @@ const buyLotDraftSummary = useMemo(() => {
     const investedPurchaseKRW = investedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
     const evaluationProfitKRW = enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
     const investedProfitKRW = investedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
+    // 실현손익(원화/달러 매매 순수익)처럼, 아직 안 판 종목의 평가손익도 국내(원화)·
+    // 해외(달러)로 나눠 보고 싶을 때가 있다 — 합산 원화환산 값만으로는 어느 쪽이
+    // 잘하고 있는지 알 수 없다.
+    const krwEvaluationProfit = investedAssets
+      .filter((asset) => asset.currency === 'KRW')
+      .reduce((sum, asset) => sum + asset.profitKRW, 0);
+    const usdEvaluationProfit = investedAssets
+      .filter((asset) => asset.currency === 'USD')
+      .reduce((sum, asset) => sum + asset.profitNative, 0);
     const dividendKRW = receivedDividends.reduce((sum, dividend) => (
       sum + (Number(dividend.amount) || 0) * getCachedKrwRate(dividend.currency, currencyRates, exchangeRate || 1350, jpyKrwRate || 9.5)
     ), 0);
@@ -2398,23 +2448,75 @@ const buyLotDraftSummary = useMemo(() => {
       investedPurchaseKRW,
       evaluationProfitKRW,
       investedProfitKRW,
+      krwEvaluationProfit,
+      usdEvaluationProfit,
       totalReturnPercent,
       dividendKRW,
       dividendByCurrency,
     };
   }, [enhancedAssets, receivedDividends, exchangeRate, jpyKrwRate, currencyRates]);
+  /**
+   * 연 수익률(TWR)은 배당을 그 구간의 수익으로 반영한다. 배당 레코드에 지급 시점
+   * 환율(fxRate)이 있으면 그 값을 쓰고, 없으면(과거 기록) 오늘 환율로 근사한다 —
+   * 지금 와서 그 날의 환율을 새로 만들어내지는 않는다.
+   */
+  const dividendKrwEvents = useMemo(() => receivedDividends
+    .map((dividend) => {
+      const amount = Number(dividend.amount) || 0;
+      const rate = Number(dividend.fxRate) > 0
+        ? Number(dividend.fxRate)
+        : getCachedKrwRate(dividend.currency, currencyRates, exchangeRate || 1350, jpyKrwRate || 9.5);
+      return { date: getDividendReportingDate(dividend), amountKRW: amount * rate };
+    })
+    .filter((event) => event.date && event.amountKRW > 0), [receivedDividends, currencyRates, exchangeRate, jpyKrwRate]);
+  /**
+   * 수익률 화면은 오늘의 자동 스냅샷이 아직 영구 저장되지 않았더라도 현재
+   * 총평가액으로 즉시 계산해야 한다(하루 한 번 저장을 기다리지 않는다).
+   */
+  const performanceSnapshots = useMemo(() => (
+    isCloudPortfolioLoaded && !cloudLoadFailed && !isFetching && Number.isFinite(Number(totalConvertedKRW))
+      ? withCurrentPortfolioSnapshot(portfolioSnapshots, {
+        date: formatDateKey(new Date()),
+        valueKRW: totalConvertedKRW,
+        unrealizedProfitKRW: dashboardSummary.investedProfitKRW,
+      })
+      : portfolioSnapshots
+  ), [
+    portfolioSnapshots, totalConvertedKRW, dashboardSummary.investedProfitKRW,
+    isCloudPortfolioLoaded, cloudLoadFailed, isFetching,
+  ]);
   const annualPerformanceYears = useMemo(() => getAnnualPerformanceYears({
-    snapshots: portfolioSnapshots,
+    snapshots: performanceSnapshots,
     capitalFlows,
     currentYear: new Date().getFullYear(),
-  }), [portfolioSnapshots, capitalFlows]);
+  }), [performanceSnapshots, capitalFlows]);
   const annualPerformances = useMemo(() => annualPerformanceYears.map((year) => (
-    calculateAnnualPerformance({ snapshots: portfolioSnapshots, capitalFlows, year })
-  )), [annualPerformanceYears, portfolioSnapshots, capitalFlows]);
+    calculateAnnualPerformance({
+      snapshots: performanceSnapshots,
+      capitalFlows,
+      dividends: dividendKrwEvents,
+      realizedGains: realizedGainKrwEvents,
+      year,
+      joinedAt,
+    })
+  )), [
+    annualPerformanceYears, performanceSnapshots, capitalFlows,
+    dividendKrwEvents, realizedGainKrwEvents, joinedAt,
+  ]);
   const selectedAnnualPerformance = useMemo(() => (
     annualPerformances.find((performance) => performance.year === annualReturnYear)
-    || calculateAnnualPerformance({ snapshots: portfolioSnapshots, capitalFlows, year: annualReturnYear })
-  ), [annualPerformances, annualReturnYear, portfolioSnapshots, capitalFlows]);
+    || calculateAnnualPerformance({
+      snapshots: performanceSnapshots,
+      capitalFlows,
+      dividends: dividendKrwEvents,
+      realizedGains: realizedGainKrwEvents,
+      year: annualReturnYear,
+      joinedAt,
+    })
+  ), [
+    annualPerformances, annualReturnYear, performanceSnapshots, capitalFlows,
+    dividendKrwEvents, realizedGainKrwEvents, joinedAt,
+  ]);
   /**
    * 해외주식 양도소득세(추정).
    * 연간 해외 종목 손익을 통산해 250만원 기본공제를 뺀 뒤 22%를 매긴다.
@@ -2451,9 +2553,13 @@ const buyLotDraftSummary = useMemo(() => {
       id: `snapshot-${date}`,
       date,
       valueKRW: totalConvertedKRW,
+      unrealizedProfitKRW: dashboardSummary.investedProfitKRW,
       source: 'auto',
     }));
-  }, [isStorageScopeReady, isCloudPortfolioLoaded, cloudLoadFailed, isFetching, lastUpdated, totalConvertedKRW]);
+  }, [
+    isStorageScopeReady, isCloudPortfolioLoaded, cloudLoadFailed, isFetching, lastUpdated,
+    totalConvertedKRW, dashboardSummary.investedProfitKRW,
+  ]);
   const dividendCurrencyParts = useMemo(() => (
     Object.entries(dashboardSummary.dividendByCurrency || {})
       .filter(([, amount]) => Math.abs(Number(amount) || 0) > 0.000001)
@@ -4522,7 +4628,7 @@ const buyLotDraftSummary = useMemo(() => {
                     {dashboardSummary.totalReturnPercent > 0 ? '+' : ''}
                     {dashboardSummary.totalReturnPercent.toFixed(2)}%
                   </span>
-                  <span className={`text-[14px] font-semibold tnum ${dashboardSummary.investedProfitKRW >= 0 ? 'text-up' : 'text-down'}`}>
+                  <span className={`text-[14px] font-semibold tnum ${dashboardSummary.evaluationProfitKRW >= 0 ? 'text-up' : 'text-down'}`}>
                     {dashboardSummary.evaluationProfitKRW > 0 ? '+' : ''}
                     {formatMoney(dashboardSummary.evaluationProfitKRW, 'KRW')}
                   </span>
@@ -4882,14 +4988,31 @@ const buyLotDraftSummary = useMemo(() => {
         {/* 수익 및 기록 탭 */}
         {activeTab === 'history' && (
           <div className="space-y-8 anim-fade">
-            <AnnualReturnHistory
-              year={annualReturnYear}
-              years={annualPerformanceYears}
-              performance={selectedAnnualPerformance}
-              performances={annualPerformances}
-              onYearChange={setAnnualReturnYear}
-            />
-            
+            <h3 className="text-lg md:text-xl font-bold text-ink flex items-center gap-2"><TrendingUp className="text-ink-soft" size={20} /> 평가손익(미실현) 요약</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+              <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><Banknote size={20} /></div>
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">국내주식 평가손익</p>
+                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${dashboardSummary.krwEvaluationProfit >= 0 ? 'text-up' : 'text-down'}`}>
+                  {dashboardSummary.krwEvaluationProfit > 0 ? '+' : ''}{formatMoney(dashboardSummary.krwEvaluationProfit, 'KRW')}
+                </p>
+              </div>
+              <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
+                <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><DollarSign size={20} /></div>
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">해외주식 평가손익</p>
+                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${dashboardSummary.usdEvaluationProfit >= 0 ? 'text-up' : 'text-down'}`}>
+                  {dashboardSummary.usdEvaluationProfit > 0 ? '+' : ''}{formatMoney(dashboardSummary.usdEvaluationProfit, 'USD')}
+                </p>
+              </div>
+              <div className="bg-ink p-5 md:p-7 rounded-2xl shadow-sm flex flex-col justify-center text-surface relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-4 opacity-10"><PieIcon size={50}/></div>
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">총 환산 평가손익</p>
+                <p className={`text-3xl md:text-4xl font-bold tracking-tighter ${dashboardSummary.investedProfitKRW >= 0 ? 'text-up' : 'text-down'}`}>
+                  {dashboardSummary.investedProfitKRW > 0 ? '+' : ''}{formatMoney(dashboardSummary.investedProfitKRW, 'KRW')}
+                </p>
+              </div>
+            </div>
+
             <h3 className="text-lg md:text-xl font-bold text-ink flex items-center gap-2"><ArrowRightLeft className="text-ink-soft" size={20} /> 종목 매매(실현) 수익 요약</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
               <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
@@ -5111,77 +5234,29 @@ const buyLotDraftSummary = useMemo(() => {
               {!selectedDividendAsset ? (
                 <div className="max-h-[620px] overflow-y-auto pr-1 md:pr-2">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                  {dividendSummaryGroups.length > 0 ? dividendSummaryGroups.flatMap((group) => [
-                    <div key={`${group.id}-heading`} className="col-span-full flex items-center justify-between pt-1 md:pt-2">
-                      <div className="flex items-center gap-2.5">
-                        <span className={`w-9 h-9 rounded-xl flex items-center justify-center ${group.id === 'domestic' ? 'bg-up-soft text-up' : 'bg-brand-soft text-brand'}`}>
-                          {group.id === 'domestic' ? <Banknote size={17} /> : <DollarSign size={17} />}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <h4 className="text-sm md:text-base font-bold text-ink">{group.label}</h4>
-                          <FeatureInfo text={group.description} />
-                        </div>
+                  {currentDividendSummaryGroups.length > 0 && (
+                    <DividendSummaryGrid
+                      groups={currentDividendSummaryGroups}
+                      onSelect={setSelectedDividendAsset}
+                    />
+                  )}
+
+                  {historicalDividendCount > 0 && (
+                    <details className="col-span-full rounded-2xl border border-line bg-canvas/60 overflow-hidden">
+                      <summary className="cursor-pointer list-none px-5 py-4 md:px-6 md:py-5 flex items-center justify-between gap-3 font-bold text-sm md:text-base text-ink hover:bg-canvas">
+                        <span>과거 보유 · 배당 수령 내역</span>
+                        <span className="text-[11px] md:text-xs text-ink-mute">{historicalDividendCount}종목 · 클릭하여 보기</span>
+                      </summary>
+                      <div className="border-t border-line p-4 md:p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
+                        <DividendSummaryGrid
+                          groups={historicalDividendSummaryGroups}
+                          onSelect={setSelectedDividendAsset}
+                        />
                       </div>
-                      <span className="text-[11px] font-bold text-ink-mute">{group.items.length}종목</span>
-                    </div>,
-                    ...group.items.map((summary) => {
-                      const latestDividend = Array.isArray(summary.history) ? summary.history[0] : null;
-                      const dividendRecordDate = latestDividend
-                        ? latestDividend.recordDate || getDividendEligibilityDate(latestDividend) || getDividendExDate(latestDividend)
-                        : '';
-                      const dividendPaymentDate = latestDividend ? getDividendOfficialPaymentDate(latestDividend) : '';
+                    </details>
+                  )}
 
-                      return (
-                      /* 종목별 배당 상세로 들어가는 주 진입점이다. onClick만 달린 div였을
-                         때는 키보드·스크린리더로 아예 열 수 없었다. */
-                      <button
-                        type="button"
-                        key={summary.name}
-                        onClick={() => setSelectedDividendAsset(summary.name)}
-                        /* aria-label을 달면 카드 안의 누적 배당금·기준일·예상 연 배당률이
-                           접근 가능한 이름에 가려 스크린리더에서 아예 읽히지 않는다.
-                           내용이 곧 이름이 되도록 두는 편이 정보 손실이 없다. */
-                        className="w-full text-left p-5 md:p-6 bg-canvas rounded-[20px] border border-line cursor-pointer transition-all group hover:bg-surface hover:shadow-lift hover:-translate-y-px"
-                      >
-                        <div className="flex justify-between items-start mb-4 md:mb-6">
-                          <div className="whitespace-nowrap overflow-hidden pr-3 md:pr-4">
-                            <div className="flex items-center gap-1.5">
-                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${group.id === 'domestic' ? 'bg-up' : 'bg-brand'}`} />
-                              <p className="text-[11px] md:text-[12px] text-ink-mute font-bold truncate">{group.id === 'domestic' ? '국내 · KRW' : `해외 · ${summary.currency}`}</p>
-                            </div>
-                            <h4 className="font-bold text-ink text-base md:text-lg mt-1 truncate">{summary.name}</h4>
-                          </div>
-                          <div className="text-right whitespace-nowrap shrink-0">
-                            <p className="text-[11px] md:text-[12px] text-ink-mute font-bold mb-0.5 md:mb-1">세후 누적 배당금</p>
-                            <p className="figure text-lg md:text-xl font-bold text-ink">{formatMoney(summary.totalAmount, summary.currency)}</p>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5 mb-4 text-[11px] md:text-[12px] font-bold text-ink-mute">
-                          <p>배당기준일 {dividendRecordDate || '미정'}</p>
-                          <p>배당지급일 {dividendPaymentDate || '미정'}</p>
-                        </div>
-
-                        <div className="pt-4 border-t border-line-soft flex items-end justify-between gap-3">
-                          <div className={`inline-flex items-center px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[12px] md:text-[13px] font-bold ${summary.status.includes('반영') ? 'bg-brand-soft text-brand' : 'bg-line-soft text-ink-soft'}`}>
-                            {summary.status} {summary.status.includes('예상') && `(세후 ≈ ${formatMoney(summary.expectedAmount, summary.currency)})`}
-                          </div>
-                          <div
-                            className="text-right whitespace-nowrap shrink-0"
-                            title="최근 세후 배당과 지급주기를 연간 환산한 뒤 현재 평가금액으로 나눈 값"
-                          >
-                            <p className="text-[10px] md:text-[11px] font-bold text-ink-mute">예상 세후 연 배당률</p>
-                            <p className={`figure text-base md:text-lg font-bold mt-0.5 ${Number.isFinite(summary.annualDividendYieldPercent) ? 'text-up' : 'text-ink-mute'}`}>
-                              {Number.isFinite(summary.annualDividendYieldPercent)
-                                ? `${summary.annualDividendYieldPercent.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`
-                                : '—'}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                      );
-                    }),
-                  ]) : (
+                  {currentDividendSummaryGroups.length === 0 && historicalDividendCount === 0 && (
                     <div className="col-span-full py-8 md:py-12 text-center text-ink-mute font-bold text-xs md:text-sm">
                       {isFetching ? '배당 데이터를 갱신 중입니다...' : '매수일 이후 배당 내역이 없거나 데이터를 불러올 수 없습니다.'}
                     </div>
@@ -5495,6 +5570,7 @@ const buyLotDraftSummary = useMemo(() => {
               targetPercent={targetPortfolio.annualReturnGoals?.[annualReturnYear] || ''}
               performance={selectedAnnualPerformance}
               onYearChange={setAnnualReturnYear}
+              onOpenAccountManager={() => setIsAccountManagerOpen(true)}
               onTargetChange={(value) => setTargetPortfolio((previous) => ({
                 ...previous,
                 annualReturnGoals: {
@@ -5502,6 +5578,13 @@ const buyLotDraftSummary = useMemo(() => {
                   [annualReturnYear]: value,
                 },
               }))}
+            />
+            <AnnualReturnHistory
+              year={annualReturnYear}
+              years={annualPerformanceYears}
+              performance={selectedAnnualPerformance}
+              performances={annualPerformances}
+              onYearChange={setAnnualReturnYear}
             />
             <div className="bg-surface rounded-[20px] overflow-hidden">
               <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-surface">
@@ -6427,7 +6510,7 @@ const buyLotDraftSummary = useMemo(() => {
 
   return (
   <ModalOverlay overlayClassName="z-[105]" labelledBy="manage-buys-title" onClose={closeBuyLotsModal}>
-    <div className="bg-surface w-full max-w-4xl max-h-[88vh] rounded-t-[24px] md:rounded-[24px] p-6 md:p-7 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-7 shadow-modal anim-rise flex flex-col">
+    <div className="bg-surface w-full max-w-4xl max-h-[94vh] rounded-t-[24px] md:rounded-[24px] p-6 md:p-7 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-7 shadow-modal anim-rise flex flex-col">
       <div className="flex justify-between items-start gap-4 mb-5 md:mb-6">
         <div className="min-w-0">
           <h3 id="manage-buys-title" className="text-lg md:text-xl font-bold text-ink truncate">
@@ -6493,56 +6576,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
       </div>
 
-      {/* 외화 종목만: 증권사가 보여주는 원화 투자 원금을 직접 맞출 수 있게 한다.
-          자동 계산은 매수일 종가 환율이라 실제 체결 환율과 몇천 원 차이가 날 수 있다. */}
-      {isForeignManagedAsset && (
-        <div className="hairline rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">매수 시점 환율로 계산한 원금</p>
-            <p className="text-sm md:text-base font-bold text-ink">
-              {buyLotDraftSummary.hasMissingRate ? '-' : formatMoney(buyLotDraftSummary.totalKrwCost, 'KRW')}
-            </p>
-          </div>
-          <p className="mt-2 text-[11px] md:text-[12px] font-bold text-ink-mute leading-relaxed">
-            {buyLotDraftSummary.hasMissingRate
-              ? '환율을 아직 못 받아온 매수 건이 있습니다. 잠시 후 다시 열어보세요.'
-              : '증권사 숫자와 다르면 매수 건이 실제보다 뭉쳐 있거나(여러 날 매수를 한 줄로 입력), 증권사 환전 스프레드·수수료가 빠진 것입니다. 아래에서 매수 건을 날짜별로 나누거나 원금을 직접 입력하세요.'}
-          </p>
-        </div>
-      )}
-
-      {isForeignManagedAsset && (
-        <div className="hairline rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5">
-          <label className="block text-[11px] md:text-[11px] font-bold text-ink-mute mb-2">
-            원화 투자 원금 직접 입력 (선택)
-          </label>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-bold text-ink-mute shrink-0">₩</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              placeholder="비워두면 매수 시점 환율로 자동 계산"
-              className="flex-1 min-w-0 px-3 py-2.5 bg-surface rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-              value={manualPurchaseKrwDraft}
-              onChange={(e) => setManualPurchaseKrwDraft(formatInputNumber(sanitizeNumericInput(e.target.value)))}
-            />
-            {manualPurchaseKrwDraft && (
-              <button
-                type="button"
-                onClick={() => setManualPurchaseKrwDraft('')}
-                className="shrink-0 px-3 py-2.5 rounded-xl text-[12px] font-bold text-ink-mute hover:text-ink hover:bg-line-soft transition-colors"
-              >
-                자동으로
-              </button>
-            )}
-          </div>
-          <p className="mt-2 text-[11px] md:text-[12px] font-bold text-ink-mute leading-relaxed">
-            증권사 앱의 투자 원금을 그대로 넣으면 원화 보기의 원금·손익·수익률이 그 값에 맞춰집니다.
-          </p>
-        </div>
-      )}
-
-      <div className="min-h-0 overflow-y-auto pr-1">
+      <div className="flex-1 min-h-0 overflow-y-auto pr-1">
         <div className="hidden md:grid grid-cols-[1.05fr_1fr_1fr_0.7fr_1fr_44px] gap-3 px-2 pb-2 text-[11px] font-bold text-ink-mute">
           <span>매수일</span>
           <span className="text-right">단가</span>
@@ -6636,7 +6670,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-2 md:gap-3 mt-5 md:mt-6">
+      <div className="shrink-0 flex flex-col md:flex-row gap-2 md:gap-3 mt-5 md:mt-6">
         <button
           onClick={addBuyLotDraft}
           className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-line-soft hover:bg-line text-ink-soft rounded-xl font-bold text-xs md:text-sm transition-colors"
