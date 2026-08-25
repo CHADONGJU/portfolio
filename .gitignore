@@ -24,6 +24,8 @@ edge-localstorage-backup-before-20-asset-restore-*/
 restore-chrome-localstorage.cjs
 restore-edge-localstorage.cjs
 restore-missing-assets.cjs
+firestore-time-recovery/
+portfolio-recovery-*.json
 .env
 .env.*
 !.env.example

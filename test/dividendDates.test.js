@@ -41,6 +41,18 @@ test('VZ August 3 US payment stays in the August reporting month', () => {
   }), '2026-08-04');
 });
 
+test('PG August 17 official US payment is separately reported on August 18 in Korea', () => {
+  const dividend = {
+    exDate: '2026-07-24',
+    paymentDate: '2026-08-17',
+    currency: 'USD',
+  };
+
+  assert.equal(getDividendOfficialPaymentDate(dividend), '2026-08-17');
+  assert.equal(getDividendReportingDate(dividend), '2026-08-18');
+  assert.equal(isDividendReportingDateShifted(dividend), true);
+});
+
 test('an explicitly recorded payment date is not shifted', () => {
   assert.equal(getDividendReportingDate({
     exDate: '2026-07-10',

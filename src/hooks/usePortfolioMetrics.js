@@ -287,6 +287,12 @@ export const usePortfolioMetrics = ({
   const totalConvertedNetProfit = realizedRecords.reduce((acc, t) => (
     acc + getRecordKrwPnl(t, realizedKrwRate)
   ), 0);
+  // 연 수익률이 "그 시점에 실현된 손익"으로 반영할 때 쓰는, 날짜가 붙은 실현손익
+  // 목록. 헤더 합계(totalConvertedNetProfit)와 완전히 같은 계산(같은 환율 규칙)을
+  // 재사용해야 두 화면의 숫자가 서로 어긋나지 않는다.
+  const realizedGainKrwEvents = realizedRecords
+    .map((record) => ({ date: record.date, amountKRW: getRecordKrwPnl(record, realizedKrwRate) }))
+    .filter((event) => event.date && Number.isFinite(event.amountKRW));
 
   const stockPerformanceSummary = useMemo(() => {
     const rate = exchangeRate || 1350;
@@ -448,13 +454,25 @@ export const usePortfolioMetrics = ({
       const assetDivs = sortDividendRecordsNewestFirst(
         autoDividends.filter(d => d.name === asset.name),
       );
-      const receivedAssetDivs = receivedDividends.filter(d => d.name === asset.name);
-      if (assetDivs.length === 0) {
+      const receivedAssetDivs = receivedDividends.filter(d => (
+        d.name === asset.name && (Number(d.amount) || 0) > 0
+      ));
+      const currentAsset = assets.find((candidate) => (
+        candidate.name === asset.name && parseMetricNumber(candidate.quantity) > 0
+      ));
+      const isCurrentHolding = Boolean(currentAsset);
+
+      // 매도한 종목은 자동 배당 피드나 과거 레지스트리만 남아 있다는 이유로
+      // 목록에 두지 않는다. 실제 수령한 배당이 있을 때만 과거 내역으로 보존한다.
+      if (!isCurrentHolding && receivedAssetDivs.length === 0) return;
+
+      if (assetDivs.length === 0 && receivedAssetDivs.length === 0) {
         summary[asset.name] = {
           name: asset.name,
           ticker: asset.ticker || registry?.ticker || '',
           category: asset.category || registry?.category || '',
           currency: asset.currency || registry?.currency || 'KRW',
+          isCurrentHolding,
           totalAmount: 0,
           status: '배당락 기록 대기',
           expectedAmount: 0,
@@ -469,11 +487,11 @@ export const usePortfolioMetrics = ({
       let status = '';
       let expectedAmount = 0;
 
-      const lastDiv = assetDivs[0];
+      const lastDiv = assetDivs[0] || receivedAssetDivs[0];
       const lastDate = new Date(`${getDividendExDate(lastDiv)}T00:00:00`);
       const lastReportingDateKey = getDividendReportingDate(lastDiv);
       const lastReportingDate = new Date(`${lastReportingDateKey}T00:00:00`);
-      const currentQuantity = parseMetricNumber(asset.quantity);
+      const currentQuantity = isCurrentHolding ? parseMetricNumber(currentAsset.quantity) : 0;
       const lastDividendQuantity = Number(lastDiv.quantity) || 0;
       const perShareNetAmount = Number(lastDiv.perShareNetAmount)
         || (lastDividendQuantity > 0 ? lastDiv.amount / lastDividendQuantity : 0);
@@ -495,17 +513,19 @@ export const usePortfolioMetrics = ({
       const nextDate = hasLastExDate ? addMonthsClamped(lastDate, monthDiff) : null;
       const nextMonth = nextDate ? nextDate.getMonth() + 1 : 0;
       const nextYear = nextDate ? nextDate.getFullYear() : 0;
-      const currentAsset = enhancedAssets.find((candidate) => candidate.name === asset.name);
+      const currentEnhancedAsset = enhancedAssets.find((candidate) => candidate.name === asset.name);
       const {
         expectedAnnualAmount,
         annualDividendYieldPercent,
       } = calculateAnnualDividendYield({
         expectedPaymentAmount: expectedAmount,
         intervalMonths: monthDiff,
-        currentValue: currentAsset?.currentNative,
+        currentValue: currentEnhancedAsset?.currentNative,
       });
 
-      if (
+      if (!isCurrentHolding) {
+        status = '과거 보유 · 수령 내역';
+      } else if (
         Number.isFinite(lastReportingDate.getTime())
         && lastReportingDate.getMonth() + 1 === currentMonth
         && lastReportingDate.getFullYear() === currentYear
@@ -524,11 +544,12 @@ export const usePortfolioMetrics = ({
         ticker: asset.ticker || registry?.ticker || '',
         category: asset.category || '',
         currency: lastDiv.currency,
+        isCurrentHolding,
         totalAmount,
         status,
         expectedAmount,
-        expectedAnnualAmount,
-        annualDividendYieldPercent,
+        expectedAnnualAmount: isCurrentHolding ? expectedAnnualAmount : 0,
+        annualDividendYieldPercent: isCurrentHolding ? annualDividendYieldPercent : null,
         // Detail history is a receipt ledger, not a forecast. Keep future events in
         // assetDivs for the next-dividend estimate, but never list them as received.
         history: sortDividendRecordsNewestFirst(receivedAssetDivs),
@@ -596,6 +617,7 @@ export const usePortfolioMetrics = ({
     krwNetProfit,
     usdNetProfit,
     totalConvertedNetProfit,
+    realizedGainKrwEvents,
     stockPerformanceSummary,
     dividendSummary,
     filteredHistory,

@@ -78,18 +78,25 @@ const ModalOverlay = ({ onClose, labelledBy, overlayClassName = '', children }) 
      * 배경 클릭으로는 닫지 않는다. 입력 중인 값을 드래그로 선택하다가 패널 밖에서
      * 마우스를 놓기만 해도 폼이 통째로 사라지기 때문이다. 닫는 방법은 Escape와
      * 닫기 버튼 두 가지로 충분하다.
+     *
+     * 패널 안쪽에서 max-h로 스크롤을 만들어도, 브라우저 창 자체가 그 max-h 기준
+     * 화면(예: 88vh)보다 작으면(배율 확대, 작은 창) 패널이 뷰포트 밑으로 그대로
+     * 삐져나가고 닿을 방법이 없었다. 오버레이 자체를 스크롤 가능하게 감싸서, 패널이
+     * 뷰포트보다 커지는 어떤 경우에도 스크롤해서 전체를 볼 수 있게 한다.
      */
     <div
-      className={`fixed inset-0 bg-ink/60 backdrop-blur-[2px] flex items-end md:items-center justify-center p-0 md:p-4 anim-fade ${overlayClassName}`}
+      className={`fixed inset-0 bg-ink/60 backdrop-blur-[2px] overflow-y-auto anim-fade ${overlayClassName}`}
       role="presentation"
     >
-      {cloneElement(panel, {
-        ref: panelRef,
-        role: 'dialog',
-        'aria-modal': 'true',
-        'aria-labelledby': labelledBy,
-        tabIndex: -1,
-      })}
+      <div className="min-h-full flex items-end md:items-center justify-center p-0 md:p-4">
+        {cloneElement(panel, {
+          ref: panelRef,
+          role: 'dialog',
+          'aria-modal': 'true',
+          'aria-labelledby': labelledBy,
+          tabIndex: -1,
+        })}
+      </div>
     </div>
   );
 };

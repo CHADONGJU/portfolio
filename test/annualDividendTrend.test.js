@@ -81,3 +81,28 @@ test('builds 12 stacked months with top five assets and an other segment', () =>
   assert.ok(trend.months[7].segments.some((segment) => segment.name === '기타'));
   assert.equal(trend.monthlyAverage, 3750);
 });
+
+test('keeps a sold holding received history but does not project future dividends', () => {
+  const events = buildAnnualDividendEvents({
+    year: 2026,
+    today: new Date('2026-08-20T00:00:00Z'),
+    dividendSummary: [{
+      name: 'UNH',
+      ticker: 'UNH',
+      currency: 'USD',
+      isCurrentHolding: false,
+      expectedAmount: 30,
+      history: [{
+        id: 'unh-june',
+        exDate: '2026-06-15',
+        paymentDate: '2026-06-23',
+        currency: 'USD',
+        amount: 30.8,
+      }],
+    }],
+  });
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].isEstimated, false);
+  assert.equal(events[0].date, '2026-06-24');
+});

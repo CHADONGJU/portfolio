@@ -133,7 +133,9 @@ export const buildAnnualDividendEvents = ({
     };
   }).filter(Boolean);
 
-  const estimatedEvents = year >= today.getFullYear()
+  // 매도 종목의 과거 수령액은 그래프에 남기되, 보유 수량이 0인 종목의 미래
+  // 배당을 계속 만들어내지는 않는다.
+  const estimatedEvents = year >= today.getFullYear() && summary.isCurrentHolding !== false
     ? buildEstimatedEvents({ summary, asset, year, today })
     : [];
 

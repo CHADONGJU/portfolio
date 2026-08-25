@@ -1,8 +1,34 @@
 import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatMoney } from '../utils/formatters.js';
 
+const getPeriodLabel = (performance, year, currentYear) => {
+  if (performance?.periodType === 'since-first-deposit') {
+    return performance?.joinedAtAnchored ? `${year}년 가입 이후` : `${year}년 첫 입금 이후`;
+  }
+  if (performance?.periodType === 'recorded-period') return `${year}년 기록 시작 이후`;
+  return year === currentYear ? `${year}년 YTD` : `${year}년 연간`;
+};
+
+const getInsufficientMessage = (performance) => {
+  if (performance?.reason === 'cash-flow-required') return '첫 입금 기록을 추가하면 현재 평가액과 연결해 자동 계산합니다.';
+  if (performance?.reason === 'current-value-required') return '입금 기록은 확인됐지만 현재 평가액이 아직 없습니다.';
+  if (performance?.reason === 'opening-value-required') return '기록이 출금부터 시작되어 초기 자산 기준값이 필요합니다.';
+  if (performance?.reason === 'capital-base-required') return '이 기간 순입금(입금-출금)이 0원 이하라 나눌 원금 기준이 없어 수익률을 표시할 수 없습니다.';
+  return '입출금 기록을 모두 입력하면 첫 입금일부터 자동 계산합니다. 이미 투자 중이던 계좌만 해당 연도 시작 평가액을 선택적으로 입력하세요.';
+};
+
+// 단순 비율(비가중) 수익률이라, 원금이 거의 없는 해에 입금과 출금이 거의 같은
+// 금액으로 맞물리면 분모가 0에 가까워져 수백 %가 넘는 값이 나올 수 있다. 그런
+// 한 해가 다른 정상적인 해들의 막대를 전부 안 보일 정도로 짜부라뜨리지 않도록,
+// 막대 길이 계산에서만 이 값 이상은 "다 찼다"로 본다(숫자 자체는 그대로 보여준다).
+const CHART_PERCENT_CAP = 300;
+const clampedAbsPercent = (value) => Math.min(Math.abs(value), CHART_PERCENT_CAP);
+
 const AnnualReturnHistory = ({ year, years, performance, performances, onYearChange }) => {
-  const maxAbs = Math.max(1, ...performances.filter((item) => Number.isFinite(item.returnPercent)).map((item) => Math.abs(item.returnPercent)));
+  const maxAbs = Math.max(
+    1,
+    ...performances.filter((item) => Number.isFinite(item.returnPercent)).map((item) => clampedAbsPercent(item.returnPercent)),
+  );
   const currentYear = new Date().getFullYear();
 
   return (
@@ -12,7 +38,7 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
           <BarChart3 size={18} className="text-ink-soft" />
           <div>
             <h3 className="text-base md:text-lg font-bold text-ink">연도별 수익률</h3>
-            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">그 해 매수금액 대비 실현 총손익 기준입니다.</p>
+            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">외부 입출금은 분리하며, 배당·예수금 이자는 현재 평가액에 포함된 경우 수익으로 반영합니다.</p>
           </div>
         </div>
         <div className="seg inline-flex self-start sm:self-auto items-center p-1 rounded-[14px]">
@@ -24,24 +50,23 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
 
       <div className="p-5 md:p-7 grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-5">
         <div className="bg-canvas rounded-2xl p-5">
-          <p className="text-[11px] font-bold text-ink-mute">{year === currentYear ? `${year}년 YTD` : `${year}년 연간`}</p>
+          <p className="text-[11px] font-bold text-ink-mute">{getPeriodLabel(performance, year, currentYear)}</p>
           {performance.status === 'ready' ? (
             <>
               <p className={`figure text-3xl md:text-4xl font-bold mt-2 ${performance.returnPercent >= 0 ? 'text-up' : 'text-down'}`}>{performance.returnPercent >= 0 ? '+' : ''}{performance.returnPercent.toFixed(2)}%</p>
-              <p className="text-xs font-semibold text-ink-mute mt-2">매매 {performance.tradeCount}건 (매수 {performance.buyCount} · 매도 {performance.sellCount}){performance.approximate ? ' · 일부 환율 근사' : ''}</p>
-              {performance.buyKRW <= 0 && performance.sellCount > 0 && (
-                <p className="text-[11px] font-semibold text-ink-mute mt-1 leading-relaxed">이 해에 매수가 없어 매도한 물량의 원금 대비로 계산했습니다.</p>
-              )}
-              <div className="mt-5 grid grid-cols-3 gap-2">
-                <div><p className="text-[10px] font-bold text-ink-mute">매수금액</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.buyKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">매도금액</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.sellKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">총손익</p><p className={`text-xs md:text-sm font-bold mt-1 ${performance.profitKRW >= 0 ? 'text-up' : 'text-down'}`}>{performance.profitKRW > 0 ? '+' : ''}{formatMoney(performance.profitKRW, 'KRW')}</p></div>
+              <p className="text-xs font-semibold text-ink-mute mt-2">{performance.startDate} ~ {performance.endDate}{performance.inferredStart ? (performance.joinedAtAnchored ? ' · 가입일 기준' : ' · 첫 입금 기준') : ''}{performance.carriedForward ? ' · 전년도 평가액 이어받음' : ''}{performance.estimated ? ' · 일부 구간 추정' : ''}</p>
+              <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div><p className="text-[10px] font-bold text-ink-mute">이 기간 순수익</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.profitKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">이 기간 입금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.depositsKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">이 기간 출금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.withdrawalsKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">이 기간 배당</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.dividendsKRW || 0, 'KRW')}</p></div>
               </div>
+              <p className="text-[10px] font-semibold text-ink-mute mt-2">전체 누적 입출금은 계좌 관리에서 확인할 수 있습니다.</p>
             </>
           ) : (
             <div className="py-8">
-              <p className="text-xl font-bold text-ink">이 해의 매매 기록이 없습니다.</p>
-              <p className="text-xs font-semibold text-ink-mute mt-2 leading-relaxed">매수·매도 기록을 넣으면 그 해 매수금액 대비 실현 총손익으로 수익률을 계산합니다.</p>
+              <p className="text-xl font-bold text-ink">계산 기준이 더 필요합니다.</p>
+              <p className="text-xs font-semibold text-ink-mute mt-2 leading-relaxed">{getInsufficientMessage(performance)}</p>
             </div>
           )}
         </div>
@@ -50,10 +75,10 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
           {years.map((itemYear) => {
             const item = performances.find((candidate) => candidate.year === itemYear);
             const value = item?.returnPercent;
-            const width = Number.isFinite(value) ? (Math.abs(value) / maxAbs) * 50 : 0;
+            const width = Number.isFinite(value) ? (clampedAbsPercent(value) / maxAbs) * 50 : 0;
             return (
               <button key={itemYear} type="button" onClick={() => onYearChange(itemYear)} className={`w-full rounded-xl px-4 py-3 text-left transition-colors ${itemYear === year ? 'bg-canvas ring-1 ring-line' : 'hover:bg-canvas'}`}>
-                <div className="flex items-center justify-between gap-3 mb-2"><span className="text-xs md:text-sm font-bold text-ink">{itemYear}{itemYear === currentYear ? ' YTD' : ''}</span><span className={`figure text-xs md:text-sm font-bold ${!Number.isFinite(value) ? 'text-ink-mute' : value >= 0 ? 'text-up' : 'text-down'}`}>{Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '매매 없음'}</span></div>
+                <div className="flex items-center justify-between gap-3 mb-2"><span className="text-xs md:text-sm font-bold text-ink">{getPeriodLabel(item, itemYear, currentYear)}</span><span className={`figure text-xs md:text-sm font-bold ${!Number.isFinite(value) ? 'text-ink-mute' : value >= 0 ? 'text-up' : 'text-down'}`}>{Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '자료 부족'}</span></div>
                 <div className="relative h-2 rounded-full bg-line-soft overflow-hidden"><span className="absolute left-1/2 top-0 h-full w-px bg-ink/20" />{Number.isFinite(value) && <span className={`absolute top-0 h-full rounded-full ${value >= 0 ? 'bg-up' : 'bg-down'}`} style={{ left: value >= 0 ? '50%' : `${50 - width}%`, width: `${Math.max(width, 1)}%` }} />}</div>
               </button>
             );

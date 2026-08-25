@@ -191,7 +191,14 @@ test('월말 기준일 월배당 예측이 한 달을 건너뛰지 않는다', (
     calculationSource: 'kodex',
   }];
 
-  const metrics = runHook({ ...baseOptions, autoDividends });
+  const metrics = runHook({
+    ...baseOptions,
+    assets: [{
+      id: 'kodex', name: 'KODEX', ticker: '453810', category: '국내주식',
+      currency: 'KRW', quantity: 100, originalAveragePrice: 10000, originalCurrentPrice: 10000,
+    }],
+    autoDividends,
+  });
   const kodex = metrics.dividendSummary.find((row) => row.name === 'KODEX');
 
   assert.ok(kodex);
@@ -206,4 +213,62 @@ test('toNativePrice는 원화 환산값에서 현지 가격을 역산한다', ()
   assert.equal(toNativePrice(0, 180000, 1500), 120);
   assert.equal(toNativePrice(0, 0, 1500), 0);
   assert.equal(toNativePrice(0, 180000, 0), 0);
+});
+
+test('매도 후 실제 수령 배당이 없는 종목은 배당 목록에서 제외한다', () => {
+  const metrics = runHook({
+    ...baseOptions,
+    autoDividends: [{
+      id: 'gev-feed', name: 'GEV', ticker: 'GEV', currency: 'USD',
+      exDate: '2026-06-16', paymentDate: '2026-07-14', quantity: 1, amount: 0.425,
+    }],
+    dividendAssetRegistry: [{ name: 'GEV', ticker: 'GEV', currency: 'USD', hasDividends: true }],
+  });
+
+  assert.equal(metrics.dividendSummary.some((row) => row.name === 'GEV'), false);
+});
+
+test('매도 종목의 실제 수령 배당은 과거 내역으로만 남고 미래 금액을 예측하지 않는다', () => {
+  const received = {
+    id: 'unh-paid', name: 'UNH', ticker: 'UNH', currency: 'USD',
+    exDate: '2026-06-15', paymentDate: '2026-06-23', quantity: 16, amount: 31.552,
+    entitlementVerified: true,
+  };
+  const metrics = runHook({
+    ...baseOptions,
+    autoDividends: [received],
+    receivedDividends: [received],
+    dividendAssetRegistry: [{ name: 'UNH', ticker: 'UNH', currency: 'USD', hasDividends: true }],
+  });
+  const unh = metrics.dividendSummary.find((row) => row.name === 'UNH');
+
+  assert.ok(unh);
+  assert.equal(unh.isCurrentHolding, false);
+  assert.equal(unh.totalAmount, 31.552);
+  assert.equal(unh.expectedAmount, 0);
+  assert.equal(unh.expectedAnnualAmount, 0);
+  assert.equal(unh.annualDividendYieldPercent, null);
+  assert.equal(unh.status, '과거 보유 · 수령 내역');
+});
+
+test('현재 보유 중인 배당 종목은 현재 목록으로 표시한다', () => {
+  const dividend = {
+    id: 'ups-paid', name: 'UPS', ticker: 'UPS', currency: 'USD',
+    exDate: '2026-05-18', paymentDate: '2026-06-04', quantity: 10,
+    perShareNetAmount: 1.394, amount: 13.94,
+  };
+  const metrics = runHook({
+    ...baseOptions,
+    assets: [{
+      id: 'ups', name: 'UPS', ticker: 'UPS', category: '해외주식', currency: 'USD',
+      quantity: 10, originalAveragePrice: 97.41, originalCurrentPrice: 102.13,
+    }],
+    autoDividends: [dividend],
+    receivedDividends: [dividend],
+  });
+  const ups = metrics.dividendSummary.find((row) => row.name === 'UPS');
+
+  assert.ok(ups);
+  assert.equal(ups.isCurrentHolding, true);
+  assert.ok(ups.expectedAmount > 0);
 });

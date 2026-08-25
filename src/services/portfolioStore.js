@@ -156,6 +156,16 @@ export const loadPortfolioState = async (database, userId) => {
   };
 };
 
+/**
+ * 연 수익률 계산의 시작점(가입일)을 딱 1번만 기록한다. 호출부가 이미 기존 값이
+ * 없는 걸 확인하고 부르므로 여기서는 존재 여부를 다시 확인하지 않는다 — merge:true라
+ * 다른 필드는 건드리지 않고, 이후의 일반 저장(buildRootMetadata)도 이 필드를 모르므로
+ * 절대 덮어쓰지 않는다.
+ */
+export const saveJoinedAt = async (database, userId, joinedAt) => {
+  await setDoc(doc(database, 'portfolioStates', userId), { joinedAt }, { merge: true });
+};
+
 export const subscribePortfolioState = (database, userId, onChange, onError) => (
   onSnapshot(
     doc(database, 'portfolioStates', userId),
