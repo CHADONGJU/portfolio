@@ -1354,21 +1354,14 @@ const buyLotDraftSummary = useMemo(() => {
   const totalCost = buyLotDrafts.reduce((sum, lot) => (
     sum + parseNumber(lot.quantity) * parseNumber(lot.price)
   ), 0);
-  // 각 매수 건에 적용된 환율로 계산한 원화 원금. 환율을 모르는 건이 하나라도 있으면 합계를 믿을 수 없다.
-  const totalKrwCost = buyLotDrafts.reduce((sum, lot) => (
-    sum + parseNumber(lot.quantity) * parseNumber(lot.price) * (Number(lot.fxRate) > 0 ? Number(lot.fxRate) : 0)
-  ), 0);
   const totalBuyFee = buyLotDrafts.reduce((sum, lot) => (
     sum + roundTradeCost(parseNumber(lot.brokerFee), managedAssetCurrency)
   ), 0);
-  const hasMissingRate = buyLotDrafts.some((lot) => !(Number(lot.fxRate) > 0));
 
   return {
     totalQuantity,
     averagePrice: totalQuantity > 0 ? totalCost / totalQuantity : 0,
-    totalKrwCost,
     totalBuyFee,
-    hasMissingRate,
   };
 }, [buyLotDrafts, managedAssetCurrency]);
 
@@ -3699,6 +3692,11 @@ const buyLotDraftSummary = useMemo(() => {
   ));
   const nextBuyRows = sortedDrafts.map((lot, index) => {
     const existingRow = lot.ledgerId ? existingBuyRowsById.get(String(lot.ledgerId)) : null;
+    const storedFxRate = Number(lot.fxRate) > 0 ? Number(lot.fxRate) : Number(existingRow?.fxRate) || 0;
+    const lookedUpFxRate = getBuyDateFxState(selectedAssetToManageBuys.currency, lot.date).rate;
+    const fxRate = (selectedAssetToManageBuys.currency || 'KRW') === 'KRW'
+      ? 1
+      : (storedFxRate > 0 ? storedFxRate : Number(lookedUpFxRate) || 0);
 
     return {
       ...(existingRow || {}),
@@ -3717,6 +3715,7 @@ const buyLotDraftSummary = useMemo(() => {
       quantity: lot.quantity,
       price: lot.price,
       date: lot.date,
+      fxRate,
       pnl: 0,
       // 입력한 수수료 금액을 그대로 남기고, 요율은 그 금액에서 역산한다.
       brokerFee: roundTradeCost(parseNumber(lot.brokerFee), selectedAssetToManageBuys.currency),
@@ -4211,12 +4210,19 @@ const buyLotDraftSummary = useMemo(() => {
     if (isUpdatingAsset && selectedAssetToUpdate && addBuyForm.priceInputCurrency === 'KRW') {
       push(selectedAssetToUpdate.currency, addBuyForm.buyDate);
     }
+    if (selectedAssetToManageBuys && (selectedAssetToManageBuys.currency || 'KRW') !== 'KRW') {
+      buyLotDrafts.forEach((lot) => {
+        if (Number(lot.fxRate) > 0) return;
+        push(selectedAssetToManageBuys.currency, lot.date);
+      });
+    }
 
     return lookups;
   }, [
     isAdding, newAsset.priceInputCurrency, newAsset.category, newAsset.ticker,
     newAsset.currency, newAsset.buyDate,
     isUpdatingAsset, selectedAssetToUpdate, addBuyForm.priceInputCurrency, addBuyForm.buyDate,
+    selectedAssetToManageBuys, buyLotDrafts,
   ]);
 
   useEffect(() => {
@@ -6358,12 +6364,10 @@ const buyLotDraftSummary = useMemo(() => {
 
 {/* 매수 기록 관리 모달 */}
 {selectedAssetToManageBuys && (() => {
-  const isForeignManagedAsset = (selectedAssetToManageBuys.currency || 'KRW') !== 'KRW';
-
   return (
   <ModalOverlay overlayClassName="z-[105]" labelledBy="manage-buys-title" onClose={closeBuyLotsModal}>
-    <div className="bg-surface w-full max-w-4xl max-h-[88vh] rounded-t-[24px] md:rounded-[24px] p-6 md:p-7 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-7 shadow-modal anim-rise flex flex-col">
-      <div className="flex justify-between items-start gap-4 mb-5 md:mb-6">
+    <div className="bg-surface w-full max-w-4xl h-[92dvh] md:h-auto md:max-h-[92dvh] rounded-t-[24px] md:rounded-[24px] shadow-modal anim-rise flex flex-col overflow-hidden">
+      <div className="flex justify-between items-start gap-4 px-6 pt-6 md:px-7 md:pt-7 mb-5 md:mb-6 shrink-0">
         <div className="min-w-0">
           <h3 id="manage-buys-title" className="text-lg md:text-xl font-bold text-ink truncate">
             {selectedAssetToManageBuys.name} 매수 기록
@@ -6380,7 +6384,7 @@ const buyLotDraftSummary = useMemo(() => {
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-2 md:gap-3 mb-4 md:mb-5">
+      <div className="grid grid-cols-3 gap-2 md:gap-3 px-6 md:px-7 mb-4 md:mb-5 shrink-0">
         <div className="rounded-xl bg-canvas px-3 py-2.5 md:px-4 md:py-3">
           <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">총 매수수량</p>
           <p className="mt-1 text-sm md:text-base font-bold text-ink">
@@ -6406,7 +6410,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
       </div>
 
-      <div className="hairline rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5">
+      <div className="mx-6 md:mx-7 hairline rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5 shrink-0">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
           <div>
             <label htmlFor="buy-lots-account-type" className="block text-[11px] font-bold text-ink-mute mb-1">보유 계좌</label>
@@ -6428,56 +6432,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
       </div>
 
-      {/* 외화 종목만: 증권사가 보여주는 원화 투자 원금을 직접 맞출 수 있게 한다.
-          자동 계산은 매수일 종가 환율이라 실제 체결 환율과 몇천 원 차이가 날 수 있다. */}
-      {isForeignManagedAsset && (
-        <div className="hairline rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">매수 시점 환율로 계산한 원금</p>
-            <p className="text-sm md:text-base font-bold text-ink">
-              {buyLotDraftSummary.hasMissingRate ? '-' : formatMoney(buyLotDraftSummary.totalKrwCost, 'KRW')}
-            </p>
-          </div>
-          <p className="mt-2 text-[11px] md:text-[12px] font-bold text-ink-mute leading-relaxed">
-            {buyLotDraftSummary.hasMissingRate
-              ? '환율을 아직 못 받아온 매수 건이 있습니다. 잠시 후 다시 열어보세요.'
-              : '증권사 숫자와 다르면 매수 건이 실제보다 뭉쳐 있거나(여러 날 매수를 한 줄로 입력), 증권사 환전 스프레드·수수료가 빠진 것입니다. 아래에서 매수 건을 날짜별로 나누거나 원금을 직접 입력하세요.'}
-          </p>
-        </div>
-      )}
-
-      {isForeignManagedAsset && (
-        <div className="hairline rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5">
-          <label className="block text-[11px] md:text-[11px] font-bold text-ink-mute mb-2">
-            원화 투자 원금 직접 입력 (선택)
-          </label>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-bold text-ink-mute shrink-0">₩</span>
-            <input
-              type="text"
-              inputMode="numeric"
-              placeholder="비워두면 매수 시점 환율로 자동 계산"
-              className="flex-1 min-w-0 px-3 py-2.5 bg-surface rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-              value={manualPurchaseKrwDraft}
-              onChange={(e) => setManualPurchaseKrwDraft(formatInputNumber(sanitizeNumericInput(e.target.value)))}
-            />
-            {manualPurchaseKrwDraft && (
-              <button
-                type="button"
-                onClick={() => setManualPurchaseKrwDraft('')}
-                className="shrink-0 px-3 py-2.5 rounded-xl text-[12px] font-bold text-ink-mute hover:text-ink hover:bg-line-soft transition-colors"
-              >
-                자동으로
-              </button>
-            )}
-          </div>
-          <p className="mt-2 text-[11px] md:text-[12px] font-bold text-ink-mute leading-relaxed">
-            증권사 앱의 투자 원금을 그대로 넣으면 원화 보기의 원금·손익·수익률이 그 값에 맞춰집니다.
-          </p>
-        </div>
-      )}
-
-      <div className="min-h-0 overflow-y-auto pr-1">
+      <div className="min-h-0 flex-1 overflow-y-auto scroll-soft px-6 md:px-7 pb-4">
         <div className="hidden md:grid grid-cols-[1.05fr_1fr_1fr_0.7fr_1fr_44px] gap-3 px-2 pb-2 text-[11px] font-bold text-ink-mute">
           <span>매수일</span>
           <span className="text-right">단가</span>
@@ -6547,15 +6502,6 @@ const buyLotDraftSummary = useMemo(() => {
                   <p className="font-bold text-ink text-xs md:text-sm">
                     {formatMoney(lotAmount, selectedAssetToManageBuys.currency)}
                   </p>
-                  {isForeignManagedAsset && (
-                    // 이 한 건이 원화로 얼마였는지, 그리고 어떤 환율을 썼는지 그대로 보여준다.
-                    // 증권사 숫자와 어긋날 때 어느 줄이 문제인지 바로 짚을 수 있다.
-                    <p className="text-[11px] font-bold text-ink-mute mt-1">
-                      {Number(lot.fxRate) > 0
-                        ? `${formatMoney(lotAmount * Number(lot.fxRate), 'KRW')} · 환율 ${Number(lot.fxRate).toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                        : '환율 미확인'}
-                    </p>
-                  )}
                 </div>
                 <button
                   onClick={() => removeBuyLotDraft(lot.draftId)}
@@ -6571,7 +6517,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-2 md:gap-3 mt-5 md:mt-6">
+      <div className="flex flex-col md:flex-row gap-2 md:gap-3 px-6 md:px-7 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-7 border-t border-line-soft bg-surface shrink-0">
         <button
           onClick={addBuyLotDraft}
           className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-line-soft hover:bg-line text-ink-soft rounded-xl font-bold text-xs md:text-sm transition-colors"
