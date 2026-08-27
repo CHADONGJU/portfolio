@@ -11,6 +11,7 @@ React와 Vite로 만든 개인 투자 포트폴리오 대시보드입니다. 자
 - 자산군/종목별 비중 차트
 - Yahoo Finance, Naver Finance, Stooq, 환율 API 기반 시세 갱신
 - 매수일 기준 자동 배당 내역 추출
+- 보유 종목 AI 요약 (Cloudflare Worker 프록시 + OpenRouter)
 
 ## 실행 방법
 
@@ -37,8 +38,25 @@ src/
   services/marketData.js          # 외부 시세/환율/배당 API 연동
   utils/formatters.js             # 금액과 입력값 포맷팅
   utils/storage.js                # localStorage 로드/저장
+  utils/stockInsightPayload.js    # AI 요약에 보낼 종목 필드 추리기
+  services/aiInsight.js           # AI 요약 프록시 호출
+  components/StockInsightPanel.jsx # AI 요약 모달
   constants.js                    # 저장소 키와 자산 색상
+worker/                           # AI 요약용 Cloudflare Worker (별도 배포)
 ```
+
+## AI 요약
+
+보유 종목 행의 반짝임 아이콘을 누르면 그 종목의 사업 모델과 리스크 요약을 받는다.
+
+OpenRouter API 키는 프런트에 두지 않는다. 정적 번들에 넣으면 누구나 꺼내 쓸 수
+있기 때문이다. 대신 `worker/`의 Cloudflare Worker가 키를 들고 있고, 프런트는
+Firebase 로그인 토큰만 보낸다. Worker는 토큰 서명을 검증하고 KV로 사용자별 하루
+호출 횟수를 제한한 뒤 OpenRouter로 넘긴다.
+
+설정 순서는 [`worker/README.md`](worker/README.md) 참고. 배포 후 나온 Worker
+주소를 `.env.local`의 `VITE_AI_PROXY_URL`에 넣으면 버튼이 활성화된다. 값이
+비어 있으면 앱은 그대로 동작하고 모달만 안내 문구를 띄운다.
 
 ## 데이터 저장
 

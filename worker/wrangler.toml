@@ -1,0 +1,23 @@
+name = "my-portfolio-ai"
+main = "src/index.js"
+compatibility_date = "2026-08-01"
+
+[vars]
+# Firebase 콘솔의 프로젝트 ID. ID 토큰의 aud/iss 검증에 쓰인다.
+FIREBASE_PROJECT_ID = "my-portfolio-b115f"
+# 이 오리진에서 온 요청만 통과시킨다. 콤마로 여러 개.
+ALLOWED_ORIGINS = "http://localhost:5173, https://my-portfolio-b115f.web.app, https://my-portfolio-b115f.firebaseapp.com"
+# 앞에서부터 시도하고 실패하면 다음 모델로 넘어간다.
+# slug는 https://openrouter.ai/api/v1/models 로 살아있는지 확인하고 넣을 것.
+# 유료 전환도 이 줄만 바꾸면 된다.
+AI_MODELS = "google/gemini-3.5-flash-lite,upstage/solar-pro4,z-ai/glm-5.3-flash"
+# 로그인 사용자 1명당 하루 호출 횟수
+DAILY_LIMIT = "20"
+MAX_TOKENS = "900"
+APP_URL = "https://my-portfolio-b115f.web.app"
+
+# 사용자별 일일 카운터 저장소.
+# npx wrangler kv namespace create AI_QUOTA 로 만들고 id를 채운다.
+[[kv_namespaces]]
+binding = "AI_QUOTA"
+id = "13015d55f57e4b1d8eb3c962533140f8"

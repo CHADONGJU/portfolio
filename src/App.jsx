@@ -3,7 +3,7 @@ import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,
   PieChart as PieIcon,
   Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, ArrowRightLeft, Search, Folder, Target, CalendarDays,
-  ChevronLeft, ChevronRight, NotebookPen, PlusCircle
+  ChevronLeft, ChevronRight, NotebookPen, PlusCircle, Sparkles
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
 import ModalOverlay from './components/ModalOverlay';
@@ -16,6 +16,7 @@ import DividendSummaryGrid from './components/DividendSummaryGrid';
 import FeatureInfo from './components/FeatureInfo';
 import ManualTradeEntryForm from './components/ManualTradeEntryForm';
 import StockFilterCombobox from './components/StockFilterCombobox';
+import StockInsightPanel from './components/StockInsightPanel';
 import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
 import TradeMemoEditor from './components/TradeMemoEditor';
@@ -55,6 +56,7 @@ import {
   subscribePortfolioState,
 } from './services/portfolioStore';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
+import { canSummarizeAsset } from './utils/stockInsightPayload';
 import {
   claimLegacyStorageKeys,
   getScopedStorageKey,
@@ -1204,6 +1206,8 @@ const App = () => {
   const [selectedCalendarEventId, setSelectedCalendarEventId] = useState('');
   const [expandedCalendarDate, setExpandedCalendarDate] = useState('');
   const [isUserSettingsOpen, setIsUserSettingsOpen] = useState(false);
+  // AI 요약 모달이 보고 있는 종목. null이면 닫힘.
+  const [insightAsset, setInsightAsset] = useState(null);
   const { theme, toggleTheme } = useTheme();
   const [annualReturnYear, setAnnualReturnYear] = useState(() => new Date().getFullYear());
 
@@ -5080,6 +5084,20 @@ const buyLotDraftSummary = useMemo(() => {
                                   <CalendarDays size={16} className="md:w-4.5 md:h-4.5" />
                                   <span className="md:hidden">매수 기록</span>
                                 </button>
+
+                                {canSummarizeAsset(asset) && (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setInsightAsset(asset);
+                                    }}
+                                    className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-brand hover:bg-brand-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
+                                    title="AI 요약"
+                                  >
+                                    <Sparkles size={16} className="md:w-4.5 md:h-4.5" />
+                                    <span className="md:hidden">AI 요약</span>
+                                  </button>
+                                )}
                               </>
                             )}
 
@@ -6428,6 +6446,16 @@ const buyLotDraftSummary = useMemo(() => {
           </div>
         )}
       </div>
+
+      {insightAsset && (
+        <ModalOverlay overlayClassName="z-[135]" labelledBy="stock-insight-title" onClose={() => setInsightAsset(null)}>
+          <StockInsightPanel
+            asset={insightAsset}
+            user={user}
+            onClose={() => setInsightAsset(null)}
+          />
+        </ModalOverlay>
+      )}
 
       {isUserSettingsOpen && (
         <ModalOverlay overlayClassName="z-[130]" labelledBy="user-settings-title" onClose={() => setIsUserSettingsOpen(false)}>
