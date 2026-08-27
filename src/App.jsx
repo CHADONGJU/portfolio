@@ -6780,7 +6780,6 @@ const buyLotDraftSummary = useMemo(() => {
           <textarea id="app-field-17"
             rows="3"
             className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
-            placeholder="매수 근거를 간단히 남겨두세요."
             value={newAsset.memo}
             onChange={(e) => setNewAsset({ ...newAsset, memo: e.target.value })}
           />
@@ -7086,7 +7085,6 @@ const buyLotDraftSummary = useMemo(() => {
           <textarea id="app-field-20"
             rows="3"
             className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
-            placeholder="추가 매수 근거를 간단히 남겨두세요."
             value={addBuyForm.memo}
             onChange={(e) =>
               setAddBuyForm((prev) => ({
