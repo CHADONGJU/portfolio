@@ -7254,7 +7254,6 @@ const buyLotDraftSummary = useMemo(() => {
           <textarea id="app-field-27"
             rows="3"
             className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
-            placeholder="매도 근거를 간단히 남겨두세요."
             value={sellForm.memo}
             onChange={(e) =>
               setSellForm((prev) => ({
