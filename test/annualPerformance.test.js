@@ -599,3 +599,42 @@ test('순투자원금은 누적 입금에서 누적 출금을 뺀 금액이다',
     netPrincipalKRW: 11_000,
   });
 });
+
+test('올해 가입했다면 기록을 늦게 시작해도 구간은 1월 1일부터 본다', () => {
+  const result = calculateAnnualPerformance({
+    year: 2026,
+    joinedAt: '2026-08-25',
+    snapshots: [
+      { date: '2026-08-25', valueKRW: 1000, unrealizedProfitKRW: 0, source: 'auto' },
+      { date: '2026-08-26', valueKRW: 1100, unrealizedProfitKRW: 100, source: 'auto' },
+      { date: '2026-08-27', valueKRW: 1250, unrealizedProfitKRW: 250, source: 'current' },
+    ],
+    capitalFlows: [{ date: '2026-08-25', type: 'deposit', amountKRW: 1000 }],
+  });
+
+  assert.equal(result.status, 'ready');
+  assert.equal(result.startDate, '2026-01-01');
+  assert.equal(result.endDate, '2026-08-27');
+  assert.equal(result.startValueKRW, 0);
+  assert.equal(result.periodType, 'calendar-year');
+  assert.equal(result.inferredStart, false);
+  assert.equal(result.depositsKRW, 1000);
+  assert.equal(result.profitKRW, 250);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 25);
+});
+
+test('작년 이전에 가입했다면 1월 1일 0원을 기준으로 삼지 않는다', () => {
+  const result = calculateAnnualPerformance({
+    year: 2026,
+    joinedAt: '2025-03-01',
+    snapshots: [
+      { date: '2026-08-25', valueKRW: 1000, unrealizedProfitKRW: 0, source: 'auto' },
+      { date: '2026-08-27', valueKRW: 1250, unrealizedProfitKRW: 250, source: 'current' },
+    ],
+    capitalFlows: [{ date: '2026-08-25', type: 'deposit', amountKRW: 1000 }],
+  });
+
+  assert.equal(result.startDate, '2026-08-25');
+  assert.equal(result.startValueKRW, 1000);
+  assert.equal(result.periodType, 'recorded-period');
+});

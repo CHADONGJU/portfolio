@@ -205,9 +205,46 @@ export const calculateAnnualPerformance = ({
     ? { id: 'inception', date: inceptionAnchorDate, valueKRW: 0, unrealizedProfitKRW: 0, source: 'inception' }
     : null;
 
-  const baseStartSnapshot = hasExplicitYearStart ? null : (carriedForwardSnapshot || inceptionSnapshot);
+  // 가입일 자체가 이 해 안이면 그 해 1월 1일 자산이 0원이었다는 건 추측이 아니라
+  // 사실이다(그 계좌는 아직 존재하지도 않았다). 그럴 땐 기록을 시작한 날이 아니라
+  // 1월 1일을 시작점으로 잡아, 카드가 "8/25 ~ 오늘" 같은 며칠짜리 구간이 아니라 그
+  // 해 전체(올해라면 1/1 ~ 오늘)를 보여주게 한다. 기준값이 0원이라 그 뒤의 입금이
+  // 그대로 원금이 되고, 첫 스냅샷 이전에 난 수익도 빠지지 않는다.
+  // 가입일을 모르면(마이그레이션 이전 데이터) 이 추론을 쓰지 않는다 — 기록 시작
+  // 이전부터 굴리던 자산이 있었을 수 있고, 그러면 그 원금이 통째로 수익으로 잡힌다.
+  const hasRecordBeforeYear = Boolean(joinedAtKey && joinedAtKey < yearStartKey)
+    || allFlows.some((flow) => flow.date < yearStartKey)
+    || snapshots.some((snapshot) => {
+      const date = toDateKey(snapshot?.date);
+      const valueKRW = Number(snapshot?.valueKRW);
+      return Boolean(date) && date < yearStartKey && Number.isFinite(valueKRW) && valueKRW >= 0;
+    });
+  const lastOwnSnapshot = ownSnapshots[ownSnapshots.length - 1];
+  // 1월 1일 0원을 기준으로 쓰려면 그 뒤에 실제로 들어온 원금이 있어야 한다. 순입금이
+  // 0 이하면 나눌 원금이 없어 오히려 계산이 막히므로, 그럴 땐 기존 방식을 그대로 둔다.
+  const netFlowSinceYearStart = allFlows
+    .filter((flow) => flow.date >= yearStartKey && (!lastOwnSnapshot || flow.date <= lastOwnSnapshot.date))
+    .reduce((sum, flow) => sum + flow.signedAmountKRW, 0);
+  const yearStartZeroSnapshot = (
+    !hasExplicitYearStart
+    && !carriedForwardSnapshot
+    && !inceptionSnapshot
+    && !anchorFromWithdrawalOnly
+    && !hasRecordBeforeYear
+    && Boolean(joinedAtKey)
+    && Boolean(lastOwnSnapshot)
+    && lastOwnSnapshot.date > yearStartKey
+    && netFlowSinceYearStart > EPSILON
+  )
+    ? { id: `year-start-${numericYear}`, date: yearStartKey, valueKRW: 0, unrealizedProfitKRW: 0, source: 'inception' }
+    : null;
+
+  const baseStartSnapshot = hasExplicitYearStart
+    ? null
+    : (carriedForwardSnapshot || yearStartZeroSnapshot || inceptionSnapshot);
+  const usedInceptionSnapshot = baseStartSnapshot === inceptionSnapshot ? inceptionSnapshot : null;
   const yearSnapshots = baseStartSnapshot ? [baseStartSnapshot, ...ownSnapshots] : ownSnapshots;
-  const joinedAtAnchored = Boolean(inceptionSnapshot) && inceptionSnapshot.date === joinedAtKey;
+  const joinedAtAnchored = Boolean(usedInceptionSnapshot) && usedInceptionSnapshot.date === joinedAtKey;
 
   if (yearSnapshots.length < 2) {
     return {
@@ -274,7 +311,7 @@ export const calculateAnnualPerformance = ({
   const hasMidPeriodFlow = coveredFlows.some((flow) => flow.date > first.date && flow.date < last.date);
   const estimated = Boolean(carriedForwardSnapshot) || unrealizedBaselineMissing || hasMidPeriodFlow;
 
-  const periodType = inceptionSnapshot
+  const periodType = usedInceptionSnapshot
     ? 'since-first-deposit'
     : carriedForwardSnapshot
       ? 'carried-forward'
@@ -294,7 +331,7 @@ export const calculateAnnualPerformance = ({
     startDate: first.date,
     endDate: last.date,
     snapshotCount: ownSnapshots.length,
-    inferredStart: Boolean(inceptionSnapshot),
+    inferredStart: Boolean(usedInceptionSnapshot),
     joinedAtAnchored,
     carriedForward: Boolean(carriedForwardSnapshot),
     carriedForwardAsOfDate: carriedForwardSnapshot?.asOfDate || '',

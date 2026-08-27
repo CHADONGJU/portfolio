@@ -10,7 +10,6 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
   const range = max - min || 1;
   const zeroPosition = ((0 - min) / range) * 100;
   const actualPosition = actual === null ? zeroPosition : ((actual - min) / range) * 100;
-  const targetPosition = ((target - min) / range) * 100;
   const fillLeft = Math.min(zeroPosition, actualPosition);
   const fillWidth = Math.abs(actualPosition - zeroPosition);
   const currentReturnLabel = performance?.periodType === 'since-first-deposit'
@@ -22,10 +21,15 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
     ? performance.carriedForwardValueKRW.toLocaleString('ko-KR')
     : null;
   const achievementPercent = target > 0 && actual !== null
-    ? Math.max(0, Math.round((actual / target) * 100))
+    ? Math.max(0, (actual / target) * 100)
     : null;
-  const statusMessage = achievementPercent !== null
-    ? `달성률 ${achievementPercent}%`
+  const achievementLabel = achievementPercent === null
+    ? null
+    : Number.isInteger(achievementPercent)
+      ? `${achievementPercent}`
+      : achievementPercent.toFixed(1);
+  const statusMessage = achievementLabel !== null
+    ? `달성률 ${achievementLabel}%`
     : target <= 0
       ? '목표 수익률을 입력하세요.'
       : '첫 입금 기록 또는 과거 기준값이 필요합니다.';
@@ -57,9 +61,9 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
           </div>
           <label className="flex items-center gap-2">
             <span className="text-xs font-bold text-ink-mute">목표</span>
-            <span className="relative">
-              <input inputMode="decimal" value={formatInputNumber(targetPercent)} onChange={(event) => onTargetChange(sanitizeNumericInput(event.target.value))} placeholder="10" className="w-28 h-11 pl-4 pr-8 bg-canvas rounded-xl text-right text-sm font-bold text-ink outline-none focus:ring-2 focus:ring-brand" />
-              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-ink-mute">%</span>
+            <span className="w-28 h-11 px-3 bg-canvas rounded-xl flex items-center justify-center gap-1 focus-within:ring-2 focus-within:ring-brand">
+              <input inputMode="decimal" value={formatInputNumber(targetPercent)} onChange={(event) => onTargetChange(sanitizeNumericInput(event.target.value))} placeholder="10" className="min-w-0 flex-1 bg-transparent text-right text-sm font-bold text-ink outline-none" />
+              <span className="shrink-0 text-xs font-bold text-ink-mute">%</span>
             </span>
           </label>
         </div>
@@ -91,10 +95,8 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
             <p className="text-xs font-bold text-warn leading-relaxed">{insufficientMessage}</p>
           </div>
         )}
-        <div className="relative h-5 rounded-full bg-line-soft overflow-visible">
-          <span className="absolute top-0 h-full w-px bg-ink/40" style={{ left: `${zeroPosition}%` }} />
+        <div className="relative h-5 rounded-full bg-line-soft overflow-hidden">
           {actual !== null && <span className={`absolute top-0 h-full rounded-full ${actual >= 0 ? 'bg-up' : 'bg-down'}`} style={{ left: `${fillLeft}%`, width: `${Math.max(fillWidth, 0.8)}%` }} />}
-          {target > 0 && <span className="absolute -top-2 h-9 w-0.5 bg-ink rounded-full" style={{ left: `${targetPosition}%` }} title={`목표 ${target}%`} />}
         </div>
         <div className="mt-3 flex justify-between text-[11px] font-bold text-ink-mute"><span>{min.toFixed(1)}%</span><span>목표 {target > 0 ? `${target}%` : '미설정'}</span></div>
       </div>
