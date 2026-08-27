@@ -124,3 +124,6 @@ export const getAssetColor = (key = '', fallbackIndex = 0) => {
 
   return ASSET_COLORS[hash % ASSET_COLORS.length];
 };
+
+// 화면 테마(라이트/다크) 저장 키 — 기기별 표시 설정이라 계정 동기화 대상이 아니다.
+export const THEME_STORAGE_KEY = 'portfolio_theme_v1';

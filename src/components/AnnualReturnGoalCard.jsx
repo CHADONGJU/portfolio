@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, Target } from 'lucide-react';
 import { formatInputNumber, sanitizeNumericInput } from '../utils/formatters.js';
 
-const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange, onYearChange, onOpenAccountManager }) => {
+const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange, onYearChange }) => {
   const currentYear = new Date().getFullYear();
   const actual = Number.isFinite(performance?.returnPercent) ? performance.returnPercent : null;
   const target = Number(targetPercent) || 0;
@@ -89,7 +89,6 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
         {actual === null && (
           <div className="mb-5 rounded-2xl bg-warn-soft px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <p className="text-xs font-bold text-warn leading-relaxed">{insufficientMessage}</p>
-            {onOpenAccountManager && <button type="button" onClick={onOpenAccountManager} className="shrink-0 px-3 py-2 rounded-xl bg-surface text-xs font-bold text-ink">계좌 관리 열기</button>}
           </div>
         )}
         <div className="relative h-5 rounded-full bg-line-soft overflow-visible">

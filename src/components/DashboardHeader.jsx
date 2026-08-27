@@ -10,7 +10,7 @@ const DashboardHeader = ({
   isFetching,
   lastUpdated,
   onAddAsset,
-  onOpenAccountManager,
+  onOpenUserSettings,
   onPortfolioNameChange,
   onRefresh,
   onSignOut,
@@ -139,12 +139,12 @@ const DashboardHeader = ({
           <Plus size={17} aria-hidden="true" /> 자산 추가
         </button>
 
-        {onOpenAccountManager && (
+        {onOpenUserSettings && (
           <button
             type="button"
-            onClick={onOpenAccountManager}
-            aria-label="계좌 관리"
-            title="계좌 관리"
+            onClick={onOpenUserSettings}
+            aria-label="사용자 설정"
+            title="사용자 설정"
             className={`${iconButton} text-ink-mute hover:text-ink`}
           >
             <UserRound size={19} aria-hidden="true" />

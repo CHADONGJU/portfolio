@@ -547,3 +547,95 @@ select:is(.bg-canvas, .bg-surface) {
   margin-top: 0.75rem;
   padding-top: 0.75rem;
 }
+
+/* ── 다크 모드 ────────────────────────────────────────────
+ * html.dark에서 디자인 토큰만 통째로 갈아끼운다. 유틸리티가 전부
+ * var()를 참조하므로 컴포넌트 코드는 손대지 않는다. 토스 다크처럼
+ * 검은 캔버스 위 살짝 밝은 카드, 잉크는 반전. bg-ink 강조 카드·버튼은
+ * 자연스럽게 밝은 면으로 반전된다. 작은 글씨(ink-mute)는 다크 캔버스
+ * 대비 4.5:1(AA)을 넘는 값으로 골랐다.
+ */
+html.dark {
+  color-scheme: dark;
+
+  /* 면 */
+  --color-canvas: #101014;
+  --color-surface: #1a1c21;
+  --color-line: #2c2f36;
+  --color-line-soft: #23262c;
+
+  /* 글자 — 반전 잉크 */
+  --color-ink: #e9ebee;
+  --color-ink-soft: #aeb6c0;
+  --color-ink-mute: #8b95a1;
+
+  /* 브랜드 — 어두운 면에서는 한 톤 밝게 */
+  --color-brand: #4593fc;
+  --color-brand-strong: #6aa8ff;
+  --color-brand-soft: #1a2b47;
+
+  /* 등락 — 다크 배경 대비를 위해 밝게 */
+  --color-up: #f4707a;
+  --color-up-soft: #3a2226;
+  --color-down: #6ba3f4;
+  --color-down-soft: #1c2b45;
+
+  --color-danger: #f4707a;
+  --color-danger-soft: #3a2226;
+  --color-warn: #d9a44a;
+  --color-warn-soft: #32291a;
+
+  /* 그림자 — 어두운 화면에서는 더 깊고 짧게 */
+  --shadow-card:
+    0 1px 2px rgba(0, 0, 0, 0.3),
+    0 8px 24px -18px rgba(0, 0, 0, 0.6);
+  --shadow-lift:
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 14px 32px -18px rgba(0, 0, 0, 0.7);
+  --shadow-modal:
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    0 32px 64px -24px rgba(0, 0, 0, 0.85);
+}
+
+/* 라이트 전용으로 하드코딩돼 있던 색들만 골라 보정한다.
+ * (@layer 밖이라 components 레이어의 라이트 규칙을 항상 이긴다) */
+html.dark .min-h-\[100dvh\].bg-canvas {
+  background-image: linear-gradient(180deg, #15161b 0%, var(--color-canvas) 22rem);
+}
+
+html.dark .bg-surface.rounded-\[24px\],
+html.dark .bg-surface.rounded-t-\[24px\] {
+  border-color: rgba(255, 255, 255, 0.07);
+}
+
+/* 다크에서는 ink가 밝은색이라 딤이 하얗게 껴 보인다 — 어둡게 고정 */
+html.dark .bg-ink\/40.backdrop-blur-\[2px\] {
+  background-color: rgba(6, 8, 12, 0.6);
+}
+
+html.dark .receipt {
+  background: linear-gradient(180deg, #1e2026, var(--color-canvas));
+}
+
+html.dark .seg {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+html.dark .seg-item[aria-pressed='true'] {
+  background: #2b2e35;
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.3),
+    0 4px 10px -6px rgba(0, 0, 0, 0.6);
+}
+
+html.dark .bg-up-soft,
+html.dark .bg-down-soft,
+html.dark .bg-brand-soft,
+html.dark .bg-danger-soft,
+html.dark .bg-warn-soft {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+html.dark thead.sticky {
+  background-color: color-mix(in srgb, var(--color-canvas) 88%, transparent);
+}

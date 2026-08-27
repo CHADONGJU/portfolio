@@ -2,6 +2,14 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
+    <script>
+      // 저장된 테마를 첫 페인트 전에 적용해 라이트→다크 깜빡임을 막는다.
+      try {
+        if (localStorage.getItem('portfolio_theme_v1') === 'dark') {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (error) { /* storage 접근 불가 시 라이트 기본값 */ }
+    </script>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
