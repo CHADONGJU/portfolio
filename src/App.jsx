@@ -2757,6 +2757,14 @@ const buyLotDraftSummary = useMemo(() => {
       });
 
       const unassignedAssets = categoryAssets.filter((asset) => !matchedAssets.has(asset));
+      // 표를 스크롤하지 않고도 이 분류에 매수/매도가 몇 건 필요한지 헤더에서
+      // 바로 보이게, 폴더별로 흩어진 종목 조정 방향을 한 번에 센다.
+      const buyCount = enrichedGroups.reduce((sum, group) => (
+        sum + group.items.filter((item) => item.adjustmentSide === 'buy' && Math.abs(item.gapValue) > 1).length
+      ), 0);
+      const sellCount = enrichedGroups.reduce((sum, group) => (
+        sum + group.items.filter((item) => item.adjustmentSide === 'sell' && Math.abs(item.gapValue) > 1).length
+      ), 0);
 
       return {
         ...categoryTarget,
@@ -2766,6 +2774,8 @@ const buyLotDraftSummary = useMemo(() => {
         currentPercent: targetBudgetKRW > 0 ? (currentValue / targetBudgetKRW) * 100 : 0,
         groupTotalPercent,
         groups: enrichedGroups,
+        buyCount,
+        sellCount,
         // 목표 계획(폴더·종목)에 하나도 안 걸린 보유 자산. 팔아야 할지 계획에
         // 추가해야 할지는 사용자가 판단하되, 최소한 눈에는 보이게 한다.
         unassignedAssets,
@@ -2773,34 +2783,6 @@ const buyLotDraftSummary = useMemo(() => {
       };
     });
   }, [targetPortfolio, enhancedAssets, targetBudgetKRW, exchangeRate, jpyKrwRate, currencyRates]);
-  // 매수·매도 필요 종목이 폴더 안에 하나씩 흩어져 있으면 전체 실행 계획을 보려고
-  // 표 전체를 스크롤해야 한다. 금액이 큰 순서로 한곳에 모아 바로 실행할 수 있게 한다.
-  const targetRebalancePlan = useMemo(() => {
-    const actions = [];
-    targetPortfolioGuide.forEach((category) => {
-      category.groups.forEach((group) => {
-        group.items.forEach((item) => {
-          if (item.adjustmentSide === 'hold' || !(Math.abs(item.gapValue) > 1)) return;
-          actions.push({
-            key: `${category.id}-${group.id}-${item.id}`,
-            categoryId: category.id,
-            groupName: group.name,
-            name: item.name || item.ticker || '이름 없음',
-            ticker: item.ticker,
-            side: item.adjustmentSide,
-            amountKRW: Math.abs(item.gapValue),
-            quantity: item.adjustmentQuantity,
-            currency: item.currency,
-            isMatched: item.isMatched,
-          });
-        });
-      });
-    });
-    return {
-      buys: actions.filter((action) => action.side === 'buy').sort((a, b) => b.amountKRW - a.amountKRW),
-      sells: actions.filter((action) => action.side === 'sell').sort((a, b) => b.amountKRW - a.amountKRW),
-    };
-  }, [targetPortfolioGuide]);
   const targetCurrentChartData = useMemo(() => {
     let cumulativePercent = 0;
     const grouped = Object.values(enhancedAssets.reduce((acc, asset) => {
@@ -5806,57 +5788,6 @@ const buyLotDraftSummary = useMemo(() => {
                 </div>
               </div>
 
-              {(targetRebalancePlan.buys.length > 0 || targetRebalancePlan.sells.length > 0) && (
-                <div className="p-5 md:p-7 border-b border-line bg-canvas/40">
-                  <div className="flex items-center gap-2 mb-4">
-                    <h4 className="text-sm md:text-base font-bold text-ink">리밸런싱 실행 계획</h4>
-                    <FeatureInfo text="폴더 안에 흩어진 매수·매도 필요 종목을 금액이 큰 순서로 모았습니다." />
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-surface rounded-2xl p-4 md:p-5">
-                      <p className="text-[11px] font-bold text-up mb-3">매수 필요 · {targetRebalancePlan.buys.length}건</p>
-                      <div className="space-y-2">
-                        {targetRebalancePlan.buys.map((action) => (
-                          <div key={action.key} className="flex items-center justify-between gap-3 text-xs md:text-sm">
-                            <div className="min-w-0">
-                              <p className="font-bold text-ink truncate">
-                                {action.name}
-                                {!action.isMatched && <span className="ml-1.5 text-[10px] font-bold text-warn">미연동</span>}
-                              </p>
-                              <p className="text-[11px] text-ink-mute font-semibold truncate">{action.categoryId} · {action.groupName}</p>
-                            </div>
-                            <p className="shrink-0 font-bold text-up">+{formatMoney(action.amountKRW, 'KRW')}</p>
-                          </div>
-                        ))}
-                        {targetRebalancePlan.buys.length === 0 && (
-                          <p className="text-xs font-semibold text-ink-mute">매수가 필요한 종목이 없습니다.</p>
-                        )}
-                      </div>
-                    </div>
-                    <div className="bg-surface rounded-2xl p-4 md:p-5">
-                      <p className="text-[11px] font-bold text-down mb-3">매도 필요 · {targetRebalancePlan.sells.length}건</p>
-                      <div className="space-y-2">
-                        {targetRebalancePlan.sells.map((action) => (
-                          <div key={action.key} className="flex items-center justify-between gap-3 text-xs md:text-sm">
-                            <div className="min-w-0">
-                              <p className="font-bold text-ink truncate">
-                                {action.name}
-                                {!action.isMatched && <span className="ml-1.5 text-[10px] font-bold text-warn">미연동</span>}
-                              </p>
-                              <p className="text-[11px] text-ink-mute font-semibold truncate">{action.categoryId} · {action.groupName}</p>
-                            </div>
-                            <p className="shrink-0 font-bold text-down">-{formatMoney(action.amountKRW, 'KRW')}</p>
-                          </div>
-                        ))}
-                        {targetRebalancePlan.sells.length === 0 && (
-                          <p className="text-xs font-semibold text-ink-mute">매도가 필요한 종목이 없습니다.</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
               {targetViewMode === 'chart' && (
                 <div className="p-5 md:p-7 border-b border-line grid grid-cols-1 lg:grid-cols-2 gap-6">
                   {[
@@ -6023,7 +5954,15 @@ const buyLotDraftSummary = useMemo(() => {
                   <div key={category.id} className="p-5 md:p-7 space-y-5">
                     <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr_auto] gap-3 lg:items-end">
                       <div>
-                        <p className="text-sm md:text-base font-bold text-ink">{category.id}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm md:text-base font-bold text-ink">{category.id}</p>
+                          {category.buyCount > 0 && (
+                            <span className="px-2 py-0.5 rounded-full bg-up-soft text-up text-[10px] font-bold">매수 {category.buyCount}</span>
+                          )}
+                          {category.sellCount > 0 && (
+                            <span className="px-2 py-0.5 rounded-full bg-down-soft text-down text-[10px] font-bold">매도 {category.sellCount}</span>
+                          )}
+                        </div>
                         <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">
                           현재 {category.currentPercent.toFixed(1)}% / 목표 {Number(category.percent || 0).toFixed(1)}%
                         </p>
@@ -6197,23 +6136,20 @@ const buyLotDraftSummary = useMemo(() => {
                                 >
                                   <Trash2 size={15} />
                                 </button>
-                                <div className="lg:col-span-5 grid grid-cols-1 md:grid-cols-4 gap-2 text-[12px] md:text-xs font-bold">
+                                <div className="lg:col-span-5 grid grid-cols-1 md:grid-cols-[1fr_1fr_1.3fr] gap-2 text-[12px] md:text-xs font-bold">
                                   <span className="bg-canvas rounded-xl px-3 py-2 text-ink-soft">현재 {formatMoney(item.currentValue, 'KRW')}</span>
                                   <span className="bg-canvas rounded-xl px-3 py-2 text-ink">목표 {formatMoney(item.targetValue, 'KRW')}</span>
-                                  <span className={`bg-canvas rounded-xl px-3 py-2 ${item.gapValue >= 0 ? 'text-up' : 'text-down'}`}>
-                                    {item.gapValue >= 0 ? '추가 필요' : '목표 초과'} {formatMoney(Math.abs(item.gapValue), 'KRW')}
-                                  </span>
-                                  <span className={`bg-canvas rounded-xl px-3 py-2 ${
+                                  <span className={`rounded-xl px-3 py-2 ${
                                     item.adjustmentSide === 'buy'
-                                      ? 'text-up'
+                                      ? 'bg-up-soft text-up'
                                       : item.adjustmentSide === 'sell'
-                                        ? 'text-down'
-                                        : 'text-ink-soft'
+                                        ? 'bg-down-soft text-down'
+                                        : 'bg-canvas text-ink-soft'
                                   }`}>
                                     {item.adjustmentSide === 'buy'
-                                      ? `매수 필요 ${item.adjustmentQuantity.toFixed(3)}주 / ${formatMoney(Math.abs(item.gapValue), 'KRW')}`
+                                      ? `매수 필요 · ${formatMoney(Math.abs(item.gapValue), 'KRW')} (${item.adjustmentQuantity.toFixed(3)}주)`
                                       : item.adjustmentSide === 'sell'
-                                        ? `매도 필요 ${item.adjustmentQuantity.toFixed(3)}주 / ${formatMoney(Math.abs(item.gapValue), 'KRW')}`
+                                        ? `매도 필요 · ${formatMoney(Math.abs(item.gapValue), 'KRW')} (${item.adjustmentQuantity.toFixed(3)}주)`
                                         : '조정 필요 없음'}
                                   </span>
                                 </div>
@@ -6235,15 +6171,16 @@ const buyLotDraftSummary = useMemo(() => {
                             이 분류에 속하지만 목표 계획(폴더·종목)에 연결되지 않은 보유 자산입니다 · 합계 {formatMoney(category.unassignedValue, 'KRW')}
                           </p>
                         </div>
-                        <div className="space-y-2">
+                        <div className="flex flex-wrap gap-2">
                           {category.unassignedAssets.map((asset) => (
-                            <div key={asset.id || `${asset.name}-${asset.ticker}`} className="flex items-center justify-between gap-3 bg-warn-soft/40 rounded-xl px-4 py-3">
-                              <div className="min-w-0">
-                                <p className="text-xs md:text-sm font-bold text-ink truncate">{asset.name}</p>
-                                {asset.ticker && <p className="text-[11px] font-bold text-ink-mute mt-0.5">{asset.ticker}</p>}
-                              </div>
-                              <p className="text-xs md:text-sm font-bold text-ink-soft shrink-0">{formatMoney(asset.currentKRW, 'KRW')}</p>
-                            </div>
+                            <span
+                              key={asset.id || `${asset.name}-${asset.ticker}`}
+                              className="inline-flex items-center gap-1.5 bg-warn-soft/60 rounded-full pl-3 pr-2.5 py-1.5 text-[12px] md:text-xs font-bold"
+                              title={formatMoney(asset.currentKRW, 'KRW')}
+                            >
+                              <span className="text-ink">{asset.name}</span>
+                              <span className="text-warn">{formatMoney(asset.currentKRW, 'KRW')}</span>
+                            </span>
                           ))}
                         </div>
                       </div>
