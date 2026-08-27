@@ -614,6 +614,34 @@ html.dark .bg-ink\/40.backdrop-blur-\[2px\] {
   background-color: rgba(6, 8, 12, 0.6);
 }
 
+/* 강조 면(bg-ink + text-surface) — 다크에서 잉크가 반전되면 새하얀 판이 돼
+ * 혼자 튀고, 그 위 글씨(text-surface = 어두운 면색)는 거의 읽히지 않는다.
+ * 다크에서는 어두운 톤으로 되돌리고 글씨만 밝은 잉크로 바꾼다. */
+html.dark .bg-ink.text-surface {
+  background-color: #2b2e35;
+  color: var(--color-ink);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 8px 20px -14px rgba(0, 0, 0, 0.7);
+}
+
+html.dark button.bg-ink.text-surface:hover,
+html.dark a.bg-ink.text-surface:hover {
+  background-color: #33373f;
+}
+
+/* 요약 카드(총 환산 …)는 옆의 bg-surface 카드와 나란히 놓이는 같은 급이다.
+ * 다크에서는 강조 반전을 버리고 카드 면색·그림자를 그대로 쓴다. */
+html.dark .bg-ink.rounded-2xl.shadow-sm.text-surface {
+  background-color: var(--color-surface);
+  box-shadow: var(--shadow-card);
+}
+
+/* 선택 상태 카드처럼 테두리까지 잉크로 두른 경우 */
+html.dark .border-ink.bg-ink.text-surface {
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
 html.dark .receipt {
   background: linear-gradient(180deg, #1e2026, var(--color-canvas));
 }
