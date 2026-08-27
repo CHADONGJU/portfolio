@@ -23,9 +23,12 @@ const BrokerFeeFields = ({
   feeAmount = '',
   feeMode = 'rate',
   estimatedFee = 0,
+  // 매도처럼 '증권사 화면 금액'만 받는 화면에서는 %/₩ 전환을 없애고 금액 입력만 남긴다.
+  amountOnly = false,
   onChange,
 }) => {
-  const isAmountMode = feeMode === 'amount';
+  const isAmountMode = amountOnly || feeMode === 'amount';
+  const currencySymbol = { USD: '$', JPY: '¥', KRW: '₩' }[currency] || currency;
   // ₩로 바꿔만 두고 아직 비워 뒀다면 요율 계산이 그대로 쓰인다.
   // 그 사실을 말해주지 않으면 "0원이 들어갔겠지" 하고 넘어가게 된다.
   const usesRateFallback = isAmountMode && resolveKnownFeeAmount(feeAmount) === null;
@@ -33,9 +36,11 @@ const BrokerFeeFields = ({
   return (
     <div className="grid grid-cols-2 gap-3">
       <div>
-        <label htmlFor={`${idPrefix}-broker`} className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-          증권사
-        </label>
+        <div className="flex items-center h-7 mb-1.5 ml-1">
+          <label htmlFor={`${idPrefix}-broker`} className="block text-[11px] md:text-[12px] font-bold text-ink-mute">
+            증권사
+          </label>
+        </div>
         <select
           id={`${idPrefix}-broker`}
           className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
@@ -45,7 +50,7 @@ const BrokerFeeFields = ({
             onChange({
               brokerId: nextBrokerId,
               brokerFeeRate: formatFeeRateInput(getBrokerFeeRatePercent(nextBrokerId, category)),
-              feeMode: 'rate',
+              feeMode: amountOnly ? 'amount' : 'rate',
             });
           }}
         >
@@ -56,25 +61,33 @@ const BrokerFeeFields = ({
       </div>
 
       <div>
-        <div className="flex items-center justify-between gap-2 mb-1.5 ml-1">
+        <div className="flex items-center justify-between gap-2 h-7 mb-1.5 ml-1">
           <label htmlFor={`${idPrefix}-fee`} className="block text-[11px] md:text-[12px] font-bold text-ink-mute">
             {label}
           </label>
-          <div className="seg inline-flex items-center p-0.5 rounded-[10px]" role="group" aria-label={`${label} 입력 방식`}>
-            {[{ key: 'rate', text: '%' }, { key: 'amount', text: '₩' }].map((option) => (
-              <button
-                key={option.key}
-                type="button"
-                aria-pressed={feeMode === option.key}
-                onClick={() => onChange({ feeMode: option.key })}
-                className={`seg-item px-2 h-6 rounded-lg text-[11px] font-bold ${
-                  feeMode === option.key ? 'text-ink' : 'text-ink-mute'
-                }`}
-              >
-                {option.text}
-              </button>
-            ))}
-          </div>
+          {amountOnly ? (
+            <span className="seg inline-flex items-center p-0.5 rounded-[10px]" aria-hidden="true">
+              <span className="seg-item inline-flex items-center px-2 h-6 rounded-lg text-[11px] font-bold text-ink" data-active="true">
+                {currencySymbol}
+              </span>
+            </span>
+          ) : (
+            <div className="seg inline-flex items-center p-0.5 rounded-[10px]" role="group" aria-label={`${label} 입력 방식`}>
+              {[{ key: 'rate', text: '%' }, { key: 'amount', text: '₩' }].map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  aria-pressed={feeMode === option.key}
+                  onClick={() => onChange({ feeMode: option.key })}
+                  className={`seg-item px-2 h-6 rounded-lg text-[11px] font-bold ${
+                    feeMode === option.key ? 'text-ink' : 'text-ink-mute'
+                  }`}
+                >
+                  {option.text}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <input
           id={`${idPrefix}-fee`}

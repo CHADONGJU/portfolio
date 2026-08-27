@@ -1300,7 +1300,8 @@ const initialSellFormState = {
   sellDate: defaultBuyDate,
   brokerId: DEFAULT_BROKER_ID,
   brokerFeeRate: '0',
-  feeMode: 'rate',
+  // 매도 수수료는 증권사 화면에 찍힌 금액을 그대로 받는다(요율 입력은 두지 않는다).
+  feeMode: 'amount',
   brokerFeeAmount: '',
   sellTaxRate: '0',
   memo: ''
@@ -6771,7 +6772,8 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
 
 
-        <div>
+        {/* 위 입력 묶음(space-y-4) 바깥이라 간격이 없었다. 같은 1rem을 직접 준다. */}
+        <div className="mt-4">
           <label htmlFor="app-field-17" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             매수 메모
           </label>
@@ -7076,7 +7078,8 @@ const buyLotDraftSummary = useMemo(() => {
       </div>
 
 
-        <div>
+        {/* 위 입력 묶음(space-y-4) 바깥이라 간격이 없었다. 같은 1rem을 직접 준다. */}
+        <div className="mt-4">
           <label htmlFor="app-field-20" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             매수 메모
           </label>
@@ -7162,6 +7165,7 @@ const buyLotDraftSummary = useMemo(() => {
         <BrokerFeeFields
           idPrefix="sell"
           label="매도 수수료"
+          amountOnly
           category={selectedAssetToSell.category}
           currency={selectedAssetToSell.currency}
           brokerId={sellForm.brokerId}
@@ -7171,24 +7175,6 @@ const buyLotDraftSummary = useMemo(() => {
           estimatedFee={sellFeePreview?.brokerFee || 0}
           onChange={(next) => setSellForm((prev) => ({ ...prev, ...next }))}
         />
-
-        <div>
-          <label htmlFor="app-field-25" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            제세금율(%)
-          </label>
-          <input id="app-field-25"
-            type="text"
-            inputMode="decimal"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-            value={sellForm.sellTaxRate}
-            onChange={(e) =>
-              setSellForm((prev) => ({
-                ...prev,
-                sellTaxRate: sanitizeNumericInput(e.target.value)
-              }))
-            }
-          />
-        </div>
 
         {sellFeePreview && (sellFeePreview.grossSellAmount > 0 || sellFeePreview.grossPnl !== 0) && (
           <div className="receipt rounded-2xl px-4 py-4 md:px-5">
@@ -7235,7 +7221,7 @@ const buyLotDraftSummary = useMemo(() => {
             </div>
 
             <p className="mt-3 text-[11px] font-medium text-ink-mute leading-relaxed">
-              국내주식 제세금 기본값은 매도일 기준 증권거래세율로 계산합니다. ETF, 우대계좌, 증권사 이벤트 조건이 다르면 바로 수정하세요.
+              제세금은 매도일 기준 증권거래세율로 자동 계산합니다. 국내 상장 ETF·ETN과 해외 종목은 면제라 0원으로 잡힙니다.
             </p>
           </div>
         )}
@@ -7260,7 +7246,8 @@ const buyLotDraftSummary = useMemo(() => {
       </div>
 
 
-        <div>
+        {/* 위 입력 묶음(space-y-4) 바깥이라 간격이 없었다. 같은 1rem을 직접 준다. */}
+        <div className="mt-4">
           <label htmlFor="app-field-27" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
             매도 메모
           </label>
