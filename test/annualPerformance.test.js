@@ -277,23 +277,6 @@ test('자동 스냅샷에서 시작하면 그날 입금을 원금에 두 번 넣
   assert.equal(Math.round(result.returnPercent * 100) / 100, 2);
 });
 
-test('수동 연초 평가액이면 1월 1일 입금을 원금으로 인정한다', () => {
-  const result = calculateAnnualPerformance({
-    year: 2026,
-    snapshots: [
-      { date: '2026-01-01', valueKRW: 500, unrealizedProfitKRW: 20, source: 'manual' },
-      { date: '2026-12-31', valueKRW: 1100, unrealizedProfitKRW: 90, source: 'auto' },
-    ],
-    capitalFlows: [
-      { date: '2026-01-01', type: 'deposit', amountKRW: 500 },
-    ],
-  });
-
-  assert.equal(result.depositsKRW, 500);
-  assert.equal(result.profitKRW, 70);
-  assert.equal(Math.round(result.returnPercent * 100) / 100, 7);
-});
-
 test('배당은 원금이 아니라 그 구간의 수익으로 반영된다(입금·출금과 분리 집계)', () => {
   const result = calculateAnnualPerformance({
     year: 2026,
@@ -334,16 +317,15 @@ test('너무 오래된 평가액은 연초로 이월하지 않는다', () => {
   assert.equal(Math.round(fresh.returnPercent), 10);
 });
 
-test('같은 날짜에 자동/수동 평가액이 겹치면 이월도 수동값을 쓴다', () => {
+test('같은 날짜에 기록이 겹치면 이월도 마지막 값을 쓴다', () => {
   const build = (snapshots) => calculateAnnualPerformance({ year: 2026, snapshots });
   const ordered = [
-    { date: '2025-12-31', valueKRW: 1000, unrealizedProfitKRW: 100, source: 'manual' },
     { date: '2025-12-31', valueKRW: 9999, unrealizedProfitKRW: 9999, source: 'auto' },
+    { date: '2025-12-31', valueKRW: 1000, unrealizedProfitKRW: 100, source: 'auto' },
     { date: '2026-08-22', valueKRW: 1100, unrealizedProfitKRW: 150, source: 'auto' },
   ];
 
   assert.equal(build(ordered).startValueKRW, 1000);
-  assert.equal(build([ordered[1], ordered[0], ordered[2]]).startValueKRW, 1000);
   assert.equal(Math.round(build(ordered).returnPercent * 100) / 100, 5);
 });
 
@@ -546,30 +528,19 @@ test('아직 저장되지 않은 오늘 평가액도 현재 연도 수익률에 
   assert.equal(Math.round(result.returnPercent * 100) / 100, 20);
 });
 
-test('오늘 자동 평가액은 최신 화면 값으로 바꾸되 같은 날짜 수동 평가액은 보존한다', () => {
+test('오늘 자동 평가액은 최신 화면 값으로 바꾼다', () => {
   assert.equal(withCurrentPortfolioSnapshot(
     [{ date: '2026-08-20', valueKRW: 10_000, source: 'auto' }],
     { date: '2026-08-20', valueKRW: 12_000 },
   )[0].valueKRW, 12_000);
-
-  assert.equal(withCurrentPortfolioSnapshot(
-    [{ date: '2026-08-20', valueKRW: 10_000, source: 'manual' }],
-    { date: '2026-08-20', valueKRW: 12_000 },
-  )[0].valueKRW, 10_000);
 });
 
-test('하루 한 번 저장한 자동 평가액과 수동 연초 평가액을 덮지 않는다', () => {
+test('하루 한 번 저장한 평가액은 그날 다시 호출해도 덮지 않는다', () => {
   const automatic = upsertDailyPortfolioSnapshot(
     [{ id: 'old', date: '2026-08-18', valueKRW: 1000, source: 'auto' }],
     { date: '2026-08-18', valueKRW: 1100, source: 'auto' },
   );
   assert.equal(automatic[0].valueKRW, 1000);
-
-  const manual = upsertDailyPortfolioSnapshot(
-    [{ id: 'manual', date: '2026-01-01', valueKRW: 500, source: 'manual' }],
-    { date: '2026-01-01', valueKRW: 900, source: 'auto' },
-  );
-  assert.equal(manual[0].valueKRW, 500);
 });
 
 test('새 날짜의 자동 스냅샷은 기존 기록이 하나도 없어도 실제로 저장된다', () => {

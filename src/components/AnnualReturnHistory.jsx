@@ -12,9 +12,9 @@ const getPeriodLabel = (performance, year, currentYear) => {
 const getInsufficientMessage = (performance) => {
   if (performance?.reason === 'cash-flow-required') return '첫 입금 기록을 추가하면 현재 평가액과 연결해 자동 계산합니다.';
   if (performance?.reason === 'current-value-required') return '입금 기록은 확인됐지만 현재 평가액이 아직 없습니다.';
-  if (performance?.reason === 'opening-value-required') return '기록이 출금부터 시작되어 초기 자산 기준값이 필요합니다.';
+  if (performance?.reason === 'opening-value-required') return '기록이 출금부터 시작되어 이전 잔액을 알 수 없어 계산할 수 없습니다.';
   if (performance?.reason === 'capital-base-required') return '이 기간 순입금(입금-출금)이 0원 이하라 나눌 원금 기준이 없어 수익률을 표시할 수 없습니다.';
-  return '입출금 기록을 모두 입력하면 첫 입금일부터 자동 계산합니다. 이미 투자 중이던 계좌만 해당 연도 시작 평가액을 선택적으로 입력하세요.';
+  return '입출금 기록을 모두 입력하면 첫 입금일부터 자동 계산합니다.';
 };
 
 // 단순 비율(비가중) 수익률이라, 원금이 거의 없는 해에 입금과 출금이 거의 같은
@@ -61,7 +61,6 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
                 <div><p className="text-[10px] font-bold text-ink-mute">이 기간 출금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.withdrawalsKRW, 'KRW')}</p></div>
                 <div><p className="text-[10px] font-bold text-ink-mute">이 기간 배당</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.dividendsKRW || 0, 'KRW')}</p></div>
               </div>
-              <p className="text-[10px] font-semibold text-ink-mute mt-2">전체 누적 입출금은 계좌 관리에서 확인할 수 있습니다.</p>
             </>
           ) : (
             <div className="py-8">

@@ -38,10 +38,10 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
     : performance?.reason === 'current-value-required'
       ? '입금 기록은 확인됐습니다. 현재 보유 자산의 평가액이 준비되면 자동 계산합니다.'
       : performance?.reason === 'opening-value-required'
-        ? '기록이 출금부터 시작되어 초기 자산을 알 수 없습니다. 해당 연도 시작 기준 평가액만 입력하세요.'
+        ? '기록이 출금부터 시작되어 이전 잔액을 알 수 없어 계산할 수 없습니다.'
         : performance?.reason === 'capital-base-required'
           ? '이 기간 순입금(입금-출금)이 0원 이하라 나눌 원금 기준이 없어 수익률을 표시할 수 없습니다.'
-          : '입출금 기록과 현재 평가액으로 자동 계산합니다. 이미 투자 중인 상태에서 기록을 시작했다면 해당 연도 시작 기준 평가액만 선택적으로 입력하세요.';
+          : '입출금 기록과 현재 평가액이 쌓이면 첫 입금일부터 자동 계산합니다.';
 
   return (
     <section className="bg-surface rounded-[20px] overflow-hidden">

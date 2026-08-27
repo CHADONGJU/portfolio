@@ -9,11 +9,7 @@ const normalizeSnapshots = (snapshots = [], year) => {
     const date = toDateKey(snapshot?.date);
     const valueKRW = Number(snapshot?.valueKRW);
     if (!date.startsWith(`${year}-`) || !Number.isFinite(valueKRW) || valueKRW < 0) return;
-
-    const previous = byDate.get(date);
-    if (!previous || snapshot.source === 'manual' || previous.source !== 'manual') {
-      byDate.set(date, { ...snapshot, date, valueKRW });
-    }
+    byDate.set(date, { ...snapshot, date, valueKRW });
   });
 
   return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
@@ -21,14 +17,14 @@ const normalizeSnapshots = (snapshots = [], year) => {
 
 /**
  * 스냅샷이 "그날 언제의 값"인지.
- * - 사용자가 넣은 연초 평가액, 이월값, 가입일 추정(0원)은 그날 활동 전(=하루의 시작)
- *   값이다. 그래서 그날 입금은 아직 안 들어가 있고, 다음 구간의 원금으로 쳐야 한다.
+ * - 이월값, 가입일 추정(0원)은 그날 활동 전(=하루의 시작) 값이다. 그래서 그날
+ *   입금은 아직 안 들어가 있고, 다음 구간의 원금으로 쳐야 한다.
  * - 자동 저장·현재 값은 그 순간까지의 활동이 이미 반영된 값이다(그 돈으로 바로
  *   매수했다면 이미 자산에 잡혀 있음).
  * 이 구분을 놓치면 경계일의 입출금이 두 번 잡히거나 통째로 빠진다.
  */
 const isDayOpenSnapshot = (snapshot = {}) => (
-  snapshot.source === 'manual' || snapshot.source === 'carried-forward' || snapshot.source === 'inception'
+  snapshot.source === 'carried-forward' || snapshot.source === 'inception'
 );
 
 const normalizeFlow = (flow) => {
@@ -86,16 +82,12 @@ const buildCarriedOpeningSnapshot = (snapshots = [], allFlows = [], year) => {
     if (!date || date < earliestCarryDate || date >= openingDate) return;
     if (!Number.isFinite(valueKRW) || valueKRW < 0) return;
 
-    // normalizeSnapshots와 같은 규칙: 같은 날짜면 사용자가 넣은 값이 이긴다.
-    const existing = candidates.get(date);
-    if (!existing || snapshot.source === 'manual' || existing.source !== 'manual') {
-      candidates.set(date, {
-        date,
-        valueKRW,
-        source: snapshot.source || 'auto',
-        unrealizedProfitKRW: snapshot.unrealizedProfitKRW,
-      });
-    }
+    candidates.set(date, {
+      date,
+      valueKRW,
+      source: snapshot.source || 'auto',
+      unrealizedProfitKRW: snapshot.unrealizedProfitKRW,
+    });
   });
 
   const previous = [...candidates.values()]
@@ -159,11 +151,13 @@ export const calculateAnnualPerformance = ({
     .reduce((sum, flow) => sum + flow.amountKRW, 0);
 
   // 원금 기준점은 우선순위대로 정한다:
-  //   1) 사용자가 직접 입력한 연초 평가액
-  //   2) 전년도 마지막 실제 평가액(그 뒤 연말까지 입출금 반영) 이어받기
-  //   3) 둘 다 없으면 "가입일"을 0원 시작점으로 보고 그 날부터 지금까지를 하나의
-  //      구간으로 계산한다. 가입 이전 포트폴리오가 있었다고 가정하지 않고, 그 해
-  //      1월 1일 자산이 얼마였는지 기억해서 입력하라고 요구하지도 않는다.
+  //   1) 이미 정확히 1월 1일자로 기록된 실제 평가액이 있으면 그대로 쓴다(새로
+  //      만들지 않는다). 자동 저장이 몇 년쨰 쌓이면 자연히 이 경우가 된다.
+  //   2) 없으면 전년도 마지막 실제 평가액(그 뒤 연말까지 입출금 반영) 이어받기.
+  //   3) 그 해에 가입한 계좌라면 1월 1일 자산이 0원이었다는 게 추측이 아니라
+  //      사실이므로(그 계좌는 아직 존재하지도 않았다) 1월 1일을 0원 시작점으로 삼는다.
+  //   4) 이도 저도 없으면 "가입일"을 0원 시작점으로 보고 그 날부터 지금까지를 하나의
+  //      구간으로 계산한다. 가입 이전 포트폴리오가 있었다고 가정하지 않는다.
   //      가입일을 모르면(마이그레이션 이전 데이터) 최초 입출금일로 대신하되, 이때도
   //      존재하지 않는 과거 평가액을 새로 만들어내지는 않는다.
   const hasExplicitYearStart = ownSnapshots[0]?.date === yearStartKey;
@@ -369,36 +363,24 @@ export const upsertDailyPortfolioSnapshot = (snapshots = [], snapshot = {}) => {
   const valueKRW = Number(snapshot.valueKRW);
   if (!date || !Number.isFinite(valueKRW) || valueKRW < 0) return snapshots;
 
-  const existing = snapshots.find((entry) => toDateKey(entry.date) === date);
-  // 하루 한 번만 저장한다 — 그날 이미 값이 있으면(자동이든 수동이든) 그 뒤의
-  // 자동/현재 값으로는 덮지 않는다. 수동 입력은 언제든 우선한다(새로 넣거나
-  // 고쳐도 반영된다). 그날 값이 아예 없을 때만(existing이 없을 때) 새로 만든다.
-  if (existing && snapshot.source !== 'manual') return snapshots;
-  if (
-    existing
-    && existing.valueKRW === valueKRW
-    && existing.unrealizedProfitKRW === snapshot.unrealizedProfitKRW
-    && (existing.source || 'auto') === (snapshot.source || 'auto')
-  ) return snapshots;
+  // 하루 한 번만 저장한다 — 그날 값이 아예 없을 때만 새로 만든다.
+  const hasExisting = snapshots.some((entry) => toDateKey(entry.date) === date);
+  if (hasExisting) return snapshots;
 
   const nextSnapshot = {
-    ...existing,
     ...snapshot,
-    id: existing?.id || snapshot.id || `snapshot-${date}`,
+    id: snapshot.id || `snapshot-${date}`,
     date,
     valueKRW,
     source: snapshot.source || 'auto',
   };
-  const next = existing
-    ? snapshots.map((entry) => (entry === existing ? nextSnapshot : entry))
-    : [...snapshots, nextSnapshot];
 
-  return next.sort((left, right) => toDateKey(left.date).localeCompare(toDateKey(right.date)));
+  return [...snapshots, nextSnapshot].sort((left, right) => toDateKey(left.date).localeCompare(toDateKey(right.date)));
 };
 
 /**
  * 수익률 화면은 오늘의 자동 스냅샷이 아직 영구 저장되지 않았더라도 현재 총평가액으로
- * 즉시 계산해야 한다. 같은 날짜의 수동 값은 사용자가 확정한 값이므로 보존한다.
+ * 즉시 계산해야 한다.
  */
 export const withCurrentPortfolioSnapshot = (snapshots = [], snapshot = {}) => {
   const date = toDateKey(snapshot.date);
@@ -406,7 +388,6 @@ export const withCurrentPortfolioSnapshot = (snapshots = [], snapshot = {}) => {
   if (!date || !Number.isFinite(valueKRW) || valueKRW < 0) return snapshots;
 
   const existing = snapshots.find((entry) => toDateKey(entry.date) === date);
-  if (existing?.source === 'manual') return snapshots;
 
   const current = {
     ...existing,
