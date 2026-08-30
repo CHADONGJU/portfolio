@@ -1141,6 +1141,12 @@ const App = () => {
   const [currencyRates, setCurrencyRates] = useState({ KRW: 1 });
   const [isLiveMode] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
+  /**
+   * 시세 동기화가 "한 번은 끝났다"는 표시. 이게 없으면 화면이 뜬 직후(아직 동기화가
+   * 시작되지도 않은 순간)의 저장된 가격·기본 환율로 계산한 값이 그대로 수익률 카드에
+   * 들어가, 새로고침할 때마다 다른 숫자가 잠깐씩 보였다가 바뀐다.
+   */
+  const [priceSyncSettledAt, setPriceSyncSettledAt] = useState(null);
   const [activeTab, setActiveTab] = useState('portfolio');
   const [isFetching, setIsFetching] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -2193,7 +2199,10 @@ const buyLotDraftSummary = useMemo(() => {
         if (isLatestRun() && assetsRef.current.length > 0) addLog("네트워크 오류로 갱신 실패", "error");
       }
       finally {
-        if (runId === liveFetchRunIdRef.current) setIsFetching(false);
+        if (runId === liveFetchRunIdRef.current) {
+          setIsFetching(false);
+          setPriceSyncSettledAt(new Date().toISOString());
+        }
       }
     };
 
@@ -2481,7 +2490,8 @@ const buyLotDraftSummary = useMemo(() => {
    * 총평가액으로 즉시 계산해야 한다(하루 한 번 저장을 기다리지 않는다).
    */
   const performanceSnapshots = useMemo(() => (
-    isCloudPortfolioLoaded && !cloudLoadFailed && !isFetching && Number.isFinite(Number(totalConvertedKRW))
+    isCloudPortfolioLoaded && !cloudLoadFailed && !isFetching && Boolean(priceSyncSettledAt)
+      && Number.isFinite(Number(totalConvertedKRW))
       ? withCurrentPortfolioSnapshot(portfolioSnapshots, {
         date: formatDateKey(new Date()),
         valueKRW: totalConvertedKRW,
@@ -2490,7 +2500,7 @@ const buyLotDraftSummary = useMemo(() => {
       : portfolioSnapshots
   ), [
     portfolioSnapshots, totalConvertedKRW, dashboardSummary.investedProfitKRW,
-    isCloudPortfolioLoaded, cloudLoadFailed, isFetching,
+    isCloudPortfolioLoaded, cloudLoadFailed, isFetching, priceSyncSettledAt,
   ]);
   const annualPerformanceYears = useMemo(() => getAnnualPerformanceYears({
     snapshots: performanceSnapshots,
@@ -2505,10 +2515,12 @@ const buyLotDraftSummary = useMemo(() => {
       realizedGains: realizedGainKrwEvents,
       year,
       joinedAt,
+      costBasisKRW: dashboardSummary.investedPurchaseKRW,
     })
   )), [
     annualPerformanceYears, performanceSnapshots, capitalFlows,
     dividendKrwEvents, realizedGainKrwEvents, joinedAt,
+    dashboardSummary.investedPurchaseKRW,
   ]);
   const selectedAnnualPerformance = useMemo(() => (
     annualPerformances.find((performance) => performance.year === annualReturnYear)
@@ -2519,10 +2531,12 @@ const buyLotDraftSummary = useMemo(() => {
       realizedGains: realizedGainKrwEvents,
       year: annualReturnYear,
       joinedAt,
+      costBasisKRW: dashboardSummary.investedPurchaseKRW,
     })
   ), [
     annualPerformances, annualReturnYear, performanceSnapshots, capitalFlows,
     dividendKrwEvents, realizedGainKrwEvents, joinedAt,
+    dashboardSummary.investedPurchaseKRW,
   ]);
   /**
    * 해외주식 양도소득세(추정).

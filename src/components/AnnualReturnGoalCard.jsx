@@ -12,11 +12,7 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
   const actualPosition = actual === null ? zeroPosition : ((actual - min) / range) * 100;
   const fillLeft = Math.min(zeroPosition, actualPosition);
   const fillWidth = Math.abs(actualPosition - zeroPosition);
-  const currentReturnLabel = performance?.periodType === 'since-first-deposit'
-    ? (performance?.joinedAtAnchored ? '가입 이후 수익률' : '첫 입금 이후 수익률')
-    : performance?.periodType === 'recorded-period'
-      ? '기록 시작 이후 수익률'
-      : '현재 수익률';
+  const currentReturnLabel = year === currentYear ? `${year}년 YTD 수익률` : `${year}년 연간 수익률`;
   const carriedForwardAmount = Number.isFinite(performance?.carriedForwardValueKRW)
     ? performance.carriedForwardValueKRW.toLocaleString('ko-KR')
     : null;
@@ -32,16 +28,10 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
     ? `달성률 ${achievementLabel}%`
     : target <= 0
       ? '목표 수익률을 입력하세요.'
-      : '첫 입금 기록 또는 과거 기준값이 필요합니다.';
-  const insufficientMessage = performance?.reason === 'cash-flow-required'
-    ? '첫 입금 기록을 추가하면 현재 평가액과 연결해 자동 계산합니다.'
-    : performance?.reason === 'current-value-required'
-      ? '입금 기록은 확인됐습니다. 현재 보유 자산의 평가액이 준비되면 자동 계산합니다.'
-      : performance?.reason === 'opening-value-required'
-        ? '기록이 출금부터 시작되어 이전 잔액을 알 수 없어 계산할 수 없습니다.'
-        : performance?.reason === 'capital-base-required'
-          ? '이 기간 순입금(입금-출금)이 0원 이하라 나눌 원금 기준이 없어 수익률을 표시할 수 없습니다.'
-          : '입출금 기록과 현재 평가액이 쌓이면 첫 입금일부터 자동 계산합니다.';
+      : '이 해의 평가 기록이 쌓이면 자동 계산합니다.';
+  const insufficientMessage = performance?.reason === 'capital-base-required'
+    ? '나눌 원금 기준이 아직 없습니다. 보유 종목의 매입 기록이나 입금 기록을 넣으면 자동 계산합니다.'
+    : '이 해의 평가 기록이 아직 없습니다. 보유 종목을 등록하면 그날부터 자동으로 쌓입니다.';
 
   return (
     <section className="bg-surface rounded-[20px] overflow-hidden">
@@ -76,12 +66,17 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
           </div>
           <p className="text-xs md:text-sm font-bold text-ink-soft">{statusMessage}</p>
         </div>
-        {performance?.status === 'ready' && performance.inferredStart && (
+        {performance?.status === 'ready' && performance.openingBasis === 'assumed-zero' && (
           <div className="mb-5 rounded-2xl bg-up-soft px-4 py-3">
             <p className="text-xs font-bold text-up leading-relaxed">
-              {performance.joinedAtAnchored
-                ? `가입일 ${performance.startDate}을 시작점(0원)으로, 가입 이전 포트폴리오는 가정하지 않고 계산했습니다.`
-                : `1월 1일 평가액 없이 첫 입금일 ${performance.startDate}을 시작점(0원)으로 자동 계산했습니다.`}
+              {`${year}년 1월 1일 평가액 기록이 없어 그 자리를 0원으로 두고, 실제 매입원가를 원금으로 삼아 계산했습니다. 연말 평가액이 한 번 쌓이면 내년부터는 정확한 연초 기준으로 바뀝니다.`}
+            </p>
+          </div>
+        )}
+        {performance?.status === 'ready' && performance.openingBasis === 'account-opened' && (
+          <div className="mb-5 rounded-2xl bg-up-soft px-4 py-3">
+            <p className="text-xs font-bold text-up leading-relaxed">
+              {`${year}년에 시작한 계좌라 1월 1일 평가액을 0원으로 두고 계산했습니다.`}
             </p>
           </div>
         )}

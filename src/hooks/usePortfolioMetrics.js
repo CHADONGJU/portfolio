@@ -273,7 +273,7 @@ export const usePortfolioMetrics = ({
       resolveKrwRate: resolveRecordBuyKrwRate,
     })
   ), [tradeLedger, trades]);
-  const realizedRecords = canonicalTradeRows.filter(record => record.side === 'sell');
+  const realizedRecords = useMemo(() => canonicalTradeRows.filter(record => record.side === 'sell'), [canonicalTradeRows]);
   const realizedKrwRate = (currency) => {
     if (currency === 'USD') return exchangeRate || 1350;
     if (currency === 'JPY') return jpyKrwRate || 9.5;
@@ -290,9 +290,13 @@ export const usePortfolioMetrics = ({
   // 연 수익률이 "그 시점에 실현된 손익"으로 반영할 때 쓰는, 날짜가 붙은 실현손익
   // 목록. 헤더 합계(totalConvertedNetProfit)와 완전히 같은 계산(같은 환율 규칙)을
   // 재사용해야 두 화면의 숫자가 서로 어긋나지 않는다.
-  const realizedGainKrwEvents = realizedRecords
+  // 렌더마다 새 배열을 만들면 이 값을 의존성으로 쓰는 연 수익률 계산이 매번 통째로
+  // 다시 돌아 화면이 불필요하게 요동친다. 실제 입력이 바뀔 때만 새로 만든다.
+  const realizedGainKrwEvents = useMemo(() => realizedRecords
     .map((record) => ({ date: record.date, amountKRW: getRecordKrwPnl(record, realizedKrwRate) }))
-    .filter((event) => event.date && Number.isFinite(event.amountKRW));
+    .filter((event) => event.date && Number.isFinite(event.amountKRW)),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [realizedRecords, exchangeRate, jpyKrwRate, currencyRates]);
 
   const stockPerformanceSummary = useMemo(() => {
     const rate = exchangeRate || 1350;

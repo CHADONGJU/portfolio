@@ -1,20 +1,27 @@
 import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatMoney } from '../utils/formatters.js';
 
-const getPeriodLabel = (performance, year, currentYear) => {
-  if (performance?.periodType === 'since-first-deposit') {
-    return performance?.joinedAtAnchored ? `${year}년 가입 이후` : `${year}년 첫 입금 이후`;
-  }
-  if (performance?.periodType === 'recorded-period') return `${year}년 기록 시작 이후`;
-  return year === currentYear ? `${year}년 YTD` : `${year}년 연간`;
-};
+// 구간은 언제나 1월 1일부터다. 기록을 언제 시작했든 라벨은 그 해를 가리킨다.
+const getPeriodLabel = (year, currentYear) => (
+  year === currentYear ? `${year}년 YTD` : `${year}년 연간`
+);
 
 const getInsufficientMessage = (performance) => {
-  if (performance?.reason === 'cash-flow-required') return '첫 입금 기록을 추가하면 현재 평가액과 연결해 자동 계산합니다.';
-  if (performance?.reason === 'current-value-required') return '입금 기록은 확인됐지만 현재 평가액이 아직 없습니다.';
-  if (performance?.reason === 'opening-value-required') return '기록이 출금부터 시작되어 이전 잔액을 알 수 없어 계산할 수 없습니다.';
-  if (performance?.reason === 'capital-base-required') return '이 기간 순입금(입금-출금)이 0원 이하라 나눌 원금 기준이 없어 수익률을 표시할 수 없습니다.';
-  return '입출금 기록을 모두 입력하면 첫 입금일부터 자동 계산합니다.';
+  if (performance?.reason === 'capital-base-required') return '나눌 원금 기준이 아직 없습니다. 보유 종목의 매입 기록이나 입금 기록을 넣으면 자동 계산합니다.';
+  return '이 해의 평가 기록이 아직 없습니다. 보유 종목을 등록하면 그날부터 자동으로 쌓입니다.';
+};
+
+// 연초 기준값을 어디서 가져왔는지 한 줄로. 숫자가 어떤 전제 위에 있는지 감추지 않되,
+// 계산 자체를 막지는 않는다.
+const getBasisNote = (performance) => {
+  if (performance?.openingBasis === 'carried-forward') return '전년도 평가액 이어받음';
+  if (performance?.openingBasis === 'account-opened') return '가입 연도 · 1월 1일 0원 기준';
+  if (performance?.openingBasis === 'assumed-zero') {
+    return performance?.capitalBasis === 'cost-basis'
+      ? '연초 기준값 없음 · 매입원가 대비'
+      : '연초 기준값 없음 · 누적 기준';
+  }
+  return '';
 };
 
 // 단순 비율(비가중) 수익률이라, 원금이 거의 없는 해에 입금과 출금이 거의 같은
@@ -50,11 +57,11 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
 
       <div className="p-5 md:p-7 grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-5">
         <div className="bg-canvas rounded-2xl p-5">
-          <p className="text-[11px] font-bold text-ink-mute">{getPeriodLabel(performance, year, currentYear)}</p>
+          <p className="text-[11px] font-bold text-ink-mute">{getPeriodLabel(year, currentYear)}</p>
           {performance.status === 'ready' ? (
             <>
               <p className={`figure text-3xl md:text-4xl font-bold mt-2 ${performance.returnPercent >= 0 ? 'text-up' : 'text-down'}`}>{performance.returnPercent >= 0 ? '+' : ''}{performance.returnPercent.toFixed(2)}%</p>
-              <p className="text-xs font-semibold text-ink-mute mt-2">{performance.startDate} ~ {performance.endDate}{performance.inferredStart ? (performance.joinedAtAnchored ? ' · 가입일 기준' : ' · 첫 입금 기준') : ''}{performance.carriedForward ? ' · 전년도 평가액 이어받음' : ''}{performance.estimated ? ' · 일부 구간 추정' : ''}</p>
+              <p className="text-xs font-semibold text-ink-mute mt-2">{performance.startDate} ~ {performance.endDate}{getBasisNote(performance) ? ` · ${getBasisNote(performance)}` : ''}</p>
               <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div><p className="text-[10px] font-bold text-ink-mute">이 기간 순수익</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.profitKRW, 'KRW')}</p></div>
                 <div><p className="text-[10px] font-bold text-ink-mute">이 기간 입금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.depositsKRW, 'KRW')}</p></div>
@@ -77,7 +84,7 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
             const width = Number.isFinite(value) ? (clampedAbsPercent(value) / maxAbs) * 50 : 0;
             return (
               <button key={itemYear} type="button" onClick={() => onYearChange(itemYear)} className={`w-full rounded-xl px-4 py-3 text-left transition-colors ${itemYear === year ? 'bg-canvas ring-1 ring-line' : 'hover:bg-canvas'}`}>
-                <div className="flex items-center justify-between gap-3 mb-2"><span className="text-xs md:text-sm font-bold text-ink">{getPeriodLabel(item, itemYear, currentYear)}</span><span className={`figure text-xs md:text-sm font-bold ${!Number.isFinite(value) ? 'text-ink-mute' : value >= 0 ? 'text-up' : 'text-down'}`}>{Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '자료 부족'}</span></div>
+                <div className="flex items-center justify-between gap-3 mb-2"><span className="text-xs md:text-sm font-bold text-ink">{getPeriodLabel(itemYear, currentYear)}</span><span className={`figure text-xs md:text-sm font-bold ${!Number.isFinite(value) ? 'text-ink-mute' : value >= 0 ? 'text-up' : 'text-down'}`}>{Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '자료 부족'}</span></div>
                 <div className="relative h-2 rounded-full bg-line-soft overflow-hidden"><span className="absolute left-1/2 top-0 h-full w-px bg-ink/20" />{Number.isFinite(value) && <span className={`absolute top-0 h-full rounded-full ${value >= 0 ? 'bg-up' : 'bg-down'}`} style={{ left: value >= 0 ? '50%' : `${50 - width}%`, width: `${Math.max(width, 1)}%` }} />}</div>
               </button>
             );
