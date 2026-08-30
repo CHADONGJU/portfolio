@@ -1156,7 +1156,9 @@ const App = () => {
   const [cloudRetryToken, setCloudRetryToken] = useState(0);
   // 연 수익률 계산의 시작점. 클라우드 문서에 이미 저장된 값을 최우선으로 쓰고,
   // 처음 보는 계정이면 Firebase 가입일(없으면 지금)로 1회만 기록한다.
-  const [joinedAt, setJoinedAt] = useState('');
+  // 가입일은 클라우드에 남겨 두되(계정 기록용) 수익률 계산 근거로는 쓰지 않는다 —
+  // 이 앱에 등록한 날일 뿐, 그 계좌가 그날 생겼다는 뜻이 아니다.
+  const [, setJoinedAt] = useState('');
   const loadedUserIdRef = useRef('');
   const [assetPendingRemoval, setAssetPendingRemoval] = useState(null);
 
@@ -2514,14 +2516,17 @@ const buyLotDraftSummary = useMemo(() => {
       dividends: dividendKrwEvents,
       realizedGains: realizedGainKrwEvents,
       year,
-      joinedAt,
       costBasisKRW: dashboardSummary.investedPurchaseKRW,
     })
   )), [
     annualPerformanceYears, performanceSnapshots, capitalFlows,
-    dividendKrwEvents, realizedGainKrwEvents, joinedAt,
+    dividendKrwEvents, realizedGainKrwEvents,
     dashboardSummary.investedPurchaseKRW,
   ]);
+  // 기록이 시작된 해보다 앞으로는 돌아갈 수 없게 한다(빈 카드만 보인다).
+  const earliestAnnualYear = annualPerformanceYears.length > 0
+    ? Math.min(...annualPerformanceYears)
+    : new Date().getFullYear();
   const selectedAnnualPerformance = useMemo(() => (
     annualPerformances.find((performance) => performance.year === annualReturnYear)
     || calculateAnnualPerformance({
@@ -2530,12 +2535,11 @@ const buyLotDraftSummary = useMemo(() => {
       dividends: dividendKrwEvents,
       realizedGains: realizedGainKrwEvents,
       year: annualReturnYear,
-      joinedAt,
       costBasisKRW: dashboardSummary.investedPurchaseKRW,
     })
   ), [
     annualPerformances, annualReturnYear, performanceSnapshots, capitalFlows,
-    dividendKrwEvents, realizedGainKrwEvents, joinedAt,
+    dividendKrwEvents, realizedGainKrwEvents,
     dashboardSummary.investedPurchaseKRW,
   ]);
   /**
@@ -5709,6 +5713,7 @@ const buyLotDraftSummary = useMemo(() => {
           <div className="space-y-8 anim-fade">
             <AnnualReturnGoalCard
               year={annualReturnYear}
+              earliestYear={earliestAnnualYear}
               targetPercent={targetPortfolio.annualReturnGoals?.[annualReturnYear] || ''}
               performance={selectedAnnualPerformance}
               onYearChange={setAnnualReturnYear}
@@ -5722,6 +5727,7 @@ const buyLotDraftSummary = useMemo(() => {
             />
             <AnnualReturnHistory
               year={annualReturnYear}
+              earliestYear={earliestAnnualYear}
               years={annualPerformanceYears}
               performance={selectedAnnualPerformance}
               performances={annualPerformances}

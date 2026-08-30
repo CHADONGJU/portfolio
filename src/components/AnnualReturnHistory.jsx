@@ -15,12 +15,8 @@ const getInsufficientMessage = (performance) => {
 // 계산 자체를 막지는 않는다.
 const getBasisNote = (performance) => {
   if (performance?.openingBasis === 'carried-forward') return '전년도 평가액 이어받음';
-  if (performance?.openingBasis === 'account-opened') return '가입 연도 · 1월 1일 0원 기준';
-  if (performance?.openingBasis === 'assumed-zero') {
-    return performance?.capitalBasis === 'cost-basis'
-      ? '연초 기준값 없음 · 매입원가 대비'
-      : '연초 기준값 없음 · 누적 기준';
-  }
+  if (performance?.capitalBasis === 'cost-basis') return '매입원가 대비';
+  if (performance?.capitalBasis === 'first-snapshot') return '기록 시작 시점 원금 대비';
   return '';
 };
 
@@ -31,7 +27,7 @@ const getBasisNote = (performance) => {
 const CHART_PERCENT_CAP = 300;
 const clampedAbsPercent = (value) => Math.min(Math.abs(value), CHART_PERCENT_CAP);
 
-const AnnualReturnHistory = ({ year, years, performance, performances, onYearChange }) => {
+const AnnualReturnHistory = ({ year, years, earliestYear, performance, performances, onYearChange }) => {
   const maxAbs = Math.max(
     1,
     ...performances.filter((item) => Number.isFinite(item.returnPercent)).map((item) => clampedAbsPercent(item.returnPercent)),
@@ -49,7 +45,7 @@ const AnnualReturnHistory = ({ year, years, performance, performances, onYearCha
           </div>
         </div>
         <div className="seg inline-flex self-start sm:self-auto items-center p-1 rounded-[14px]">
-          <button type="button" onClick={() => onYearChange(year - 1)} aria-label="이전 연도" className="seg-item w-9 h-9 grid place-items-center rounded-[10px] text-ink-mute hover:text-ink"><ChevronLeft size={16} /></button>
+          <button type="button" onClick={() => onYearChange(year - 1)} disabled={year <= earliestYear} aria-label="이전 연도" className="seg-item w-9 h-9 grid place-items-center rounded-[10px] text-ink-mute hover:text-ink disabled:opacity-30"><ChevronLeft size={16} /></button>
           <span className="px-4 min-w-24 text-center text-sm font-bold text-ink">{year}</span>
           <button type="button" onClick={() => onYearChange(year + 1)} disabled={year >= currentYear} aria-label="다음 연도" className="seg-item w-9 h-9 grid place-items-center rounded-[10px] text-ink-mute hover:text-ink disabled:opacity-30"><ChevronRight size={16} /></button>
         </div>

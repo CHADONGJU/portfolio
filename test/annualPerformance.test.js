@@ -147,7 +147,6 @@ test('투자 원금이 전혀 없으면 0% 수익률로 위장하지 않는다',
 test('출금이 순입금을 음수로 만들어도, 그 해 첫 평가액을 원금 기준으로 삼아 계산한다', () => {
   const result = calculateAnnualPerformance({
     year: 2026,
-    joinedAt: '2026-01-01',
     snapshots: [{ date: '2026-08-20', valueKRW: 500, unrealizedProfitKRW: 0, source: 'current' }],
     capitalFlows: [{ date: '2026-08-01', type: 'withdrawal', amountKRW: 100 }],
   });
@@ -393,10 +392,11 @@ test('기록이 출금부터 시작되면 기존 자산 기준값 없이 임의 
   assert.equal(result.reason, 'current-value-required');
 });
 
-test('가입일을 알면 그 날을 0원 시작점으로 삼는다(첫 입출금일이 아니라)', () => {
+test('연초 기준값이 없으면 누적 순입금이 아니라 계좌가 실제로 갖고 있던 값으로 나눈다', () => {
+  // 앱 가입일은 계산 근거로 쓰지 않는다 — 이 앱에 등록한 날일 뿐이고, 그 전부터
+  // 굴리던 계좌였을 수 있다. 대신 그 해 첫 평가액에서 평가이익을 뺀 900원이 원금이다.
   const result = calculateAnnualPerformance({
     year: 2026,
-    joinedAt: '2026-01-01',
     snapshots: [{ date: '2026-08-20', valueKRW: 1100, unrealizedProfitKRW: 200, source: 'current' }],
     capitalFlows: [{ date: '2026-06-01', type: 'deposit', amountKRW: 1000 }],
   });
@@ -404,20 +404,38 @@ test('가입일을 알면 그 날을 0원 시작점으로 삼는다(첫 입출�
   assert.equal(result.status, 'ready');
   assert.equal(result.startDate, '2026-01-01');
   assert.equal(result.startValueKRW, 0);
-  assert.equal(result.joinedAtAnchored, true);
-  assert.equal(result.openingBasis, 'account-opened');
+  assert.equal(result.openingBasis, 'assumed-zero');
   assert.equal(result.periodType, 'calendar-year');
-  assert.equal(result.capitalBaseKRW, 1000);
+  assert.equal(result.capitalBasis, 'first-snapshot');
+  assert.equal(result.capitalBaseKRW, 900);
   assert.equal(result.profitKRW, 200);
-  assert.equal(Math.round(result.returnPercent * 100) / 100, 20);
-  // 기간 중간에 입금이 들어와 단순 비율로 근사했다는 표시.
-  assert.equal(result.estimated, true);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 22.22);
+});
+
+test('한 해 동안 넣었다 뺐다를 반복해 누적 순입금이 부풀어도 수익률이 짓눌리지 않는다', () => {
+  // 실제로 보고된 문제: 5백만 원을 굴리는 계좌인데 올해 누적 순입금이 6천만 원으로
+  // 잡혀, 165만 원을 벌고도 +2.48%로 보였다.
+  const result = calculateAnnualPerformance({
+    year: 2026,
+    snapshots: [
+      { date: '2026-08-25', valueKRW: 5_000_000, unrealizedProfitKRW: 0, source: 'auto' },
+      { date: '2026-08-30', valueKRW: 5_100_000, unrealizedProfitKRW: 100_000, source: 'current' },
+    ],
+    capitalFlows: [
+      { date: '2026-02-01', type: 'deposit', amountKRW: 60_000_000 },
+    ],
+    realizedGains: [{ date: '2026-08-03', amountKRW: 1_550_000 }],
+    costBasisKRW: 5_000_000,
+  });
+
+  assert.equal(result.capitalBaseKRW, 5_000_000);
+  assert.equal(result.profitKRW, 1_650_000);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 33);
 });
 
 test('원금 후보가 하나도 없으면(평가액도 0원) 0%로 위장하지 않는다', () => {
   const result = calculateAnnualPerformance({
     year: 2026,
-    joinedAt: '2026-01-01',
     snapshots: [{ date: '2026-08-20', valueKRW: 0, unrealizedProfitKRW: 0, source: 'current' }],
     capitalFlows: [{ date: '2026-08-01', type: 'withdrawal', amountKRW: 100 }],
   });
@@ -581,10 +599,9 @@ test('순투자원금은 누적 입금에서 누적 출금을 뺀 금액이다',
   });
 });
 
-test('올해 가입했다면 기록을 늦게 시작해도 구간은 1월 1일부터 본다', () => {
+test('기록을 늦게 시작해도 구간은 1월 1일부터 본다', () => {
   const result = calculateAnnualPerformance({
     year: 2026,
-    joinedAt: '2026-08-25',
     snapshots: [
       { date: '2026-08-25', valueKRW: 1000, unrealizedProfitKRW: 0, source: 'auto' },
       { date: '2026-08-26', valueKRW: 1100, unrealizedProfitKRW: 100, source: 'auto' },
@@ -598,7 +615,6 @@ test('올해 가입했다면 기록을 늦게 시작해도 구간은 1월 1일�
   assert.equal(result.endDate, '2026-08-27');
   assert.equal(result.startValueKRW, 0);
   assert.equal(result.periodType, 'calendar-year');
-  assert.equal(result.inferredStart, false);
   assert.equal(result.depositsKRW, 1000);
   assert.equal(result.profitKRW, 250);
   assert.equal(Math.round(result.returnPercent * 100) / 100, 25);
@@ -610,7 +626,6 @@ test('작년 이전에 가입했어도 구간은 8/25가 아니라 1월 1일부�
   // 같은 뜻이 되도록 언제나 1월 1일부터 본다.
   const result = calculateAnnualPerformance({
     year: 2026,
-    joinedAt: '2025-03-01',
     snapshots: [
       { date: '2026-08-25', valueKRW: 1000, unrealizedProfitKRW: 0, source: 'auto' },
       { date: '2026-08-27', valueKRW: 1250, unrealizedProfitKRW: 250, source: 'current' },
@@ -633,7 +648,6 @@ test('8월에 기록을 시작해도 며칠짜리 구간으로 좁혀 수익률�
   // "올해 누적"이라는 제 이름을 달고, 원금도 실제 매입원가로 나뉜다.
   const result = calculateAnnualPerformance({
     year: 2026,
-    joinedAt: '2024-02-01',
     snapshots: [
       { date: '2026-08-25', valueKRW: 5_343_793, unrealizedProfitKRW: 0, source: 'auto' },
       { date: '2026-08-30', valueKRW: 6_492_074, unrealizedProfitKRW: 1_148_281, source: 'current' },

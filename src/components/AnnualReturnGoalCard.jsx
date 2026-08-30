@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, Target } from 'lucide-react';
 import { formatInputNumber, sanitizeNumericInput } from '../utils/formatters.js';
 
-const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange, onYearChange }) => {
+const AnnualReturnGoalCard = ({ year, earliestYear, targetPercent, performance, onTargetChange, onYearChange }) => {
   const currentYear = new Date().getFullYear();
   const actual = Number.isFinite(performance?.returnPercent) ? performance.returnPercent : null;
   const target = Number(targetPercent) || 0;
@@ -45,7 +45,7 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
         </div>
         <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
           <div className="seg inline-flex items-center p-1 rounded-xl">
-            <button type="button" onClick={() => onYearChange(year - 1)} aria-label="목표 이전 연도" className="seg-item w-9 h-9 grid place-items-center rounded-lg text-ink-mute hover:text-ink"><ChevronLeft size={15} /></button>
+            <button type="button" onClick={() => onYearChange(year - 1)} disabled={year <= earliestYear} aria-label="목표 이전 연도" className="seg-item w-9 h-9 grid place-items-center rounded-lg text-ink-mute hover:text-ink disabled:opacity-30"><ChevronLeft size={15} /></button>
             <span className="px-2 text-xs font-bold text-ink">{year}</span>
             <button type="button" onClick={() => onYearChange(year + 1)} disabled={year >= currentYear} aria-label="목표 다음 연도" className="seg-item w-9 h-9 grid place-items-center rounded-lg text-ink-mute hover:text-ink disabled:opacity-30"><ChevronRight size={15} /></button>
           </div>
@@ -66,20 +66,6 @@ const AnnualReturnGoalCard = ({ year, targetPercent, performance, onTargetChange
           </div>
           <p className="text-xs md:text-sm font-bold text-ink-soft">{statusMessage}</p>
         </div>
-        {performance?.status === 'ready' && performance.openingBasis === 'assumed-zero' && (
-          <div className="mb-5 rounded-2xl bg-up-soft px-4 py-3">
-            <p className="text-xs font-bold text-up leading-relaxed">
-              {`${year}년 1월 1일 평가액 기록이 없어 그 자리를 0원으로 두고, 실제 매입원가를 원금으로 삼아 계산했습니다. 연말 평가액이 한 번 쌓이면 내년부터는 정확한 연초 기준으로 바뀝니다.`}
-            </p>
-          </div>
-        )}
-        {performance?.status === 'ready' && performance.openingBasis === 'account-opened' && (
-          <div className="mb-5 rounded-2xl bg-up-soft px-4 py-3">
-            <p className="text-xs font-bold text-up leading-relaxed">
-              {`${year}년에 시작한 계좌라 1월 1일 평가액을 0원으로 두고 계산했습니다.`}
-            </p>
-          </div>
-        )}
         {performance?.status === 'ready' && performance.carriedForward && (
           <div className="mb-5 rounded-2xl bg-up-soft px-4 py-3">
             <p className="text-xs font-bold text-up leading-relaxed">전년도 마지막 평가액인 {performance.carriedForwardAsOfDate}자 {carriedForwardAmount}원을 {year}년 시작 기준으로 이어받아 계산했습니다.</p>

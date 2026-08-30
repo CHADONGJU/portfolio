@@ -161,7 +161,7 @@ const buildCarriedOpeningSnapshot = (snapshots = [], allFlows = [], year) => {
  */
 export const calculateAnnualPerformance = ({
   snapshots = [], capitalFlows = [], dividends = [], realizedGains = [],
-  year, joinedAt = null, costBasisKRW = 0,
+  year, costBasisKRW = 0,
 } = {}) => {
   const numericYear = Number(year);
   const yearStartKey = `${numericYear}-01-01`;
@@ -180,9 +180,11 @@ export const calculateAnnualPerformance = ({
   // 1월 1일 기준값은 우선순위대로 정한다:
   //   1) 이미 정확히 1월 1일자로 기록된 실제 평가액이 있으면 그대로 쓴다.
   //   2) 없으면 전년도 마지막 실제 평가액(그 뒤 연말까지 입출금 반영)을 이어받는다.
-  //   3) 그것도 없으면 1월 1일을 0원으로 둔다. 가입일이 그 해 안이면 이건 추측이
-  //      아니라 사실이고(그 계좌는 아직 존재하지도 않았다), 아니면 "연초 기준값이
-  //      아직 없다"는 뜻이라 추정으로 표시한다.
+  //   3) 그것도 없으면 1월 1일을 0원으로 둔다. 이땐 "연초 기준값이 아직 없다"는
+  //      뜻이므로, 나눌 원금은 아래에서 실제로 관측된 값으로 따로 정한다.
+  //      앱 가입일은 근거로 쓰지 않는다 — 가입일은 이 앱에 등록한 날일 뿐이고,
+  //      그 전부터 굴리던 계좌였을 수 있어서 "그 해에 생긴 계좌"라고 단정하면
+  //      기존 원금이 통째로 수익으로 잡힌다.
   const hasExplicitYearStart = ownSnapshots[0]?.date === yearStartKey;
   const carriedForwardSnapshot = hasExplicitYearStart
     ? null
@@ -191,19 +193,13 @@ export const calculateAnnualPerformance = ({
     ? { id: `year-start-${numericYear}`, date: yearStartKey, valueKRW: 0, unrealizedProfitKRW: 0, source: 'inception' }
     : null;
 
-  const joinedAtKey = toDateKey(joinedAt) || null;
-  // 가입일이 이 해 안이면 1월 1일 0원은 추측이 아니라 사실이다.
-  const openedThisYear = Boolean(joinedAtKey) && joinedAtKey.startsWith(`${numericYear}-`);
-
   const baseStartSnapshot = carriedForwardSnapshot || assumedOpeningSnapshot;
   const yearSnapshots = baseStartSnapshot ? [baseStartSnapshot, ...ownSnapshots] : ownSnapshots;
   const openingBasis = hasExplicitYearStart
     ? 'recorded'
     : carriedForwardSnapshot
       ? 'carried-forward'
-      : openedThisYear
-        ? 'account-opened'
-        : 'assumed-zero';
+      : 'assumed-zero';
 
   if (yearSnapshots.length < 2) {
     return {
@@ -220,8 +216,6 @@ export const calculateAnnualPerformance = ({
       periodType: 'insufficient',
       openingBasis,
       capitalBasis: 'none',
-      inferredStart: false,
-      joinedAtAnchored: false,
       carriedForward: false,
       reason: 'current-value-required',
     };
@@ -301,20 +295,20 @@ export const calculateAnnualPerformance = ({
   let denominatorKRW = flowBasedCapitalKRW;
   let capitalBasis = 'opening-plus-flows';
   if (assumedOpeningSnapshot) {
-    // 연초 기준값이 없을 땐 후보 중 가장 큰 원금을 쓴다 — 원금을 작게 잡으면
-    // 수익률이 실제보다 부풀려지는 쪽으로 틀리기 때문이다.
-    const widestCapitalKRW = Math.max(
-      flowBasedCapitalKRW,
-      snapshotBasedCapitalKRW,
-      usableCostBasisKRW,
-    );
-    denominatorKRW = widestCapitalKRW;
-    if (widestCapitalKRW > EPSILON) {
-      capitalBasis = widestCapitalKRW === usableCostBasisKRW
+    /**
+     * 연초 기준값이 없으면 "0원 + 그 해 순입금"은 원금이 아니다.
+     * 입출금 기록은 이 앱을 쓰기 시작한 뒤부터만 온전한 경우가 많고, 한 해 동안
+     * 넣었다 뺐다를 반복하면 누적 순입금이 실제로 굴린 돈과 한참 벌어진다
+     * (5백만 원을 굴리는 계좌의 올해 누적 입금이 6천만 원이 되는 식이다).
+     * 그래서 계좌가 실제로 갖고 있던 값 — 그 해 첫 평가액(그때까지의 평가이익은
+     * 빼고, 그 뒤 입출금은 더해서)과 지금 보유분의 매입원가 — 중 큰 쪽을 쓴다.
+     */
+    const observedCapitalKRW = Math.max(snapshotBasedCapitalKRW, usableCostBasisKRW);
+    if (observedCapitalKRW > EPSILON) {
+      denominatorKRW = observedCapitalKRW;
+      capitalBasis = observedCapitalKRW === usableCostBasisKRW
         ? 'cost-basis'
-        : widestCapitalKRW === snapshotBasedCapitalKRW
-          ? 'first-snapshot'
-          : 'opening-plus-flows';
+        : 'first-snapshot';
     }
   }
   if (!(denominatorKRW > EPSILON) && usableCostBasisKRW > EPSILON) {
@@ -347,8 +341,6 @@ export const calculateAnnualPerformance = ({
     snapshotCount: ownSnapshots.length,
     openingBasis,
     capitalBasis,
-    inferredStart: false,
-    joinedAtAnchored: openedThisYear,
     carriedForward: Boolean(carriedForwardSnapshot),
     carriedForwardAsOfDate: carriedForwardSnapshot?.asOfDate || '',
     carriedForwardValueKRW: carriedForwardSnapshot ? carriedForwardSnapshot.valueKRW : null,
