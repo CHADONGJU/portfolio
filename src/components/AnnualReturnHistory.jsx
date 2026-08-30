@@ -41,7 +41,7 @@ const AnnualReturnHistory = ({ year, years, earliestYear, performance, performan
           <BarChart3 size={18} className="text-ink-soft" />
           <div>
             <h3 className="text-base md:text-lg font-bold text-ink">연도별 수익률</h3>
-            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">외부 입출금은 원금으로 분리하고, 매도 손익은 수수료·거래세를 뺀 실수령 기준으로 집계합니다.</p>
+            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">매도 실현손익(수수료·거래세 차감)과 배당만 순수익으로 집계하며, 평가손익은 포함하지 않습니다.</p>
           </div>
         </div>
         <div className="seg inline-flex self-start sm:self-auto items-center p-1 rounded-[14px]">

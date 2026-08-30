@@ -143,21 +143,17 @@ const buildCarriedOpeningSnapshot = (snapshots = [], allFlows = [], year) => {
 };
 
 /**
- * 연 순수익 = 그 해에 "판" 손익(실현손익) + 그 해에 받은 배당 + 그 해 동안의
- * 미실현손익(아직 안 판 것들의 평가손익) 변화.
+ * 연 순수익 = 그 해에 "판" 손익(실현손익, 수수료·거래세 차감 후) + 그 해에 받은 배당.
  *
- * 예전 방식(연초 평가금액 대비 연말 평가금액의 변화)은 종목을 팔면 그 평가금액이
- * 보유 목록에서 통째로 사라지는데, 판 돈을 현금으로 따로 추적하지 않는 한 그 사실을
- * 되돌려 넣을 방법이 없어 "이익을 보고 팔아도 손실처럼 보이는" 문제가 있었다.
- * 실현손익·배당·미실현손익을 각각 자기 방식대로(트레이드 기록/배당 기록/평가손익
- * 기록) 따로 더하면, 판 돈이 어디로 갔는지(현금으로 잡았는지, 재투자했는지)와
- * 무관하게 항상 맞는 값이 나온다.
+ * 아직 안 판 종목의 평가손익(미실현)은 넣지 않는다. 평가손익을 넣으려면 "그 해
+ * 1월 1일의 평가손익"이라는 기준값이 필요한데, 기록을 연중에 시작한 계좌는 그 값을
+ * 알 수 없어 무엇을 가정하든(0원이든, 첫 기록값이든) 지어낸 숫자가 끼어든다 —
+ * 실제로 기록 시작 전의 옛 평가손실 240만 원이 올해 손실로 청구되어 매도로 번
+ * 160만 원이 19만 원으로 표시되는 사고가 있었다. 실현손익과 배당은 거래일·지급일이
+ * 실재하므로 어느 해의 몫인지 언제나 명확하다.
  *
- * 구간은 언제나 그 해 1월 1일부터다. 기록을 8월에 시작했다고 해서 "8/25~오늘"
- * 같은 며칠짜리 구간으로 좁히면, 며칠 사이의 평가손익이 몇 달치 원금으로 나뉘어
- * 수십 %가 튀어나온다. 연초 기준값이 없으면 그 자리를 0원으로 두고, 대신 나눌
- * 원금은 실제 매입원가로 잡는다 — 그래야 "1월 1일부터"라는 말과 화면의 숫자가
- * 같은 뜻이 된다.
+ * 구간은 언제나 그 해 1월 1일부터다. 기록을 8월에 시작했어도 그 해에 판 손익과
+ * 받은 배당은 전부 그 해 몫으로 잡힌다.
  */
 export const calculateAnnualPerformance = ({
   snapshots = [], capitalFlows = [], dividends = [], realizedGains = [],
@@ -246,36 +242,8 @@ export const calculateAnnualPerformance = ({
     .filter((gain) => isEventInInterval(gain.date, first, eventWindowEnd))
     .reduce((sum, gain) => sum + gain.amountKRW, 0);
 
-  /**
-   * 평가손익(미실현) 변화의 기준점.
-   * 연초 기준값이 없어 1월 1일을 0원으로 두는 해에, 평가손익 기준까지 0으로 두면
-   * "1월 1일의 평가손익도 0이었다"는 없는 사실을 지어내는 셈이 된다. 기록을
-   * 시작하기 전부터 계좌에 쌓여 있던 평가손실(이익)이 통째로 올해 몫으로 청구되는
-   * 게 바로 그 부작용이다 — 매도로 번 160만 원이 옛 평가손실 240만 원에 깎여
-   * 19만 원으로 표시되는 식. 그래서 평가손익 변화는 실제로 기록된 첫 기준값부터
-   * 잰다: 관측한 변화만 세고, 관측 전의 변화는 어느 해 몫인지 모르므로 세지
-   * 않는다. 매도 손익과 배당은 날짜가 실재하므로 그대로 그 해 몫이다.
-   */
   const firstOwnSnapshot = ownSnapshots[0];
-  const unrealizedBaselineSnapshot = (assumedOpeningSnapshot && firstOwnSnapshot) ? firstOwnSnapshot : first;
-  const startUnrealizedRaw = Number(unrealizedBaselineSnapshot.unrealizedProfitKRW);
-  const endUnrealizedRaw = Number(last.unrealizedProfitKRW);
-  // 미실현손익을 스냅샷에 저장하기 전 데이터는 그 시점 값을 알 수 없다. 없는 데이터를
-  // 지어내는 대신 0으로 근사하고 estimated로 남긴다.
-  const unrealizedBaselineMissing = !Number.isFinite(startUnrealizedRaw) || !Number.isFinite(endUnrealizedRaw);
-  const startUnrealizedKRW = Number.isFinite(startUnrealizedRaw) ? startUnrealizedRaw : 0;
-  const endUnrealizedKRW = Number.isFinite(endUnrealizedRaw) ? endUnrealizedRaw : 0;
-  const unrealizedChangeKRW = endUnrealizedKRW - startUnrealizedKRW;
-
-  const profitKRW = unrealizedChangeKRW + coveredRealizedGainsKRW + coveredDividendsKRW;
-
-  // 끝점 평가손익도 없고 그 해에 판 것도 받은 배당도 없으면 수익을 잴 근거가 하나도
-  // 없다. 그걸 0원 수익(=0%)으로 적어 내면 "아무 일도 없었다"가 아니라 "정확히
-  // 본전이었다"는 거짓말이 된다.
-  const endUnrealizedMissing = !Number.isFinite(endUnrealizedRaw);
-  const hasProfitEvidence = !endUnrealizedMissing
-    || coveredRealizedGainsKRW !== 0
-    || coveredDividendsKRW !== 0;
+  const profitKRW = coveredRealizedGainsKRW + coveredDividendsKRW;
 
   /**
    * 나눌 원금.
@@ -333,7 +301,6 @@ export const calculateAnnualPerformance = ({
 
   const hasMidPeriodFlow = coveredFlows.some((flow) => flow.date > first.date && flow.date < last.date);
   const estimated = Boolean(carriedForwardSnapshot)
-    || unrealizedBaselineMissing
     || hasMidPeriodFlow
     || openingBasis === 'assumed-zero';
 
@@ -343,7 +310,6 @@ export const calculateAnnualPerformance = ({
     withdrawalsKRW: coveredWithdrawalsKRW,
     dividendsKRW: coveredDividendsKRW,
     realizedGainsKRW: coveredRealizedGainsKRW,
-    unrealizedChangeKRW,
     startValueKRW: first.valueKRW,
     endValueKRW: last.valueKRW,
     capitalBaseKRW: denominatorKRW,
@@ -361,16 +327,16 @@ export const calculateAnnualPerformance = ({
   // 기준이 깨진 경우) 나눌 대상이 없어 퍼센트를 만들 수 없다 — 순수익이 0이라고
   // 해서 0%로 얼버무리면, "투자한 적이 없는 계좌"와 "투자해서 정확히 0% 낸 계좌"를
   // 구분하지 못하게 된다.
-  if (!hasProfitEvidence || !(denominatorKRW > EPSILON)) {
+  if (!(denominatorKRW > EPSILON)) {
     return {
       ...sharedFields,
       status: 'insufficient',
       returnPercent: null,
-      profitKRW: hasProfitEvidence ? profitKRW : null,
+      profitKRW,
       estimated: true,
       periodType: 'insufficient',
       capitalBasis: 'none',
-      reason: hasProfitEvidence ? 'capital-base-required' : 'current-value-required',
+      reason: 'capital-base-required',
     };
   }
 
