@@ -272,3 +272,34 @@ test('현재 보유 중인 배당 종목은 현재 목록으로 표시한다', (
   assert.equal(ups.isCurrentHolding, true);
   assert.ok(ups.expectedAmount > 0);
 });
+
+test('전량 매도해 0주가 된 종목이 목록에 남아도 매입원가를 평가손실로 잡지 않는다', () => {
+  // 실제로 보고된 문제: 25주를 전량 매도한 삼성전자가 보유 목록에 0주로 남아 있으면
+  // 평가액 0 − 확정 원금이 통째로 평가손실이 됐다. 그 손실은 이미 실현손익으로
+  // 따로 세고 있어서, 연 수익률에서 165만 원 이익이 19만 원으로 짓눌렸다.
+  const metrics = runHook({
+    ...baseOptions,
+    assets: [
+      {
+        id: 'closed', name: '삼성전자', ticker: '005930', category: '국내주식', currency: 'KRW',
+        quantity: 0, averagePrice: 58_000, originalAveragePrice: 58_000,
+        currentPrice: 70_000, originalCurrentPrice: 70_000,
+        manualPurchaseKRW: 1_450_000,
+      },
+      {
+        id: 'open', name: 'SK하이닉스', ticker: '000660', category: '국내주식', currency: 'KRW',
+        quantity: 2, averagePrice: 100_000, originalAveragePrice: 100_000,
+        currentPrice: 110_000, originalCurrentPrice: 110_000,
+      },
+    ],
+  });
+
+  const closed = metrics.enhancedAssets.find((asset) => asset.id === 'closed');
+  assert.equal(closed.purchaseKRW, 0);
+  assert.equal(closed.currentKRW, 0);
+  assert.equal(closed.profitKRW, 0);
+
+  // 남아 있는 종목의 평가손익만 잡힌다(2주 × 1만 원).
+  const investedProfit = metrics.enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
+  assert.equal(investedProfit, 20_000);
+});

@@ -162,6 +162,16 @@ export const usePortfolioMetrics = ({
         purchaseKRWSource = 'trade-date-rate';
       }
 
+      // 전량 매도해서 보유 0주가 된 종목이 목록에 남아 있을 수 있다(원장 보정이
+      // 대량 삭제를 막는 경우 등). 확정 원금(manualPurchaseKRW)은 그때 보유하던
+      // 수량 전체의 금액이라, 0주가 된 뒤에도 그대로 두면 평가액 0에서 원금을 뺀
+      // 만큼이 통째로 평가손실로 잡힌다. 그 손실은 이미 실현손익으로 따로 세고
+      // 있으므로 두 번 빼는 셈이 된다. 보유 수량이 없으면 원금도 0으로 본다.
+      if (!(quantity > 0)) {
+        purchaseKRW = 0;
+        purchaseKRWSource = 'closed-position';
+      }
+
       /**
        * 원금은 실제 매수 시점의 원화 투입액으로 고정하고, 현재 평가는 오늘 환율로 본다.
        * 토스 같은 증권사 앱의 원화 화면도 이 구조라 원화 손익에는 환율 변동이 함께 들어간다.
