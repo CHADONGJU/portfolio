@@ -280,8 +280,9 @@ test('연초 기준값이 없으면 그 해 첫 평가액에서 평가이익을 
   // 올해 입금(500원)만 세면 작년까지 넣어둔 940원이 통째로 빠져 수익률이 부풀려진다.
   // 첫 평가액 1,500원에서 평가이익 60원을 뺀 1,440원이 실제 원금에 가장 가깝다.
   assert.equal(result.capitalBaseKRW, 1440);
-  assert.equal(result.profitKRW, 90);
-  assert.equal(Math.round(result.returnPercent * 100) / 100, 6.25);
+  // 평가손익 변화도 첫 기록(60원)부터 관측된 몫(90-60)만 센다.
+  assert.equal(result.profitKRW, 30);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 2.08);
 });
 
 test('배당은 원금이 아니라 그 구간의 수익으로 반영된다(입금·출금과 분리 집계)', () => {
@@ -353,31 +354,46 @@ test('첫 평가액에 이미 반영된 입금을 원금에 두 번 더하지 �
   assert.equal(result.capitalBaseKRW, 1440);
 });
 
-test('신규 사용자는 연초 평가액 없이 입금과 현재 평가액만으로도 계산한다', () => {
+test('연초 기준값이 없으면 평가손익 변화는 첫 기록 이후 관측된 몫만 센다', () => {
   const result = calculateAnnualPerformance({
     year: 2026,
-    snapshots: [{ date: '2026-08-20', valueKRW: 580, unrealizedProfitKRW: 80, source: 'current' }],
+    snapshots: [
+      { date: '2026-08-10', valueKRW: 510, unrealizedProfitKRW: 10, source: 'auto' },
+      { date: '2026-08-20', valueKRW: 580, unrealizedProfitKRW: 80, source: 'current' },
+    ],
     capitalFlows: [{ date: '2026-08-01', type: 'deposit', amountKRW: 500 }],
   });
 
   assert.equal(result.status, 'ready');
-  assert.equal(Math.round(result.returnPercent * 100) / 100, 16);
-  assert.equal(result.profitKRW, 80);
   assert.equal(result.startDate, '2026-01-01');
   assert.equal(result.periodType, 'calendar-year');
   assert.equal(result.capitalBaseKRW, 500);
+  // 첫 기록(8/10, 평가손익 10원) 이후의 변화 70원만 이 해의 평가손익 변화다.
+  assert.equal(result.profitKRW, 70);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 14);
 });
 
-test('첫 입금일에 가입해도 현재 평가액이 있으면 즉시 계산한다', () => {
-  const result = calculateAnnualPerformance({
+test('기록 첫날은 기준점만 쌓이고, 평가손익은 다음 기록부터 잡힌다', () => {
+  // 평가 기록이 하나뿐이면 그 값이 곧 기준점이라 관측된 변화가 0이다. 지금 보이는
+  // 평가이익 50원이 올해 것인지 기록 전부터 있던 것인지 알 수 없으므로 지어내지
+  // 않는다. 다음 날 기록부터는 변화가 그대로 잡힌다.
+  const dayOne = calculateAnnualPerformance({
     year: 2026,
     snapshots: [{ date: '2026-08-20', valueKRW: 550, unrealizedProfitKRW: 50, source: 'current' }],
     capitalFlows: [{ date: '2026-08-20', type: 'deposit', amountKRW: 500 }],
   });
+  assert.equal(dayOne.status, 'ready');
+  assert.equal(dayOne.profitKRW, 0);
 
-  assert.equal(result.status, 'ready');
-  assert.equal(Math.round(result.returnPercent * 100) / 100, 10);
-  assert.equal(result.profitKRW, 50);
+  const dayTwo = calculateAnnualPerformance({
+    year: 2026,
+    snapshots: [
+      { date: '2026-08-20', valueKRW: 550, unrealizedProfitKRW: 50, source: 'auto' },
+      { date: '2026-08-21', valueKRW: 580, unrealizedProfitKRW: 80, source: 'current' },
+    ],
+    capitalFlows: [{ date: '2026-08-20', type: 'deposit', amountKRW: 500 }],
+  });
+  assert.equal(dayTwo.profitKRW, 30);
 });
 
 test('기록이 출금부터 시작되면 기존 자산 기준값 없이 임의 계산하지 않는다', () => {
@@ -397,7 +413,10 @@ test('연초 기준값이 없으면 누적 순입금이 아니라 계좌가 실�
   // 굴리던 계좌였을 수 있다. 대신 그 해 첫 평가액에서 평가이익을 뺀 900원이 원금이다.
   const result = calculateAnnualPerformance({
     year: 2026,
-    snapshots: [{ date: '2026-08-20', valueKRW: 1100, unrealizedProfitKRW: 200, source: 'current' }],
+    snapshots: [
+      { date: '2026-08-10', valueKRW: 1050, unrealizedProfitKRW: 150, source: 'auto' },
+      { date: '2026-08-20', valueKRW: 1100, unrealizedProfitKRW: 200, source: 'current' },
+    ],
     capitalFlows: [{ date: '2026-06-01', type: 'deposit', amountKRW: 1000 }],
   });
 
@@ -408,8 +427,8 @@ test('연초 기준값이 없으면 누적 순입금이 아니라 계좌가 실�
   assert.equal(result.periodType, 'calendar-year');
   assert.equal(result.capitalBasis, 'first-snapshot');
   assert.equal(result.capitalBaseKRW, 900);
-  assert.equal(result.profitKRW, 200);
-  assert.equal(Math.round(result.returnPercent * 100) / 100, 22.22);
+  assert.equal(result.profitKRW, 50);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 5.56);
 });
 
 test('한 해 동안 넣었다 뺐다를 반복해 누적 순입금이 부풀어도 수익률이 짓눌리지 않는다', () => {
@@ -447,7 +466,10 @@ test('원금 후보가 하나도 없으면(평가액도 0원) 0%로 위장하지
 test('전년도 입출금까지 이 해로 끌어오지 않고, 구간은 1월 1일부터만 본다', () => {
   const result = calculateAnnualPerformance({
     year: 2026,
-    snapshots: [{ date: '2026-08-20', valueKRW: 1300, unrealizedProfitKRW: 400, source: 'current' }],
+    snapshots: [
+      { date: '2026-08-10', valueKRW: 1200, unrealizedProfitKRW: 300, source: 'auto' },
+      { date: '2026-08-20', valueKRW: 1300, unrealizedProfitKRW: 400, source: 'current' },
+    ],
     capitalFlows: [
       { date: '2025-05-01', type: 'deposit', amountKRW: 800 },
       { date: '2026-03-01', type: 'deposit', amountKRW: 100 },
@@ -459,12 +481,12 @@ test('전년도 입출금까지 이 해로 끌어오지 않고, 구간은 1월 1
   assert.equal(result.carriedForward, false);
   assert.equal(result.startDate, '2026-01-01');
   assert.equal(result.startValueKRW, 0);
-  assert.equal(result.profitKRW, 400);
   // 2025년 입금 800원은 2025년 몫이라 이 해의 '이 기간 입금'에 들어가지 않는다.
   assert.equal(result.depositsKRW, 100);
   // 그래도 원금은 올해 입금 100원이 아니라, 실제 평가액에서 평가이익을 뺀 900원으로 본다.
   assert.equal(result.capitalBaseKRW, 900);
-  assert.equal(Math.round(result.returnPercent * 100) / 100, 44.44);
+  assert.equal(result.profitKRW, 100);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 11.11);
 });
 
 test('가입일 이전 연도는 평가 기록이 전혀 없으면 자료 부족으로 남는다 (그 해만 따로 계산하지 않음)', () => {
@@ -676,7 +698,9 @@ test('연초 기준값이 없으면 실제 매입원가를 원금으로 쓴다',
 
   assert.equal(result.capitalBasis, 'cost-basis');
   assert.equal(result.capitalBaseKRW, 1_500);
-  assert.equal(Math.round(result.returnPercent * 100) / 100, 20);
+  // 평가손익 변화는 첫 기록(200원) 이후 관측된 100원만.
+  assert.equal(result.profitKRW, 100);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 6.67);
 });
 
 test('같은 날짜 기록이 섞여 들어와도 배열 순서와 무관하게 같은 값을 고른다', () => {
@@ -692,4 +716,40 @@ test('같은 날짜 기록이 섞여 들어와도 배열 순서와 무관하게 
   assert.equal(forward.returnPercent, backward.returnPercent);
   assert.equal(forward.endValueKRW, 1_400);
   assert.equal(backward.endValueKRW, 1_400);
+});
+
+test('기록 시작 전부터 있던 평가손실이 올해 매도 수익을 깎아먹지 않는다 (실사례)', () => {
+  // 실제로 보고된 문제(화면 숫자에서 역산한 데이터). 8/25 기록 시작 시점에 이미
+  // 평가손실 -2,404,231원이 쌓여 있던 계좌다. 연초 평가손익을 0으로 가정하면 그
+  // 옛 손실이 통째로 올해 몫으로 청구되어, 매도로 번 1,624,723원 + 배당 16,903원이
+  // 192,151원(+2.48%)으로 짓눌렸다. 평가손익 변화는 첫 기록부터 관측된 몫만 세야 한다.
+  const result = calculateAnnualPerformance({
+    year: 2026,
+    snapshots: [
+      { date: '2026-08-25', valueKRW: 5_343_793, unrealizedProfitKRW: -2_404_231, source: 'auto' },
+      { date: '2026-08-30', valueKRW: 6_298_549, unrealizedProfitKRW: -1_449_475, source: 'current' },
+    ],
+    realizedGains: [
+      { date: '2026-08-03', amountKRW: 1_089_086 },
+      { date: '2026-08-21', amountKRW: 348_714 },
+      { date: '2026-08-26', amountKRW: 127_369 },
+      { date: '2026-08-26', amountKRW: 59_554 },
+    ],
+    dividends: [
+      { date: '2026-08-03', amountKRW: 15_778 },
+      { date: '2026-08-21', amountKRW: 1_125 },
+    ],
+  });
+
+  assert.equal(result.status, 'ready');
+  assert.equal(result.startDate, '2026-01-01');
+  // 실현손익·배당은 날짜 그대로 올해 몫 전부.
+  assert.equal(result.realizedGainsKRW, 1_624_723);
+  assert.equal(result.dividendsKRW, 16_903);
+  // 평가손익 변화는 8/25 기준값 대비 관측된 +954,756원만.
+  assert.equal(result.unrealizedChangeKRW, 954_756);
+  assert.equal(result.profitKRW, 2_596_382);
+  // 원금 = 8/25 평가액 - 그 시점 평가손익 = 7,748,024원.
+  assert.equal(result.capitalBaseKRW, 7_748_024);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 33.51);
 });

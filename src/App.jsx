@@ -2265,8 +2265,8 @@ const buyLotDraftSummary = useMemo(() => {
     currentCategoryProfitKRW,
     currentCategoryProfitUSD,
     canonicalTradeRows,
-    krwNetProfit,
-    usdNetProfit,
+    krwGrossProfit,
+    usdGrossProfit,
     totalConvertedNetProfit,
     realizedGainKrwEvents,
     stockPerformanceSummary,
@@ -5163,16 +5163,16 @@ const buyLotDraftSummary = useMemo(() => {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
               <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
                 <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><Banknote size={20} /></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">원화 매매 순수익</p>
-                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${krwNetProfit >= 0 ? 'text-up' : 'text-down'}`}>
-                  {krwNetProfit > 0 ? '+' : ''}{formatMoney(krwNetProfit, 'KRW')}
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">원화 매매 총수익</p>
+                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${krwGrossProfit >= 0 ? 'text-up' : 'text-down'}`}>
+                  {krwGrossProfit > 0 ? '+' : ''}{formatMoney(krwGrossProfit, 'KRW')}
                 </p>
               </div>
               <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
                 <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><DollarSign size={20} /></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">달러 매매 순수익</p>
-                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${usdNetProfit >= 0 ? 'text-up' : 'text-down'}`}>
-                  {usdNetProfit > 0 ? '+' : ''}{formatMoney(usdNetProfit, 'USD')}
+                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">달러 매매 총수익</p>
+                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${usdGrossProfit >= 0 ? 'text-up' : 'text-down'}`}>
+                  {usdGrossProfit > 0 ? '+' : ''}{formatMoney(usdGrossProfit, 'USD')}
                 </p>
               </div>
               <div className="bg-ink p-5 md:p-7 rounded-2xl shadow-sm flex flex-col justify-center text-surface relative overflow-hidden">

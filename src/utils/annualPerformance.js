@@ -246,7 +246,19 @@ export const calculateAnnualPerformance = ({
     .filter((gain) => isEventInInterval(gain.date, first, eventWindowEnd))
     .reduce((sum, gain) => sum + gain.amountKRW, 0);
 
-  const startUnrealizedRaw = Number(first.unrealizedProfitKRW);
+  /**
+   * 평가손익(미실현) 변화의 기준점.
+   * 연초 기준값이 없어 1월 1일을 0원으로 두는 해에, 평가손익 기준까지 0으로 두면
+   * "1월 1일의 평가손익도 0이었다"는 없는 사실을 지어내는 셈이 된다. 기록을
+   * 시작하기 전부터 계좌에 쌓여 있던 평가손실(이익)이 통째로 올해 몫으로 청구되는
+   * 게 바로 그 부작용이다 — 매도로 번 160만 원이 옛 평가손실 240만 원에 깎여
+   * 19만 원으로 표시되는 식. 그래서 평가손익 변화는 실제로 기록된 첫 기준값부터
+   * 잰다: 관측한 변화만 세고, 관측 전의 변화는 어느 해 몫인지 모르므로 세지
+   * 않는다. 매도 손익과 배당은 날짜가 실재하므로 그대로 그 해 몫이다.
+   */
+  const firstOwnSnapshot = ownSnapshots[0];
+  const unrealizedBaselineSnapshot = (assumedOpeningSnapshot && firstOwnSnapshot) ? firstOwnSnapshot : first;
+  const startUnrealizedRaw = Number(unrealizedBaselineSnapshot.unrealizedProfitKRW);
   const endUnrealizedRaw = Number(last.unrealizedProfitKRW);
   // 미실현손익을 스냅샷에 저장하기 전 데이터는 그 시점 값을 알 수 없다. 없는 데이터를
   // 지어내는 대신 0으로 근사하고 estimated로 남긴다.
@@ -282,7 +294,6 @@ export const calculateAnnualPerformance = ({
   // 이미 들어 있어서, 올해 입금만 세는 것보다 원금을 덜 놓친다. 다만 평가액에는
   // 그때까지 쌓인 평가이익도 섞여 있으므로 그만큼은 빼야 원금이 된다 — 안 그러면
   // 이익이 원금 행세를 해서 수익률이 실제보다 낮게 나온다.
-  const firstOwnSnapshot = ownSnapshots[0];
   const firstOwnUnrealizedKRW = Number(firstOwnSnapshot?.unrealizedProfitKRW);
   const snapshotBasedCapitalKRW = firstOwnSnapshot
     ? firstOwnSnapshot.valueKRW

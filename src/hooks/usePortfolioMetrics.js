@@ -294,6 +294,15 @@ export const usePortfolioMetrics = ({
   const usdTrades = realizedRecords.filter(t => t.currency === 'USD');
   const krwNetProfit = krwTrades.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0);
   const usdNetProfit = usdTrades.reduce((acc, t) => acc + (Number(t.pnl) || 0), 0);
+  // 매매 총수익 = 수수료·거래세를 빼기 전 손익. 기록에 grossPnl이 있으면 그 값을,
+  // 없는 옛 기록은 순손익에 그때 낸 비용을 되더해 복원한다.
+  const getRecordGrossProfit = (t) => {
+    const gross = Number(t.grossPnl);
+    if (Number.isFinite(gross) && gross !== 0) return gross;
+    return (Number(t.pnl) || 0) + (Number(t.brokerFee) || 0) + (Number(t.sellTax) || 0) + (Number(t.buyFeeApplied) || 0);
+  };
+  const krwGrossProfit = krwTrades.reduce((acc, t) => acc + getRecordGrossProfit(t), 0);
+  const usdGrossProfit = usdTrades.reduce((acc, t) => acc + getRecordGrossProfit(t), 0);
   const totalConvertedNetProfit = realizedRecords.reduce((acc, t) => (
     acc + getRecordKrwPnl(t, realizedKrwRate)
   ), 0);
@@ -630,6 +639,8 @@ export const usePortfolioMetrics = ({
     currentUsdValueForUsd,
     krwNetProfit,
     usdNetProfit,
+    krwGrossProfit,
+    usdGrossProfit,
     totalConvertedNetProfit,
     realizedGainKrwEvents,
     stockPerformanceSummary,
