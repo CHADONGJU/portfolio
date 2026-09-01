@@ -1,36 +1,23 @@
 import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatMoney } from '../utils/formatters.js';
 
-const formatDate = (date) => String(date || '').replaceAll('-', '.');
-
-const getPeriodLabel = (performance, year, currentYear) => {
-  if (performance?.reason === 'before-twr-availability') return `${year}년 계산 불가`;
-  if (performance?.periodType === 'since-signup-twr') return `${year}년 가입 이후`;
-  if (performance?.periodType === 'calendar-year-twr') return year === currentYear ? `${year}년 YTD` : `${year}년 연간`;
-  if (performance?.periodType === 'recorded-period-twr') return `${formatDate(performance?.startDate)} 이후`;
-  if (performance?.periodType === 'since-first-deposit') {
-    return performance?.joinedAtAnchored ? `${year}년 가입 이후` : `${year}년 첫 입금 이후`;
-  }
-  if (performance?.periodType === 'recorded-period') return `${year}년 기록 시작 이후`;
-  return year === currentYear ? `${year}년 YTD` : `${year}년 연간`;
-};
+// 구간은 언제나 1월 1일부터다. 기록을 언제 시작했든 라벨은 그 해를 가리킨다.
+const getPeriodLabel = (year, currentYear) => (
+  year === currentYear ? `${year}년 YTD` : `${year}년 연간`
+);
 
 const getInsufficientMessage = (performance) => {
-  if (performance?.reason === 'daily-snapshot-missing') {
-    const count = performance.missingSnapshotDates?.length || 0;
-    return `Daily Snapshot ${count.toLocaleString()}일을 복원해야 정확한 TWR을 계산할 수 있습니다.`;
-  }
-  if (performance?.reason === 'snapshot-required') return '가입일의 Daily Snapshot부터 복원이 필요합니다.';
-  if (performance?.reason === 'annual-opening-baseline-required') return `${performance.requiredBaselineDate || '직전 연도 말'} EOD 시작 기준 평가액이 없어 연간 TWR을 계산할 수 없습니다.`;
-  if (performance?.reason === 'second-snapshot-required') return '두 번째 Daily Snapshot이 생성된 뒤 계산할 수 있습니다.';
-  if (performance?.reason === 'fx-rate-missing') return '외화 입출금의 과거 환율을 확인해야 정확한 TWR을 계산할 수 있습니다.';
-  if (performance?.reason === 'twr-available-from-required') return '최초 정상 Portfolio Snapshot이 필요합니다.';
-  if (performance?.reason === 'before-twr-availability') return `${performance.twrAvailableFrom || '계산 가능 시작일'} 이전은 정확한 Portfolio Value가 없어 계산할 수 없습니다.`;
-  if (performance?.reason === 'cash-flow-required') return '첫 입금 기록을 추가하면 현재 평가액과 연결해 자동 계산합니다.';
-  if (performance?.reason === 'current-value-required') return '입금 기록은 확인됐지만 현재 평가액이 아직 없습니다.';
-  if (performance?.reason === 'opening-value-required') return '기록이 출금부터 시작되어 이전 잔액을 알 수 없어 계산할 수 없습니다.';
-  if (performance?.reason === 'capital-base-required') return '이 기간 순입금(입금-출금)이 0원 이하라 나눌 원금 기준이 없어 수익률을 표시할 수 없습니다.';
-  return '입출금 기록을 모두 입력하면 첫 입금일부터 자동 계산합니다.';
+  if (performance?.reason === 'capital-base-required') return '나눌 원금 기준이 아직 없습니다. 보유 종목의 매입 기록이나 입금 기록을 넣으면 자동 계산합니다.';
+  return '이 해의 평가 기록이 아직 없습니다. 보유 종목을 등록하면 그날부터 자동으로 쌓입니다.';
+};
+
+// 연초 기준값을 어디서 가져왔는지 한 줄로. 숫자가 어떤 전제 위에 있는지 감추지 않되,
+// 계산 자체를 막지는 않는다.
+const getBasisNote = (performance) => {
+  if (performance?.openingBasis === 'carried-forward') return '전년도 평가액 이어받음';
+  if (performance?.capitalBasis === 'cost-basis') return '매입원가 대비';
+  if (performance?.capitalBasis === 'first-snapshot') return '기록 시작 시점 원금 대비';
+  return '';
 };
 
 // 단순 비율(비가중) 수익률이라, 원금이 거의 없는 해에 입금과 출금이 거의 같은
@@ -54,7 +41,7 @@ const AnnualReturnHistory = ({ year, years, earliestYear, performance, performan
           <BarChart3 size={18} className="text-ink-soft" />
           <div>
             <h3 className="text-base md:text-lg font-bold text-ink">연도별 수익률</h3>
-            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">현금 포함 Daily Snapshot에서 외부 입출금을 분리해 일별 수익률을 기하연결합니다.</p>
+            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">매도 실현손익(수수료·거래세 차감)과 배당만 순수익으로 집계하며, 평가손익은 포함하지 않습니다.</p>
           </div>
         </div>
         <div className="seg inline-flex self-start sm:self-auto items-center p-1 rounded-[14px]">
@@ -66,13 +53,13 @@ const AnnualReturnHistory = ({ year, years, earliestYear, performance, performan
 
       <div className="p-5 md:p-7 grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-5">
         <div className="bg-canvas rounded-2xl p-5">
-          <p className="text-[11px] font-bold text-ink-mute">{getPeriodLabel(performance, year, currentYear)}</p>
+          <p className="text-[11px] font-bold text-ink-mute">{getPeriodLabel(year, currentYear)}</p>
           {performance.status === 'ready' ? (
             <>
               <p className={`figure text-3xl md:text-4xl font-bold mt-2 ${performance.returnPercent >= 0 ? 'text-up' : 'text-down'}`}>{performance.returnPercent >= 0 ? '+' : ''}{performance.returnPercent.toFixed(2)}%</p>
-              <p className="text-xs font-semibold text-ink-mute mt-2">{performance.startDate} ~ {performance.endDate} · Daily TWR</p>
+              <p className="text-xs font-semibold text-ink-mute mt-2">{performance.startDate} ~ {performance.endDate}{getBasisNote(performance) ? ` · ${getBasisNote(performance)}` : ''}</p>
               <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div><p className="text-[10px] font-bold text-ink-mute">이 기간 손익</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.profitKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">이 기간 순수익</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.profitKRW, 'KRW')}</p></div>
                 <div><p className="text-[10px] font-bold text-ink-mute">이 기간 입금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.depositsKRW, 'KRW')}</p></div>
                 <div><p className="text-[10px] font-bold text-ink-mute">이 기간 출금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.withdrawalsKRW, 'KRW')}</p></div>
                 <div><p className="text-[10px] font-bold text-ink-mute">이 기간 배당</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.dividendsKRW || 0, 'KRW')}</p></div>
@@ -93,7 +80,7 @@ const AnnualReturnHistory = ({ year, years, earliestYear, performance, performan
             const width = Number.isFinite(value) ? (clampedAbsPercent(value) / maxAbs) * 50 : 0;
             return (
               <button key={itemYear} type="button" onClick={() => onYearChange(itemYear)} className={`w-full rounded-xl px-4 py-3 text-left transition-colors ${itemYear === year ? 'bg-canvas ring-1 ring-line' : 'hover:bg-canvas'}`}>
-                <div className="flex items-center justify-between gap-3 mb-2"><span className="text-xs md:text-sm font-bold text-ink">{getPeriodLabel(item, itemYear, currentYear)}</span><span className={`figure text-xs md:text-sm font-bold ${!Number.isFinite(value) ? 'text-ink-mute' : value >= 0 ? 'text-up' : 'text-down'}`}>{Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '계산 불가'}</span></div>
+                <div className="flex items-center justify-between gap-3 mb-2"><span className="text-xs md:text-sm font-bold text-ink">{getPeriodLabel(itemYear, currentYear)}</span><span className={`figure text-xs md:text-sm font-bold ${!Number.isFinite(value) ? 'text-ink-mute' : value >= 0 ? 'text-up' : 'text-down'}`}>{Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '자료 부족'}</span></div>
                 <div className="relative h-2 rounded-full bg-line-soft overflow-hidden"><span className="absolute left-1/2 top-0 h-full w-px bg-ink/20" />{Number.isFinite(value) && <span className={`absolute top-0 h-full rounded-full ${value >= 0 ? 'bg-up' : 'bg-down'}`} style={{ left: value >= 0 ? '50%' : `${50 - width}%`, width: `${Math.max(width, 1)}%` }} />}</div>
               </button>
             );

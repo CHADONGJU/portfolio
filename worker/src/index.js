@@ -1,7 +1,6 @@
 import { verifyFirebaseIdToken } from './firebaseAuth.js';
 import { consumeQuota, getSecondsUntilReset, refundQuota } from './quota.js';
 import { buildInsightMessages, normalizeAssetContext, stripReasoningPreamble } from './prompt.js';
-import { runDailyPortfolioSnapshots } from './scheduledPortfolioSnapshots.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODELS = 'z-ai/glm-5.2:free,minimax/minimax-m3:free';
@@ -155,16 +154,5 @@ export default {
     }
 
     return handleInsight(request, env);
-  },
-
-  async scheduled(controller, env, context) {
-    context.waitUntil(
-      runDailyPortfolioSnapshots(env, { now: new Date(controller.scheduledTime) })
-        .then((summary) => console.log('daily-portfolio-snapshots', JSON.stringify(summary)))
-        .catch((error) => {
-          console.error('daily-portfolio-snapshots-failed', error?.stack || error);
-          throw error;
-        }),
-    );
   },
 };

@@ -2,11 +2,6 @@ name = "my-portfolio-ai"
 main = "src/index.js"
 compatibility_date = "2026-08-01"
 
-# Cloudflare Cron은 UTC 기준이다. 22:10 UTC = 다음 날 07:10 KST.
-# 로컬 구현만 완료한 상태이며, 실제 등록은 wrangler deploy 이후에만 발생한다.
-[triggers]
-crons = ["10 22 * * *"]
-
 [vars]
 # Firebase 콘솔의 프로젝트 ID. ID 토큰의 aud/iss 검증에 쓰인다.
 FIREBASE_PROJECT_ID = "my-portfolio-b115f"

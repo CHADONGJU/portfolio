@@ -1,4 +1,4 @@
-# AI 요약 프록시 + Daily Snapshot (Cloudflare Worker)
+# AI 요약 프록시 (Cloudflare Worker)
 
 프런트에서 OpenRouter를 직접 부르면 API 키가 번들에 그대로 박힌다. 이 Worker가
 키를 들고 있고, 프런트는 Firebase 로그인 토큰만 보낸다.
@@ -38,41 +38,6 @@ npx wrangler deploy
 
 로컬 개발은 `.dev.vars`에 `OPENROUTER_API_KEY=...`를 두고 `npx wrangler dev`.
 
-## Daily Portfolio Snapshot
-
-동일 Worker의 Cron Trigger가 매일 07:10 KST(UTC 22:10)에 실행되어 전날 날짜의
-`portfolioSnapshots/snapshot-{date}` 문서를 저장한다. 브라우저를 열 필요가 없다.
-자산 조회와 저장은 Firebase Admin SDK 대신 Service Account OAuth 2.0과 Firestore
-REST API를 사용한다.
-
-`status=complete`는 모든 보유 시장자산에 그 날짜의 확정 종가가 있고, 필요한
-환율도 날짜가 검증된 경우에만 저장한다. 거래일 장중 가격이나 평일의 이전 종가를
-fallback으로 사용한 문서는 `incomplete`로 남아 다음 실행에서 재시도한다. 주말은
-최근 확정 종가를 사용할 수 있지만 실제 `priceDate`를 자산별로 함께 기록한다.
-`valuationTimestamp`는 가상의 해당일 23:59가 아니라 검증을 끝낸 실제 실행시각이다.
-재시도 정확도를 위해 `incomplete` 문서에는 당시 평가 대상의 종목·통화·보유수량만
-담은 `valuationAssets`도 저장하고, 다음 Cron은 사용자별 가장 오래된 실패일 한 건을
-당일 생성분과 함께 다시 평가한다.
-
-대상일 D의 주식·ETF 수량은 Cron 시점의 현재 수량을 그대로 복사하지 않고 Firestore
-`tradeLedger`를 D까지 replay해 복원한다. 원화·외화 현금은 현재 `assets`에 사용자가
-확정해 둔 현금 잔액을 사용하며, D 이후 등록된 거래나 외부 입출금이 있으면 현재 잔액을
-D의 잔액으로 추정하지 않고 `incomplete` 처리한다. 별도 환전 원장이 없는 현재 스키마에서
-환전 내역을 임의 생성하거나 현금 잔액을 역산하지 않는다. 이미 검증된 COMPLETE 문서는
-동일 날짜 Cron 재실행으로 덮어쓰지 않는다.
-
-아래 값은 코드나 `wrangler.toml`에 넣지 않고 Cloudflare Secret으로만 등록한다.
-실제 Secret 등록과 Worker 배포, Firebase IAM 변경은 별도 승인 뒤 수행한다.
-
-```bash
-npx wrangler secret put FIREBASE_SERVICE_ACCOUNT_EMAIL
-npx wrangler secret put FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY
-```
-
-Service Account에는 Firestore 문서 get/list/create/update만 포함한 최소 권한을 권장한다.
-삭제 권한은 Daily Snapshot 생성에 필요하지 않다. 로컬에서는 `npm test`로 OAuth,
-Firestore REST, 가치 계산, 예약 실행을 검증할 수 있다.
-
 ## 환경 변수
 
 | 이름 | 위치 | 설명 |
@@ -84,8 +49,6 @@ Firestore REST, 가치 계산, 예약 실행을 검증할 수 있다.
 | `DAILY_LIMIT` | vars | 사용자 1명당 하루 호출 횟수 (기본 20) |
 | `MAX_TOKENS` | vars | 응답 최대 토큰 (기본 900) |
 | `APP_URL` | vars | OpenRouter 대시보드 표기용 |
-| `FIREBASE_SERVICE_ACCOUNT_EMAIL` | secret | Firestore REST OAuth 발급용 서비스 계정 이메일 |
-| `FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY` | secret | PKCS#8 private key (`\\n` 문자열도 지원) |
 
 ## 유료 모델로 전환
 
