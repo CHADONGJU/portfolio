@@ -1,3 +1,5 @@
+import { getHistoricalFxRate } from './historicalFx.js';
+
 /**
  * 환율 요청에 타임아웃이 없으면, 제공자가 연결만 받고 응답하지 않을 때 동기화 루프
  * 전체가 영원히 pending 상태로 멈춘다. 그러면 "실행 중" 플래그가 풀리지 않아
@@ -304,29 +306,10 @@ export const fetchTextWithSafeProxy = async (url) => (
 
 export const fetchUsdKrwRateByDate = async (date) => {
   if (!date) return null;
-
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Date().toISOString().slice(0, 10);
   if (date >= today) return fetchUsdKrwRate();
-
-  const historicalUrls = [
-    `https://api.frankfurter.app/${date}?from=USD&to=KRW`,
-    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/usd.json`,
-  ];
-
-  for (const url of historicalUrls) {
-    try {
-      const response = await fetchWithTimeout(url, { cache: 'no-store' }, FX_TIMEOUT_MS);
-      if (!response.ok) continue;
-
-      const data = await response.json();
-      const rate = data?.rates?.KRW ?? data?.usd?.krw;
-      if (Number.isFinite(Number(rate)) && Number(rate) > 0) return Number(rate);
-    } catch {
-      continue;
-    }
-  }
-
-  return null;
+  const result = await getHistoricalFxRate('USD', 'KRW', date, { timeoutMs: FX_TIMEOUT_MS });
+  return Number(result?.rate) > 0 ? Number(result.rate) : null;
 };
 
 const normalizeTicker = (ticker) => ticker
@@ -736,7 +719,7 @@ const readStooqPrice = (csv) => {
   return Number.isFinite(close) && close > 0 ? close : null;
 };
 
-const getYahooTickers = (asset, ticker) => {
+export const getYahooTickers = (asset, ticker) => {
   if (isDomesticStock(asset, ticker)) {
     if (ticker.includes('.')) return [ticker];
     return [`${ticker}.KS`, `${ticker}.KQ`];

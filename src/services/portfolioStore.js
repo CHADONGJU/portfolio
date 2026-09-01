@@ -56,10 +56,18 @@ const getRecordIdentity = (field, record = {}, index = 0) => {
   ].join('::');
 };
 
+export const getPortfolioDocumentId = (field, record = {}, index = 0) => {
+  if (field === 'portfolioSnapshots') {
+    const date = String(record.date || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) return `snapshot-${date}`;
+  }
+  return `${field}-${hashIdentity(getRecordIdentity(field, record, index))}`;
+};
+
 const toDocumentMap = (field, rows = []) => new Map(
   rows.map((record, index) => {
-    const identity = getRecordIdentity(field, record, index);
-    return [`${field}-${hashIdentity(identity)}`, cleanForFirestore(record)];
+    const documentId = getPortfolioDocumentId(field, record, index);
+    return [documentId, cleanForFirestore(record)];
   }),
 );
 
@@ -157,7 +165,8 @@ export const loadPortfolioState = async (database, userId) => {
 };
 
 /**
- * 연 수익률 계산의 시작점(가입일)을 딱 1번만 기록한다. 호출부가 이미 기존 값이
+ * 서비스 가입일을 딱 1번만 기록한다. 레거시 필드명 joinedAt은 DB 호환을 위해
+ * 유지하지만 TWR 가능 시작일로 직접 사용하지 않는다. 호출부가 이미 기존 값이
  * 없는 걸 확인하고 부르므로 여기서는 존재 여부를 다시 확인하지 않는다 — merge:true라
  * 다른 필드는 건드리지 않고, 이후의 일반 저장(buildRootMetadata)도 이 필드를 모르므로
  * 절대 덮어쓰지 않는다.

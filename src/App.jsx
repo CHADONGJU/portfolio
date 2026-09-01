@@ -6,6 +6,7 @@ import {
   ChevronLeft, ChevronRight, NotebookPen, PlusCircle, Sparkles
 } from 'lucide-react';
 import DashboardHeader from './components/DashboardHeader';
+import ExternalCashFlowPanel from './components/ExternalCashFlowPanel';
 import ModalOverlay from './components/ModalOverlay';
 import UserSettingsPanel from './components/UserSettingsPanel';
 import AnnualReturnGoalCard from './components/AnnualReturnGoalCard';
@@ -20,6 +21,7 @@ import StockInsightPanel from './components/StockInsightPanel';
 import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
 import TradeMemoEditor from './components/TradeMemoEditor';
+import TotalReturnCard from './components/TotalReturnCard';
 import { useAuth } from './context/useAuth';
 import useTheme from './hooks/useTheme';
 import {
@@ -56,6 +58,8 @@ import {
   subscribePortfolioState,
 } from './services/portfolioStore';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
+import { buildCategoryAllocationRows } from './utils/categoryAllocation';
+import { summarizeUnrealizedProfitByCurrency } from './utils/currencyProfitSummary';
 import { canSummarizeAsset } from './utils/stockInsightPayload';
 import {
   claimLegacyStorageKeys,
@@ -102,12 +106,18 @@ import {
   summarizeAnnualDividendTrend,
 } from './utils/annualDividendTrend';
 import { buildStockSearchOptions } from './utils/stockSearchOptions';
+import { dedupeCapitalFlowsForPerformance, mergeCapitalFlows } from './utils/externalCashFlows';
 import {
-  calculateAnnualPerformance,
-  getAnnualPerformanceYears,
-  upsertDailyPortfolioSnapshot,
-  withCurrentPortfolioSnapshot,
-} from './utils/annualPerformance';
+  completeInitialPortfolioSnapshot,
+  deriveTwrDatePolicy,
+  ensureInitialPortfolioSnapshot,
+  isInitialSnapshotValuationReady,
+} from './utils/twrDatePolicy';
+import {
+  calculateAvailableDailyTwr,
+  calculateAnnualDailyTwr,
+  getAnnualTwrYears,
+} from './utils/timeWeightedReturn';
 import { calculateOverseasCapitalGainsTax } from './utils/overseasCapitalGainsTax';
 import { combineTradesWithMemos } from './utils/tradeMemos';
 import {
@@ -1146,7 +1156,7 @@ const App = () => {
    * 시작되지도 않은 순간)의 저장된 가격·기본 환율로 계산한 값이 그대로 수익률 카드에
    * 들어가, 새로고침할 때마다 다른 숫자가 잠깐씩 보였다가 바뀐다.
    */
-  const [priceSyncSettledAt, setPriceSyncSettledAt] = useState(null);
+  const [, setPriceSyncSettledAt] = useState(null);
   const [activeTab, setActiveTab] = useState('portfolio');
   const [isFetching, setIsFetching] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -1154,11 +1164,9 @@ const App = () => {
   const [cloudPortfolioUserId, setCloudPortfolioUserId] = useState('');
   const [cloudLoadFailed, setCloudLoadFailed] = useState(false);
   const [cloudRetryToken, setCloudRetryToken] = useState(0);
-  // 연 수익률 계산의 시작점. 클라우드 문서에 이미 저장된 값을 최우선으로 쓰고,
-  // 처음 보는 계정이면 Firebase 가입일(없으면 지금)로 1회만 기록한다.
-  // 가입일은 클라우드에 남겨 두되(계정 기록용) 수익률 계산 근거로는 쓰지 않는다 —
-  // 이 앱에 등록한 날일 뿐, 그 계좌가 그날 생겼다는 뜻이 아니다.
-  const [, setJoinedAt] = useState('');
+  // Firestore의 레거시 joinedAt은 서비스 가입일로만 사용한다. 실제 계좌 개시일과
+  // TWR 계산 가능 시작일은 아래 날짜 정책에서 별도로 파생한다.
+  const [joinedAt, setJoinedAt] = useState('');
   const loadedUserIdRef = useRef('');
   const [assetPendingRemoval, setAssetPendingRemoval] = useState(null);
 
@@ -2268,7 +2276,6 @@ const buyLotDraftSummary = useMemo(() => {
     krwGrossProfit,
     usdGrossProfit,
     totalConvertedNetProfit,
-    realizedGainKrwEvents,
     stockPerformanceSummary,
     dividendSummary,
     filteredHistory,
@@ -2442,15 +2449,8 @@ const buyLotDraftSummary = useMemo(() => {
     const investedPurchaseKRW = investedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
     const evaluationProfitKRW = enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
     const investedProfitKRW = investedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
-    // 실현손익(원화/달러 매매 순수익)처럼, 아직 안 판 종목의 평가손익도 국내(원화)·
-    // 해외(달러)로 나눠 보고 싶을 때가 있다 — 합산 원화환산 값만으로는 어느 쪽이
-    // 잘하고 있는지 알 수 없다.
-    const krwEvaluationProfit = investedAssets
-      .filter((asset) => asset.currency === 'KRW')
-      .reduce((sum, asset) => sum + asset.profitKRW, 0);
-    const usdEvaluationProfit = investedAssets
-      .filter((asset) => asset.currency === 'USD')
-      .reduce((sum, asset) => sum + asset.profitNative, 0);
+    const totalReturnPercent = investedPurchaseKRW > 0 ? (investedProfitKRW / investedPurchaseKRW) * 100 : 0;
+    const unrealizedProfitByCurrency = summarizeUnrealizedProfitByCurrency(enhancedAssets);
     const dividendKRW = receivedDividends.reduce((sum, dividend) => (
       sum + (Number(dividend.amount) || 0) * getCachedKrwRate(dividend.currency, currencyRates, exchangeRate || 1350, jpyKrwRate || 9.5)
     ), 0);
@@ -2459,16 +2459,14 @@ const buyLotDraftSummary = useMemo(() => {
       summary[currency] = (summary[currency] || 0) + (Number(dividend.amount) || 0);
       return summary;
     }, {});
-    const totalReturnPercent = investedPurchaseKRW > 0 ? (investedProfitKRW / investedPurchaseKRW) * 100 : 0;
 
     return {
       purchaseKRW,
       investedPurchaseKRW,
       evaluationProfitKRW,
       investedProfitKRW,
-      krwEvaluationProfit,
-      usdEvaluationProfit,
       totalReturnPercent,
+      unrealizedProfitByCurrency,
       dividendKRW,
       dividendByCurrency,
     };
@@ -2487,41 +2485,93 @@ const buyLotDraftSummary = useMemo(() => {
       return { date: getDividendReportingDate(dividend), amountKRW: amount * rate };
     })
     .filter((event) => event.date && event.amountKRW > 0), [receivedDividends, currencyRates, exchangeRate, jpyKrwRate]);
-  /**
-   * 수익률 화면은 오늘의 자동 스냅샷이 아직 영구 저장되지 않았더라도 현재
-   * 총평가액으로 즉시 계산해야 한다(하루 한 번 저장을 기다리지 않는다).
-   */
-  const performanceSnapshots = useMemo(() => (
-    isCloudPortfolioLoaded && !cloudLoadFailed && !isFetching && Boolean(priceSyncSettledAt)
-      && Number.isFinite(Number(totalConvertedKRW))
-      ? withCurrentPortfolioSnapshot(portfolioSnapshots, {
-        date: formatDateKey(new Date()),
+  const initialSnapshotValuationReady = useMemo(() => isInitialSnapshotValuationReady({
+    assets: enhancedAssets,
+    totalValueKRW: totalConvertedKRW,
+  }), [enhancedAssets, totalConvertedKRW]);
+  useEffect(() => {
+    if (!isStorageScopeReady || !isCloudPortfolioLoaded || cloudLoadFailed || isFetching) return;
+    if (userId && cloudPortfolioUserId !== userId) return;
+
+    const snapshotDate = formatDateKey(new Date());
+    setPortfolioSnapshots((previous) => {
+      const next = ensureInitialPortfolioSnapshot({
+        snapshots: previous,
+        serviceJoinedAt: joinedAt,
+        snapshotDate,
         valueKRW: totalConvertedKRW,
         unrealizedProfitKRW: dashboardSummary.investedProfitKRW,
-      })
-      : portfolioSnapshots
-  ), [
-    portfolioSnapshots, totalConvertedKRW, dashboardSummary.investedProfitKRW,
-    isCloudPortfolioLoaded, cloudLoadFailed, isFetching, priceSyncSettledAt,
+        valuationReady: initialSnapshotValuationReady,
+      });
+      if (next === previous) return previous;
+      addLogRef.current(`초기 Portfolio Snapshot을 ${snapshotDate} 기준으로 저장했습니다.`, 'success');
+      return next;
+    });
+  }, [
+    cloudLoadFailed, cloudPortfolioUserId, dashboardSummary.investedProfitKRW,
+    initialSnapshotValuationReady, isCloudPortfolioLoaded, isFetching, isStorageScopeReady,
+    joinedAt, totalConvertedKRW, userId,
   ]);
-  const annualPerformanceYears = useMemo(() => getAnnualPerformanceYears({
-    snapshots: performanceSnapshots,
+  const twrDatePolicy = useMemo(() => deriveTwrDatePolicy({
     capitalFlows,
+    tradeLedger,
+    trades,
+    assets,
+    snapshots: portfolioSnapshots,
+    serviceJoinedAt: joinedAt,
+  }), [capitalFlows, tradeLedger, trades, assets, portfolioSnapshots, joinedAt]);
+  // 정식 Daily TWR에는 실시간 평가액을 섞지 않는다. 저장된 COMPLETE Snapshot만
+  // 계산기가 선별하며, 오늘 장중 평가액은 대시보드 총평가액에만 표시한다.
+  const performanceSnapshots = portfolioSnapshots;
+  const todayDateKey = formatDateKey(new Date());
+  const hasInitializingSnapshot = useMemo(() => portfolioSnapshots.some((snapshot) => (
+    snapshot?.source === 'initial'
+    && snapshot?.date === todayDateKey
+    && String(snapshot?.status || '').toLowerCase() === 'initializing'
+  )), [portfolioSnapshots, todayDateKey]);
+  const completeInitialSetup = useCallback(() => {
+    const completedAt = new Date().toISOString();
+    setPortfolioSnapshots((previous) => completeInitialPortfolioSnapshot({
+      snapshots: previous,
+      snapshotDate: todayDateKey,
+      completedAt,
+    }));
+    addLogRef.current('초기 포트폴리오 기준 평가액을 확정했습니다.', 'success');
+  }, [todayDateKey]);
+  const performanceCapitalFlows = useMemo(
+    () => dedupeCapitalFlowsForPerformance(capitalFlows),
+    [capitalFlows],
+  );
+  const totalTwrPerformance = useMemo(() => calculateAvailableDailyTwr({
+    snapshots: performanceSnapshots,
+    cashFlows: performanceCapitalFlows,
+    ...twrDatePolicy,
+  }), [performanceSnapshots, performanceCapitalFlows, twrDatePolicy]);
+  const lastCashFlowUpdateDate = useMemo(() => capitalFlows
+    .filter((flow) => flow.sourceType === 'BROKER_PDF')
+    .map((flow) => flow.date || '')
+    .sort()
+    .at(-1) || '', [capitalFlows]);
+  const applyImportedCashFlows = useCallback((records) => {
+    setCapitalFlows((previous) => mergeCapitalFlows(previous, records));
+    addLogRef.current(`${records.length.toLocaleString()}건의 외부 입출금을 반영했습니다.`, 'success');
+  }, []);
+  const annualPerformanceYears = useMemo(() => getAnnualTwrYears({
+    ...twrDatePolicy,
     currentYear: new Date().getFullYear(),
-  }), [performanceSnapshots, capitalFlows]);
+  }), [twrDatePolicy]);
   const annualPerformances = useMemo(() => annualPerformanceYears.map((year) => (
-    calculateAnnualPerformance({
+    calculateAnnualDailyTwr({
       snapshots: performanceSnapshots,
-      capitalFlows,
+      cashFlows: performanceCapitalFlows,
       dividends: dividendKrwEvents,
-      realizedGains: realizedGainKrwEvents,
       year,
-      costBasisKRW: dashboardSummary.investedPurchaseKRW,
+      ...twrDatePolicy,
+      asOfDate: formatDateKey(new Date()),
     })
   )), [
-    annualPerformanceYears, performanceSnapshots, capitalFlows,
-    dividendKrwEvents, realizedGainKrwEvents,
-    dashboardSummary.investedPurchaseKRW,
+    annualPerformanceYears, performanceSnapshots, performanceCapitalFlows,
+    dividendKrwEvents, twrDatePolicy,
   ]);
   // 기록이 시작된 해보다 앞으로는 돌아갈 수 없게 한다(빈 카드만 보인다).
   const earliestAnnualYear = annualPerformanceYears.length > 0
@@ -2529,18 +2579,17 @@ const buyLotDraftSummary = useMemo(() => {
     : new Date().getFullYear();
   const selectedAnnualPerformance = useMemo(() => (
     annualPerformances.find((performance) => performance.year === annualReturnYear)
-    || calculateAnnualPerformance({
+    || calculateAnnualDailyTwr({
       snapshots: performanceSnapshots,
-      capitalFlows,
+      cashFlows: performanceCapitalFlows,
       dividends: dividendKrwEvents,
-      realizedGains: realizedGainKrwEvents,
       year: annualReturnYear,
-      costBasisKRW: dashboardSummary.investedPurchaseKRW,
+      ...twrDatePolicy,
+      asOfDate: formatDateKey(new Date()),
     })
   ), [
-    annualPerformances, annualReturnYear, performanceSnapshots, capitalFlows,
-    dividendKrwEvents, realizedGainKrwEvents,
-    dashboardSummary.investedPurchaseKRW,
+    annualPerformances, annualReturnYear, performanceSnapshots, performanceCapitalFlows,
+    dividendKrwEvents, twrDatePolicy,
   ]);
   /**
    * 해외주식 양도소득세(추정).
@@ -2563,22 +2612,6 @@ const buyLotDraftSummary = useMemo(() => {
       return Number(currencyRates[code]) > 0 ? Number(currencyRates[code]) : 0;
     },
   }), [canonicalTradeRows, annualReturnYear, currencyRates, exchangeRate, jpyKrwRate]);
-  useEffect(() => {
-    if (!isStorageScopeReady || !isCloudPortfolioLoaded || cloudLoadFailed || isFetching || !lastUpdated) return;
-    if (!(Number(totalConvertedKRW) > 0)) return;
-
-    const date = formatDateKey(new Date());
-    setPortfolioSnapshots((previous) => upsertDailyPortfolioSnapshot(previous, {
-      id: `snapshot-${date}`,
-      date,
-      valueKRW: totalConvertedKRW,
-      unrealizedProfitKRW: dashboardSummary.investedProfitKRW,
-      source: 'auto',
-    }));
-  }, [
-    isStorageScopeReady, isCloudPortfolioLoaded, cloudLoadFailed, isFetching, lastUpdated,
-    totalConvertedKRW, dashboardSummary.investedProfitKRW,
-  ]);
   const dividendCurrencyParts = useMemo(() => (
     Object.entries(dashboardSummary.dividendByCurrency || {})
       .filter(([, amount]) => Math.abs(Number(amount) || 0) > 0.000001)
@@ -2704,6 +2737,13 @@ const buyLotDraftSummary = useMemo(() => {
   }, [dividendCalendarEventsByDate, expandedCalendarDate]);
   const targetBudgetKRW = parseNumber(targetPortfolio.budget) || totalConvertedKRW;
   const targetCategoryTotalPercent = targetPortfolio.categories.reduce((sum, category) => sum + (Number(category.percent) || 0), 0);
+  const currentCategoryAllocations = useMemo(() => buildCategoryAllocationRows({
+    assets: enhancedAssets,
+    targetCategories: targetPortfolio.categories,
+  }), [enhancedAssets, targetPortfolio.categories]);
+  const currentCategoryAllocationMap = useMemo(() => new Map(
+    currentCategoryAllocations.map((category) => [category.id, category]),
+  ), [currentCategoryAllocations]);
   const targetPortfolioGuide = useMemo(() => {
     const rate = exchangeRate || 1350;
     const yenRate = jpyKrwRate || 9.5;
@@ -2789,7 +2829,7 @@ const buyLotDraftSummary = useMemo(() => {
         currentValue,
         targetValue,
         gapValue: targetValue - currentValue,
-        currentPercent: targetBudgetKRW > 0 ? (currentValue / targetBudgetKRW) * 100 : 0,
+        currentPercent: currentCategoryAllocationMap.get(categoryTarget.id)?.currentPercent || 0,
         groupTotalPercent,
         groups: enrichedGroups,
         buyCount,
@@ -2800,35 +2840,46 @@ const buyLotDraftSummary = useMemo(() => {
         unassignedValue: unassignedAssets.reduce((sum, asset) => sum + asset.currentKRW, 0),
       };
     });
-  }, [targetPortfolio, enhancedAssets, targetBudgetKRW, exchangeRate, jpyKrwRate, currencyRates]);
+  }, [targetPortfolio, enhancedAssets, targetBudgetKRW, exchangeRate, jpyKrwRate, currencyRates, currentCategoryAllocationMap]);
+  const targetCategoryComparisonGuide = useMemo(() => {
+    const guideByCategory = new Map(targetPortfolioGuide.map((category) => [category.id, category]));
+    return currentCategoryAllocations.map((allocation) => {
+      const guide = guideByCategory.get(allocation.id);
+      if (guide) return { ...guide, currentPercent: allocation.currentPercent };
+      return {
+        id: allocation.id,
+        percent: 0,
+        currentValue: allocation.currentValue,
+        currentPercent: allocation.currentPercent,
+        targetValue: 0,
+        gapValue: -allocation.currentValue,
+        hasTarget: false,
+      };
+    });
+  }, [targetPortfolioGuide, currentCategoryAllocations]);
+  const currentCategoryPercentTotal = Math.round(targetCategoryComparisonGuide.reduce(
+    (sum, category) => sum + category.currentPercent,
+    0,
+  ) * 10) / 10;
   const targetCurrentChartData = useMemo(() => {
     let cumulativePercent = 0;
-    const grouped = Object.values(enhancedAssets.reduce((acc, asset) => {
-      if (!acc[asset.category]) {
-        acc[asset.category] = {
-          id: `current-${asset.category}`,
-          name: asset.category,
-          value: 0,
-        };
-      }
-      acc[asset.category].value += asset.currentKRW;
-      return acc;
-    }, {})).sort((a, b) => b.value - a.value);
-
-    return grouped.map((category) => {
-      const percent = totalConvertedKRW > 0 ? (category.value / totalConvertedKRW) * 100 : 0;
+    return currentCategoryAllocations
+      .filter((category) => category.currentValue > 0)
+      .sort((left, right) => right.currentValue - left.currentValue)
+      .map((category) => {
+      const percent = category.currentPercent;
       const startPercent = cumulativePercent;
       cumulativePercent += percent;
       return {
-        id: category.id,
-        name: category.name,
-        value: category.value,
+        id: `current-${category.id}`,
+        name: category.id,
+        value: category.currentValue,
         percent,
         startPercent,
-        color: getCategoryColor(category.name),
+        color: getCategoryColor(category.id),
       };
     });
-  }, [enhancedAssets, totalConvertedKRW]);
+  }, [currentCategoryAllocations]);
   const targetGoalChartData = useMemo(() => {
     let cumulativePercent = 0;
     return targetPortfolioGuide.map((category) => {
@@ -4771,7 +4822,13 @@ const buyLotDraftSummary = useMemo(() => {
               </div>
 
               {/* 보조 지표 3개 */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                <TotalReturnCard
+                  performance={totalTwrPerformance}
+                  lastCashFlowDate={lastCashFlowUpdateDate}
+                  hasInitializingSnapshot={hasInitializingSnapshot}
+                  onCompleteInitialSetup={completeInitialSetup}
+                />
                 {[
                   {
                     label: '보유 자산',
@@ -5134,30 +5191,28 @@ const buyLotDraftSummary = useMemo(() => {
         {/* 수익 및 기록 탭 */}
         {activeTab === 'history' && (
           <div className="space-y-8 anim-fade">
+            <ExternalCashFlowPanel
+              twrAvailableFrom={twrDatePolicy.twrAvailableFrom}
+              existingFlows={capitalFlows}
+              onApply={applyImportedCashFlows}
+            />
             <h3 className="text-lg md:text-xl font-bold text-ink flex items-center gap-2"><TrendingUp className="text-ink-soft" size={20} /> 평가손익(미실현) 요약</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-              <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
-                <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><Banknote size={20} /></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">국내주식 평가손익</p>
-                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${dashboardSummary.krwEvaluationProfit >= 0 ? 'text-up' : 'text-down'}`}>
-                  {dashboardSummary.krwEvaluationProfit > 0 ? '+' : ''}{formatMoney(dashboardSummary.krwEvaluationProfit, 'KRW')}
-                </p>
-              </div>
-              <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
-                <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><DollarSign size={20} /></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">해외주식 평가손익</p>
-                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${dashboardSummary.usdEvaluationProfit >= 0 ? 'text-up' : 'text-down'}`}>
-                  {dashboardSummary.usdEvaluationProfit > 0 ? '+' : ''}{formatMoney(dashboardSummary.usdEvaluationProfit, 'USD')}
-                </p>
-              </div>
-              <div className="bg-ink p-5 md:p-7 rounded-2xl shadow-sm flex flex-col justify-center text-surface relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-4 opacity-10"><PieIcon size={50}/></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">총 환산 평가손익</p>
-                <p className={`text-3xl md:text-4xl font-bold tracking-tighter ${dashboardSummary.investedProfitKRW >= 0 ? 'text-up' : 'text-down'}`}>
-                  {dashboardSummary.investedProfitKRW > 0 ? '+' : ''}{formatMoney(dashboardSummary.investedProfitKRW, 'KRW')}
-                </p>
-              </div>
+            <div className={`grid grid-cols-1 gap-4 md:gap-6 ${dashboardSummary.unrealizedProfitByCurrency.length === 2 ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+              {dashboardSummary.unrealizedProfitByCurrency.map(({ currency, amount, assetCount, label }) => {
+                const CurrencyIcon = currency === 'KRW' ? Banknote : DollarSign;
+                return (
+                  <div key={currency} className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
+                    <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><CurrencyIcon size={20} /></div>
+                    <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">{label} 평가손익 합계</p>
+                    <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${amount >= 0 ? 'text-up' : 'text-down'}`}>
+                      {amount > 0 ? '+' : ''}{formatMoney(amount, currency)}
+                    </p>
+                    <p className="mt-2 text-[11px] font-semibold text-ink-mute">종목별 표시값 {assetCount}개 합계</p>
+                  </div>
+                );
+              })}
             </div>
+            <p className="-mt-5 text-[11px] md:text-xs font-semibold text-ink-mute">각 종목에 표시된 미실현 손익을 같은 통화끼리만 더합니다. 원화 환산이나 환차손익은 이 요약에 섞지 않습니다.</p>
 
             <h3 className="text-lg md:text-xl font-bold text-ink flex items-center gap-2"><ArrowRightLeft className="text-ink-soft" size={20} /> 종목 매매(실현) 수익 요약</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
@@ -5925,10 +5980,13 @@ const buyLotDraftSummary = useMemo(() => {
 
               {targetViewMode === 'chart' && (
                 <div className="p-5 md:p-7 border-b border-line">
-                  <h4 className="text-sm md:text-base font-bold text-ink mb-1">카테고리별 현재 vs 목표 비중</h4>
-                  <p className="text-[11px] md:text-xs font-semibold text-ink-mute mb-5">두 파이그래프만으로는 비교하기 어려운 차이를 막대로 바로 보여줍니다.</p>
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
+                    <h4 className="text-sm md:text-base font-bold text-ink">카테고리별 현재 vs 목표 비중</h4>
+                    <span className="px-3 py-1.5 rounded-xl bg-brand-soft text-brand text-[11px] font-bold">현재 합계 {currentCategoryPercentTotal.toFixed(1)}%</span>
+                  </div>
+                  <p className="text-[11px] md:text-xs font-semibold text-ink-mute mb-5">현재 비중은 현재 총자산을 100%로 나누며, 목표 예산 크기와는 무관합니다.</p>
                   <div className="space-y-5">
-                    {targetPortfolioGuide.map((category) => {
+                    {targetCategoryComparisonGuide.map((category) => {
                       const currentPct = Math.max(0, Math.min(100, category.currentPercent));
                       const targetPct = Math.max(0, Math.min(100, Number(category.percent) || 0));
                       const gapPercentPoint = category.currentPercent - targetPct;
@@ -5961,7 +6019,7 @@ const buyLotDraftSummary = useMemo(() => {
                         </div>
                       );
                     })}
-                    {targetPortfolioGuide.length === 0 && (
+                    {targetCategoryComparisonGuide.length === 0 && (
                       <p className="text-xs font-bold text-ink-mute">분류를 추가하면 여기에 비교 막대가 표시됩니다.</p>
                     )}
                   </div>

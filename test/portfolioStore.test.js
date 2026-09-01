@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mergeRootAndCollectionState } from '../src/services/portfolioStore.js';
+import {
+  getPortfolioDocumentId,
+  mergeRootAndCollectionState,
+} from '../src/services/portfolioStore.js';
+
+test('Initial과 Scheduled Snapshot은 같은 날짜에 같은 Firestore 문서 ID를 사용한다', () => {
+  assert.equal(getPortfolioDocumentId('portfolioSnapshots', {
+    id: 'any-client-id',
+    date: '2026-08-28',
+  }), 'snapshot-2026-08-28');
+});
 
 test('스키마 2 루트가 비어 있어도 하위 컬렉션 자산과 원장을 유지한다', () => {
   const assets = Array.from({ length: 25 }, (_, id) => ({ id }));
