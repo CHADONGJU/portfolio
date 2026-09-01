@@ -2506,10 +2506,13 @@ const buyLotDraftSummary = useMemo(() => {
     annualPerformanceYears, canonicalTradeRows, annualDividendsByYear,
     exchangeRate, jpyKrwRate, currencyRates,
   ]);
-  // 기록이 시작된 해보다 앞으로는 돌아갈 수 없게 한다(빈 카드만 보인다).
-  const earliestAnnualYear = annualPerformanceYears.length > 0
-    ? Math.min(...annualPerformanceYears)
-    : new Date().getFullYear();
+  // 증권사 앱처럼 기록이 없는 지난해로도 돌아가 볼 수 있게 한다. 기록이 없는
+  // 해는 "기록 없음" 카드로 보여주고, 기록이 그보다 오래됐으면 그 해까지 연다.
+  const ANNUAL_NAV_LOOKBACK_YEARS = 10;
+  const earliestAnnualYear = Math.min(
+    annualPerformanceYears.length > 0 ? Math.min(...annualPerformanceYears) : new Date().getFullYear(),
+    new Date().getFullYear() - ANNUAL_NAV_LOOKBACK_YEARS,
+  );
   const selectedAnnualPerformance = useMemo(() => (
     annualPerformances.find((performance) => performance.year === annualReturnYear)
     || {

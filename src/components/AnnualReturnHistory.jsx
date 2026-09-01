@@ -27,6 +27,9 @@ const CHART_PERCENT_CAP = 300;
 const clampedAbsPercent = (value) => Math.min(Math.abs(value), CHART_PERCENT_CAP);
 
 const AnnualReturnHistory = ({ year, years, earliestYear, performance, performances, onYearChange }) => {
+  // 기록이 없는 해를 보고 있어도 오른쪽 목록에서 그 해가 보이고 선택 표시가
+  // 되도록, 기록이 있는 연도 목록에 지금 보고 있는 해를 합쳐서 그린다.
+  const displayYears = years.includes(year) ? years : [...years, year].sort((left, right) => right - left);
   const maxAbs = Math.max(
     1,
     ...performances.filter((item) => Number.isFinite(item.returnPercent)).map((item) => clampedAbsPercent(item.returnPercent)),
@@ -73,7 +76,7 @@ const AnnualReturnHistory = ({ year, years, earliestYear, performance, performan
         </div>
 
         <div className="space-y-3">
-          {years.map((itemYear) => {
+          {displayYears.map((itemYear) => {
             const item = performances.find((candidate) => candidate.year === itemYear);
             const value = item?.returnPercent;
             const width = Number.isFinite(value) ? (clampedAbsPercent(value) / maxAbs) * 50 : 0;
