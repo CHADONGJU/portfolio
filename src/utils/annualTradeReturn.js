@@ -38,14 +38,17 @@ const getRecordKrwPnl = (record = {}, rates) => {
 };
 
 /**
- * 연도별 단순 수익률(매매 기록 기준).
+ * 연도별 매매 수익률(증권사 실현손익 화면과 같은 기준).
  *
- * 평가액 스냅샷이 없어도 매매 기록만으로 바로 계산되도록,
- * TWR 대신 "그 해 실현 총손익 ÷ 그 해 매수금액"을 쓴다.
+ * 수익률 = 그 해 실현손익 ÷ 매도분 매수원가(총매도금액 − 실현손익).
+ * "판 것에 들어간 돈 대비 얼마나 벌었나"이며, 증권사 앱의 기간 실현손익
+ * 수익률과 같은 방식이다.
  * - 매수금액·매도금액은 시점 환율(fxRate)로 환산한 원화 체결 금액.
- * - 총손익은 그 해 매도들의 원화 실현손익 합(수수료·세금 반영된 표준 행 기준).
- * - 그 해 매수가 없는데 매도만 있으면(전년도 보유분 정리 등)
- *   매도 원가(매도금액 − 손익)를 분모로 대신 쓴다.
+ * - 실현손익은 그 해 매도들의 원화 실현손익 합(수수료·세금 반영된 표준 행 기준).
+ * - 배당과 평가손익(미실현)은 수익률에 넣지 않는다. 배당은 화면에서 참고용으로만
+ *   따로 보여준다.
+ * - 아직 팔지 않은 매수금액도 분모에 넣지 않는다 — 넣으면 같은 매도 성과가
+ *   그 해에 얼마를 새로 샀느냐에 따라 흐려진다.
  */
 export const calculateAnnualTradeReturn = ({
   rows = [],
@@ -90,6 +93,7 @@ export const calculateAnnualTradeReturn = ({
       returnPercent: null,
       buyKRW: 0,
       sellKRW: 0,
+      soldCostKRW: 0,
       profitKRW: 0,
       buyCount: 0,
       sellCount: 0,
@@ -98,10 +102,10 @@ export const calculateAnnualTradeReturn = ({
     };
   }
 
-  // 분모: 그 해 매수금액. 매수 없이 매도만 있으면 매도 원가로 대신한다.
+  // 분모: 매도분 매수원가(매도금액 − 실현손익). 매도가 없는 해는 확정된 것이
+  // 없으므로 수익률을 만들지 않는다(0%가 아니라 "아직 없음").
   const soldCostKRW = sellKRW - profitKRW;
-  const baseKRW = buyKRW > 0 ? buyKRW : soldCostKRW;
-  const returnPercent = baseKRW > 0 ? (profitKRW / baseKRW) * 100 : null;
+  const returnPercent = soldCostKRW > 0 ? (profitKRW / soldCostKRW) * 100 : null;
 
   return {
     year: numericYear,
@@ -109,6 +113,7 @@ export const calculateAnnualTradeReturn = ({
     returnPercent: Number.isFinite(returnPercent) ? returnPercent : null,
     buyKRW,
     sellKRW,
+    soldCostKRW,
     profitKRW,
     buyCount,
     sellCount,

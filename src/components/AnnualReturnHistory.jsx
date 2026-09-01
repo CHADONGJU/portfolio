@@ -7,18 +7,17 @@ const getPeriodLabel = (year, currentYear) => (
 );
 
 const getInsufficientMessage = (performance) => {
-  if (performance?.reason === 'capital-base-required') return '나눌 원금 기준이 아직 없습니다. 보유 종목의 매입 기록이나 입금 기록을 넣으면 자동 계산합니다.';
-  return '이 해의 평가 기록이 아직 없습니다. 보유 종목을 등록하면 그날부터 자동으로 쌓입니다.';
+  if ((performance?.buyCount || 0) > 0 && (performance?.sellCount || 0) === 0) return '아직 매도한 기록이 없습니다. 매도가 생기면 그 해 매매 수익률을 자동 계산합니다.';
+  return '이 해의 매매 기록이 아직 없습니다. 매수·매도 기록을 넣으면 자동 계산합니다.';
 };
 
-// 연초 기준값을 어디서 가져왔는지 한 줄로. 숫자가 어떤 전제 위에 있는지 감추지 않되,
-// 계산 자체를 막지는 않는다.
-const getBasisNote = (performance) => {
-  if (performance?.openingBasis === 'carried-forward') return '전년도 평가액 이어받음';
-  if (performance?.capitalBasis === 'cost-basis') return '매입원가 대비';
-  if (performance?.capitalBasis === 'first-snapshot') return '기록 시작 시점 원금 대비';
-  return '';
-};
+// 수익률이 어떤 분모 위에 있는지 한 줄로. 환율을 몰라 오늘 환율로 근사한 옛 기록이
+// 섞여 있으면 그 사실도 감추지 않는다.
+const getBasisNote = (performance) => (
+  performance?.approximate
+    ? '매도분 매수원가 대비 · 일부 옛 기록은 오늘 환율로 근사'
+    : '매도분 매수원가 대비'
+);
 
 // 단순 비율(비가중) 수익률이라, 원금이 거의 없는 해에 입금과 출금이 거의 같은
 // 금액으로 맞물리면 분모가 0에 가까워져 수백 %가 넘는 값이 나올 수 있다. 그런
@@ -41,7 +40,7 @@ const AnnualReturnHistory = ({ year, years, earliestYear, performance, performan
           <BarChart3 size={18} className="text-ink-soft" />
           <div>
             <h3 className="text-base md:text-lg font-bold text-ink">연도별 수익률</h3>
-            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">매도 실현손익(수수료·거래세 차감)과 배당만 순수익으로 집계하며, 평가손익은 포함하지 않습니다.</p>
+            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">매도 실현손익(수수료·거래세 차감)을 매도분 매수원가로 나눈 매매 수익률입니다. 배당·평가손익은 수익률에 넣지 않습니다.</p>
           </div>
         </div>
         <div className="seg inline-flex self-start sm:self-auto items-center p-1 rounded-[14px]">
@@ -57,12 +56,12 @@ const AnnualReturnHistory = ({ year, years, earliestYear, performance, performan
           {performance.status === 'ready' ? (
             <>
               <p className={`figure text-3xl md:text-4xl font-bold mt-2 ${performance.returnPercent >= 0 ? 'text-up' : 'text-down'}`}>{performance.returnPercent >= 0 ? '+' : ''}{performance.returnPercent.toFixed(2)}%</p>
-              <p className="text-xs font-semibold text-ink-mute mt-2">{performance.startDate} ~ {performance.endDate}{getBasisNote(performance) ? ` · ${getBasisNote(performance)}` : ''}</p>
+              <p className="text-xs font-semibold text-ink-mute mt-2">{getBasisNote(performance)}</p>
               <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div><p className="text-[10px] font-bold text-ink-mute">이 기간 순수익</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.profitKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">이 기간 입금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.depositsKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">이 기간 출금</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.withdrawalsKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">이 기간 배당</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.dividendsKRW || 0, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">실현손익</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.profitKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">총 매수금액</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.buyKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">총 매도금액</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.sellKRW, 'KRW')}</p></div>
+                <div><p className="text-[10px] font-bold text-ink-mute">배당 (수익률 미포함)</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.dividendsKRW || 0, 'KRW')}</p></div>
               </div>
             </>
           ) : (

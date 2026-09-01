@@ -102,12 +102,11 @@ import {
   summarizeAnnualDividendTrend,
 } from './utils/annualDividendTrend';
 import { buildStockSearchOptions } from './utils/stockSearchOptions';
+import { upsertDailyPortfolioSnapshot } from './utils/annualPerformance';
 import {
-  calculateAnnualPerformance,
-  getAnnualPerformanceYears,
-  upsertDailyPortfolioSnapshot,
-  withCurrentPortfolioSnapshot,
-} from './utils/annualPerformance';
+  calculateAnnualTradeReturn,
+  getAnnualTradeYears,
+} from './utils/annualTradeReturn';
 import { calculateOverseasCapitalGainsTax } from './utils/overseasCapitalGainsTax';
 import { combineTradesWithMemos } from './utils/tradeMemos';
 import {
@@ -1146,7 +1145,6 @@ const App = () => {
    * 시작되지도 않은 순간)의 저장된 가격·기본 환율로 계산한 값이 그대로 수익률 카드에
    * 들어가, 새로고침할 때마다 다른 숫자가 잠깐씩 보였다가 바뀐다.
    */
-  const [priceSyncSettledAt, setPriceSyncSettledAt] = useState(null);
   const [activeTab, setActiveTab] = useState('portfolio');
   const [isFetching, setIsFetching] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -2203,7 +2201,6 @@ const buyLotDraftSummary = useMemo(() => {
       finally {
         if (runId === liveFetchRunIdRef.current) {
           setIsFetching(false);
-          setPriceSyncSettledAt(new Date().toISOString());
         }
       }
     };
@@ -2268,7 +2265,6 @@ const buyLotDraftSummary = useMemo(() => {
     krwGrossProfit,
     usdGrossProfit,
     totalConvertedNetProfit,
-    realizedGainKrwEvents,
     stockPerformanceSummary,
     dividendSummary,
     filteredHistory,
@@ -2488,40 +2484,27 @@ const buyLotDraftSummary = useMemo(() => {
     })
     .filter((event) => event.date && event.amountKRW > 0), [receivedDividends, currencyRates, exchangeRate, jpyKrwRate]);
   /**
-   * 수익률 화면은 오늘의 자동 스냅샷이 아직 영구 저장되지 않았더라도 현재
-   * 총평가액으로 즉시 계산해야 한다(하루 한 번 저장을 기다리지 않는다).
+   * 연도별 수익률(증권사 방식): 그 해 실현손익 ÷ 매도분 매수원가.
+   * 평가액 스냅샷이 아니라 매매 기록(canonicalTradeRows)만으로 계산한다.
+   * 배당은 수익률에 넣지 않고, 참고용 연도별 합계만 붙여 화면에 따로 보여준다.
    */
-  const performanceSnapshots = useMemo(() => (
-    isCloudPortfolioLoaded && !cloudLoadFailed && !isFetching && Boolean(priceSyncSettledAt)
-      && Number.isFinite(Number(totalConvertedKRW))
-      ? withCurrentPortfolioSnapshot(portfolioSnapshots, {
-        date: formatDateKey(new Date()),
-        valueKRW: totalConvertedKRW,
-        unrealizedProfitKRW: dashboardSummary.investedProfitKRW,
-      })
-      : portfolioSnapshots
-  ), [
-    portfolioSnapshots, totalConvertedKRW, dashboardSummary.investedProfitKRW,
-    isCloudPortfolioLoaded, cloudLoadFailed, isFetching, priceSyncSettledAt,
-  ]);
-  const annualPerformanceYears = useMemo(() => getAnnualPerformanceYears({
-    snapshots: performanceSnapshots,
-    capitalFlows,
+  const annualPerformanceYears = useMemo(() => getAnnualTradeYears({
+    rows: canonicalTradeRows,
     currentYear: new Date().getFullYear(),
-  }), [performanceSnapshots, capitalFlows]);
-  const annualPerformances = useMemo(() => annualPerformanceYears.map((year) => (
-    calculateAnnualPerformance({
-      snapshots: performanceSnapshots,
-      capitalFlows,
-      dividends: dividendKrwEvents,
-      realizedGains: realizedGainKrwEvents,
-      year,
-      costBasisKRW: dashboardSummary.investedPurchaseKRW,
-    })
-  )), [
-    annualPerformanceYears, performanceSnapshots, capitalFlows,
-    dividendKrwEvents, realizedGainKrwEvents,
-    dashboardSummary.investedPurchaseKRW,
+  }), [canonicalTradeRows]);
+  const annualDividendsByYear = useMemo(() => dividendKrwEvents.reduce((totals, event) => {
+    const eventYear = Number(String(event.date).slice(0, 4));
+    if (Number.isFinite(eventYear)) totals[eventYear] = (totals[eventYear] || 0) + event.amountKRW;
+    return totals;
+  }, {}), [dividendKrwEvents]);
+  const annualPerformances = useMemo(() => annualPerformanceYears.map((year) => ({
+    ...calculateAnnualTradeReturn({
+      rows: canonicalTradeRows, year, exchangeRate, jpyKrwRate, currencyRates,
+    }),
+    dividendsKRW: annualDividendsByYear[year] || 0,
+  })), [
+    annualPerformanceYears, canonicalTradeRows, annualDividendsByYear,
+    exchangeRate, jpyKrwRate, currencyRates,
   ]);
   // 기록이 시작된 해보다 앞으로는 돌아갈 수 없게 한다(빈 카드만 보인다).
   const earliestAnnualYear = annualPerformanceYears.length > 0
@@ -2529,18 +2512,15 @@ const buyLotDraftSummary = useMemo(() => {
     : new Date().getFullYear();
   const selectedAnnualPerformance = useMemo(() => (
     annualPerformances.find((performance) => performance.year === annualReturnYear)
-    || calculateAnnualPerformance({
-      snapshots: performanceSnapshots,
-      capitalFlows,
-      dividends: dividendKrwEvents,
-      realizedGains: realizedGainKrwEvents,
-      year: annualReturnYear,
-      costBasisKRW: dashboardSummary.investedPurchaseKRW,
-    })
+    || {
+      ...calculateAnnualTradeReturn({
+        rows: canonicalTradeRows, year: annualReturnYear, exchangeRate, jpyKrwRate, currencyRates,
+      }),
+      dividendsKRW: annualDividendsByYear[annualReturnYear] || 0,
+    }
   ), [
-    annualPerformances, annualReturnYear, performanceSnapshots, capitalFlows,
-    dividendKrwEvents, realizedGainKrwEvents,
-    dashboardSummary.investedPurchaseKRW,
+    annualPerformances, annualReturnYear, canonicalTradeRows, annualDividendsByYear,
+    exchangeRate, jpyKrwRate, currencyRates,
   ]);
   /**
    * 해외주식 양도소득세(추정).

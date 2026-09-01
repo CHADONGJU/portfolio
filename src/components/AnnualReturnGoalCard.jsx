@@ -13,9 +13,6 @@ const AnnualReturnGoalCard = ({ year, earliestYear, targetPercent, performance, 
   const fillLeft = Math.min(zeroPosition, actualPosition);
   const fillWidth = Math.abs(actualPosition - zeroPosition);
   const currentReturnLabel = year === currentYear ? `${year}년 YTD 수익률` : `${year}년 연간 수익률`;
-  const carriedForwardAmount = Number.isFinite(performance?.carriedForwardValueKRW)
-    ? performance.carriedForwardValueKRW.toLocaleString('ko-KR')
-    : null;
   const achievementPercent = target > 0 && actual !== null
     ? Math.max(0, (actual / target) * 100)
     : null;
@@ -28,10 +25,10 @@ const AnnualReturnGoalCard = ({ year, earliestYear, targetPercent, performance, 
     ? `달성률 ${achievementLabel}%`
     : target <= 0
       ? '목표 수익률을 입력하세요.'
-      : '이 해의 평가 기록이 쌓이면 자동 계산합니다.';
-  const insufficientMessage = performance?.reason === 'capital-base-required'
-    ? '나눌 원금 기준이 아직 없습니다. 보유 종목의 매입 기록이나 입금 기록을 넣으면 자동 계산합니다.'
-    : '이 해의 평가 기록이 아직 없습니다. 보유 종목을 등록하면 그날부터 자동으로 쌓입니다.';
+      : '이 해의 매도 기록이 쌓이면 자동 계산합니다.';
+  const insufficientMessage = (performance?.buyCount || 0) > 0 && (performance?.sellCount || 0) === 0
+    ? '아직 매도한 기록이 없습니다. 매도가 생기면 그 해 매매 수익률을 자동 계산합니다.'
+    : '이 해의 매매 기록이 아직 없습니다. 매수·매도 기록을 넣으면 자동 계산합니다.';
 
   return (
     <section className="bg-surface rounded-[20px] overflow-hidden">
@@ -66,11 +63,6 @@ const AnnualReturnGoalCard = ({ year, earliestYear, targetPercent, performance, 
           </div>
           <p className="text-xs md:text-sm font-bold text-ink-soft">{statusMessage}</p>
         </div>
-        {performance?.status === 'ready' && performance.carriedForward && (
-          <div className="mb-5 rounded-2xl bg-up-soft px-4 py-3">
-            <p className="text-xs font-bold text-up leading-relaxed">전년도 마지막 평가액인 {performance.carriedForwardAsOfDate}자 {carriedForwardAmount}원을 {year}년 시작 기준으로 이어받아 계산했습니다.</p>
-          </div>
-        )}
         {actual === null && (
           <div className="mb-5 rounded-2xl bg-warn-soft px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <p className="text-xs font-bold text-warn leading-relaxed">{insufficientMessage}</p>

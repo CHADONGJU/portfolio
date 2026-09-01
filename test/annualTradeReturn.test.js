@@ -14,7 +14,7 @@ const resolveBuyRate = (record) => {
   return Number.isFinite(stored) && stored > 0 ? stored : 0;
 };
 
-test('그 해 매수금액 대비 실현손익으로 수익률을 낸다', () => {
+test('매도분 매수원가 대비 실현손익으로 수익률을 낸다', () => {
   const rows = buildCanonicalTradeRows({
     tradeLedger: [
       { id: 'b1', name: '삼성전자', ticker: '005930', currency: 'KRW', side: 'buy', date: '2026-01-05', quantity: 10, price: 100000 },
@@ -29,8 +29,9 @@ test('그 해 매수금액 대비 실현손익으로 수익률을 낸다', () =>
   assert.equal(result.buyKRW, 1000000);
   assert.equal(result.sellKRW, 600000);
   assert.equal(result.profitKRW, 100000);
-  // 100,000 ÷ 1,000,000 = 10%
-  assert.equal(Math.round(result.returnPercent * 100) / 100, 10);
+  // 매도분 매수원가 = 600,000 − 100,000 = 500,000 → 100,000 ÷ 500,000 = 20%
+  assert.equal(result.soldCostKRW, 500000);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 20);
   assert.equal(result.approximate, false);
 });
 
@@ -41,7 +42,7 @@ test('매매가 없는 해는 empty로 표시한다', () => {
   assert.equal(result.tradeCount, 0);
 });
 
-test('그 해 매수 없이 매도만 있으면 매도 원가를 분모로 쓴다', () => {
+test('전년도에 산 것을 올해 팔아도 매도분 매수원가로 계산된다', () => {
   const rows = buildCanonicalTradeRows({
     tradeLedger: [
       { id: 'b1', name: '삼성전자', ticker: '005930', currency: 'KRW', side: 'buy', date: '2025-11-05', quantity: 10, price: 100000 },
@@ -56,7 +57,8 @@ test('그 해 매수 없이 매도만 있으면 매도 원가를 분모로 쓴�
   assert.equal(result.buyKRW, 0);
   assert.equal(result.sellKRW, 1100000);
   assert.equal(result.profitKRW, 100000);
-  // 분모 = 매도 원가 1,000,000 → 10%
+  // 분모 = 매도분 매수원가 1,000,000 → 10%
+  assert.equal(result.soldCostKRW, 1000000);
   assert.equal(Math.round(result.returnPercent * 100) / 100, 10);
 });
 
@@ -76,6 +78,8 @@ test('외화 매매는 시점 환율(fxRate)로 환산하고 krwPnl을 그대로
   assert.equal(result.sellKRW, 1540000);
   // krwPnl은 매수 시점 환율 기준(환차손익 미포함 정책): (110-100)×10×1300 = 130,000
   assert.equal(result.profitKRW, 130000);
+  // 매도분 매수원가 = 1,540,000 − 130,000 = 1,410,000
+  assert.equal(result.soldCostKRW, 1410000);
   assert.equal(result.approximate, false);
 });
 
@@ -121,5 +125,7 @@ test('다른 해의 매매는 섞이지 않는다', () => {
 
   assert.equal(y2026.buyKRW, 1000000);
   assert.equal(y2026.profitKRW, 0);
-  assert.equal(y2026.returnPercent, 0);
+  // 매수만 있고 매도가 없는 해는 확정된 손익이 없으므로 수익률을 만들지 않는다.
+  assert.equal(y2026.returnPercent, null);
+  assert.equal(y2026.status, 'empty');
 });
