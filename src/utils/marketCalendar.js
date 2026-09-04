@@ -126,9 +126,21 @@ const formatDatePart = (date, options) => new Intl.DateTimeFormat('en-CA', {
   ...options,
 }).format(date);
 
+/*
+ * 제공처는 한국 금통위 결정을 나라 코드만 붙여 "Interest Rate Decision"으로 준다.
+ * 어느 중앙은행인지는 country에만 있으므로 번역할 때 힌트로 앞에 붙여 준다.
+ */
+const COUNTRY_BANK_HINTS = {
+  US: 'fed',
+  KR: 'bank of korea',
+  EU: 'ecb',
+  JP: 'bank of japan',
+};
+
 export const getKoreanMarketEventTitle = (event = {}) => {
   const original = normalizeText(event.title || event.indicator || event.name);
-  const searchable = `${original} ${normalizeText(event.indicator)}`;
+  const hint = COUNTRY_BANK_HINTS[String(event.country || '').toUpperCase()] || '';
+  const searchable = `${hint} ${original} ${normalizeText(event.indicator)}`.trim();
   const translation = TITLE_TRANSLATIONS.find(([pattern]) => pattern.test(searchable));
   return translation?.[1] || original || '주요 증시 일정';
 };

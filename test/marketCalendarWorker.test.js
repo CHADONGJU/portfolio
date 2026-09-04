@@ -60,3 +60,15 @@ test('일정 본문 뒷부분에 있는 키워드도 놓치지 않는다', () =>
   });
   assert.deepEqual(keywordEvents.map(({ id }) => id), ['fed-projection']);
 });
+
+test('한국 기준금리 결정은 제공처 중요도가 낮아도 기본 달력에 남긴다', () => {
+  const rawEvents = [
+    { id: 'bok', title: 'Interest Rate Decision', country: 'KR', importance: 0, date: '2026-10-22T01:00:00Z' },
+    { id: 'kr-minor', title: 'Consumer Confidence', country: 'KR', importance: 0, date: '2026-10-27T21:00:00Z' },
+    { id: 'jp-minor', title: 'Interest Rate Decision', country: 'JP', importance: 0, date: '2026-10-30T03:00:00Z' },
+  ];
+
+  const calendarEvents = filterMarketCalendarEvents(rawEvents, { keywords: [], keywordsOnly: false });
+  assert.deepEqual(calendarEvents.map(({ id }) => id), ['bok']);
+  assert.equal(calendarEvents[0].importance, 1);
+});

@@ -57,11 +57,28 @@ const isKeywordMatch = (event, keywords) => {
 
 const cleanText = (value, maxLength = 200) => String(value || '').trim().slice(0, maxLength);
 
+/*
+ * 제공처는 한국 지표 대부분에 중요도를 0으로 매긴다. 하지만 금통위 기준금리 결정은
+ * 국내 투자자에게 FOMC만큼 중요한 일정이라 기본 달력에서 빠지면 안 된다.
+ */
+const PROMOTED_EVENTS = [
+  { country: 'KR', pattern: /interest rate decision/i },
+];
+
+const getEffectiveImportance = (event) => {
+  const importance = Number(event?.importance) || 0;
+  const searchable = `${event?.title || ''} ${event?.indicator || ''}`;
+  const promoted = PROMOTED_EVENTS.some(({ country, pattern }) => (
+    String(event?.country || '').toUpperCase() === country && pattern.test(searchable)
+  ));
+  return promoted ? Math.max(importance, 1) : importance;
+};
+
 export const filterMarketCalendarEvents = (events, { keywords, keywordsOnly }) => (
   (Array.isArray(events) ? events : [])
     .filter((event) => {
       const keywordMatch = isKeywordMatch(event, keywords);
-      return keywordsOnly ? keywordMatch : Number(event?.importance) >= 1 || keywordMatch;
+      return keywordsOnly ? keywordMatch : getEffectiveImportance(event) >= 1 || keywordMatch;
     })
     .map((event) => ({
       id: cleanText(event.id, 80),
@@ -81,7 +98,7 @@ export const filterMarketCalendarEvents = (events, { keywords, keywordsOnly }) =
       unit: cleanText(event.unit, 20),
       scale: cleanText(event.scale, 12),
       currency: cleanText(event.currency, 12),
-      importance: Number(event.importance) || 0,
+      importance: getEffectiveImportance(event),
     }))
 );
 

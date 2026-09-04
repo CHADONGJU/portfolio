@@ -54,3 +54,18 @@ test('띄어 쓴 "연준 의장"도 기자회견 검색어로 확장한다', () 
     ['연준 의장', 'fed press conference', 'fed chair', 'fomc press conference'],
   );
 });
+
+test('중앙은행 이름이 빠진 제목도 나라를 보고 한글로 옮긴다', () => {
+  const event = normalizeMarketCalendarEvent({
+    id: 'bok-2026-10',
+    title: 'Interest Rate Decision',
+    country: 'KR',
+    date: '2026-10-22T01:00:00.000Z',
+    importance: 1,
+  }, []);
+
+  assert.equal(event.title, '한국은행 기준금리 결정');
+  assert.equal(event.originalTitle, 'Interest Rate Decision');
+  assert.equal(event.date, '2026-10-22');
+  assert.equal(event.timeLabel, '10:00');
+});
