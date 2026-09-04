@@ -20,6 +20,14 @@ const KOREAN_KEYWORD_ALIASES = {
   금통위: ['bank of korea', 'bok', '금융통화위원회'],
   유럽중앙은행: ['european central bank', 'ecb'],
   일본은행: ['bank of japan', 'boj'],
+  /* 나라 이름으로 찾는 사람도 많다. 나라 코드로 넓혀 해당 시장 일정을 모두 건다. */
+  미국: ['us'],
+  한국: ['kr'],
+  유럽: ['eu'],
+  유로존: ['eu'],
+  유럽연합: ['eu'],
+  중국: ['cn'],
+  일본: ['jp'],
 };
 
 const COUNTRY_LABELS = {
@@ -28,6 +36,19 @@ const COUNTRY_LABELS = {
   EU: '유로존',
   CN: '중국',
   JP: '일본',
+};
+
+/** 나라 선택 상자에 쓰는 목록. 워커가 받아오는 시장과 같은 순서로 둔다. */
+export const MARKET_CALENDAR_COUNTRIES = Object.entries(COUNTRY_LABELS)
+  .map(([code, label]) => ({ code, label }));
+
+/* 나라 코드 대신 영문 이름으로 찾는 경우까지 받아 준다. */
+const COUNTRY_NAME_TERMS = {
+  US: ['usa', 'united states', 'america'],
+  KR: ['korea', 'south korea'],
+  EU: ['euro area', 'eurozone', 'european union'],
+  CN: ['china'],
+  JP: ['japan'],
 };
 
 const TITLE_TRANSLATIONS = [
@@ -149,11 +170,37 @@ export const getMarketCountryLabel = (country = '') => (
   COUNTRY_LABELS[String(country || '').toUpperCase()] || String(country || '').toUpperCase() || '글로벌'
 );
 
+/*
+ * "EU"나 "유럽"으로 찾으면 유로존 일정이 나와야 하는데 나라 코드는 본문 어디에도
+ * 없다. 그래서 검색어를 나라와도 맞춰 본다.
+ */
+const buildCountryTerms = (country = '') => {
+  const code = String(country || '').toUpperCase();
+  return new Set([
+    code.toLocaleLowerCase('ko-KR'),
+    getMarketCountryLabel(code).toLocaleLowerCase('ko-KR'),
+    ...(COUNTRY_NAME_TERMS[code] || []),
+  ].filter(Boolean));
+};
+
+/*
+ * us·eu 같은 두 글자 코드는 housing, euro처럼 흔한 단어에 그대로 들어 있다.
+ * 본문 부분일치로 쓰면 온갖 일정이 걸리므로 나라 비교로만 쓴다.
+ */
+const COUNTRY_ONLY_TERM_PATTERN = /^[a-z]{1,2}$/;
+
+const isMarketTermMatch = (term, searchable, countryTerms) => {
+  if (countryTerms.has(term)) return true;
+  if (COUNTRY_ONLY_TERM_PATTERN.test(term)) return false;
+  return searchable.includes(term);
+};
+
 export const normalizeMarketCalendarEvent = (event = {}, keywordRows = []) => {
   const timestamp = new Date(event.date);
   if (Number.isNaN(timestamp.getTime())) return null;
 
   const terms = buildMarketCalendarSearchTerms(keywordRows);
+  const countryTerms = buildCountryTerms(event.country);
   const searchable = [
     event.title,
     event.indicator,
@@ -162,10 +209,10 @@ export const normalizeMarketCalendarEvent = (event = {}, keywordRows = []) => {
     event.source,
   ].map(normalizeText).join(' ').toLocaleLowerCase('ko-KR');
   const matchedKeywords = normalizeMarketCalendarKeywords(keywordRows)
-    .filter(({ keyword }) => {
-      const ownTerms = buildMarketCalendarSearchTerms([{ keyword }]);
-      return ownTerms.some((term) => searchable.includes(term));
-    })
+    .filter(({ keyword }) => (
+      buildMarketCalendarSearchTerms([{ keyword }])
+        .some((term) => isMarketTermMatch(term, searchable, countryTerms))
+    ))
     .map(({ keyword }) => keyword);
 
   return {
@@ -188,7 +235,8 @@ export const normalizeMarketCalendarEvent = (event = {}, keywordRows = []) => {
     sourceUrl: /^https?:\/\//i.test(String(event.sourceUrl || '')) ? event.sourceUrl : '',
     comment: normalizeText(event.comment),
     matchedKeywords,
-    isKeywordMatch: matchedKeywords.length > 0 || terms.some((term) => searchable.includes(term)),
+    isKeywordMatch: matchedKeywords.length > 0
+      || terms.some((term) => isMarketTermMatch(term, searchable, countryTerms)),
   };
 };
 
@@ -202,6 +250,14 @@ export const normalizeMarketCalendarEvents = (events = [], keywordRows = []) => 
       || left.title.localeCompare(right.title)
     ))
 );
+
+/** 나라를 고르지 않았으면 달력을 비워 둔다. 고르면 그 나라 일정만 남긴다. */
+export const filterMarketCalendarEventsByCountry = (events = [], country = '') => {
+  const code = String(country || '').toUpperCase();
+  if (!code) return [];
+  return (Array.isArray(events) ? events : [])
+    .filter((event) => String(event?.country || '').toUpperCase() === code);
+};
 
 export const groupMarketCalendarEventsByDate = (events = []) => (
   events.reduce((grouped, event) => {

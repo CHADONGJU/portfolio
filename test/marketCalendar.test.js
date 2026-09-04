@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  MARKET_CALENDAR_COUNTRIES,
   buildMarketCalendarSearchTerms,
+  filterMarketCalendarEventsByCountry,
   createMarketCalendarKeyword,
   groupMarketCalendarEventsByDate,
   normalizeMarketCalendarEvent,
@@ -68,4 +70,52 @@ test('중앙은행 이름이 빠진 제목도 나라를 보고 한글로 옮긴�
   assert.equal(event.originalTitle, 'Interest Rate Decision');
   assert.equal(event.date, '2026-10-22');
   assert.equal(event.timeLabel, '10:00');
+});
+
+test('나라 코드와 나라 이름으로도 해당 시장 일정을 찾는다', () => {
+  const ecbEvent = {
+    id: 'ecb-2026-09',
+    title: 'ECB Interest Rate Decision',
+    country: 'EU',
+    date: '2026-09-10T12:15:00.000Z',
+    importance: 1,
+  };
+
+  assert.equal(normalizeMarketCalendarEvent(ecbEvent, [{ id: 'k1', keyword: 'EU' }]).isKeywordMatch, true);
+  assert.deepEqual(
+    normalizeMarketCalendarEvent(ecbEvent, [{ id: 'k2', keyword: '유럽' }]).matchedKeywords,
+    ['유럽'],
+  );
+  assert.deepEqual(
+    normalizeMarketCalendarEvent(ecbEvent, [{ id: 'k3', keyword: '유로존' }]).matchedKeywords,
+    ['유로존'],
+  );
+});
+
+test('두 글자 나라 코드는 본문 부분일치로 다른 나라 일정을 끌어오지 않는다', () => {
+  const usHousing = normalizeMarketCalendarEvent({
+    id: 'us-housing',
+    title: 'Housing Starts',
+    country: 'US',
+    date: '2026-09-17T12:30:00.000Z',
+    importance: 1,
+  }, [{ id: 'k1', keyword: 'EU' }]);
+
+  assert.equal(usHousing.isKeywordMatch, false);
+  assert.deepEqual(usHousing.matchedKeywords, []);
+});
+
+test('나라를 고르기 전에는 달력을 비우고, 고르면 그 나라 일정만 남긴다', () => {
+  const events = [
+    { id: 'us', country: 'US' },
+    { id: 'eu', country: 'EU' },
+    { id: 'kr', country: 'KR' },
+  ];
+
+  assert.deepEqual(filterMarketCalendarEventsByCountry(events, ''), []);
+  assert.deepEqual(
+    filterMarketCalendarEventsByCountry(events, 'eu').map(({ id }) => id),
+    ['eu'],
+  );
+  assert.deepEqual(MARKET_CALENDAR_COUNTRIES.map(({ code }) => code), ['US', 'KR', 'EU', 'CN', 'JP']);
 });

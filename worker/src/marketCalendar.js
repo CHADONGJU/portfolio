@@ -43,6 +43,12 @@ export const getCalendarRequest = (requestUrl) => {
   };
 };
 
+/*
+ * us·eu 같은 두 글자 코드는 housing, euro처럼 흔한 단어 안에 그대로 들어 있다.
+ * 본문 부분일치로 쓰면 아무 일정이나 걸리므로 나라 코드 비교로만 쓴다.
+ */
+const COUNTRY_ONLY_KEYWORD_PATTERN = /^[a-z]{1,2}$/;
+
 const isKeywordMatch = (event, keywords) => {
   if (keywords.length === 0) return false;
   const searchable = [
@@ -52,7 +58,11 @@ const isKeywordMatch = (event, keywords) => {
     event?.comment,
     event?.source,
   ].map(normalizeSearchText).join(' ');
-  return keywords.some((keyword) => searchable.includes(keyword));
+  const country = normalizeSearchText(event?.country);
+  return keywords.some((keyword) => (
+    keyword === country
+    || (!COUNTRY_ONLY_KEYWORD_PATTERN.test(keyword) && searchable.includes(keyword))
+  ));
 };
 
 const cleanText = (value, maxLength = 200) => String(value || '').trim().slice(0, maxLength);

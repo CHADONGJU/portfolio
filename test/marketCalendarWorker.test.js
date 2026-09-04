@@ -72,3 +72,16 @@ test('한국 기준금리 결정은 제공처 중요도가 낮아도 기본 달�
   assert.deepEqual(calendarEvents.map(({ id }) => id), ['bok']);
   assert.equal(calendarEvents[0].importance, 1);
 });
+
+test('나라 코드 키워드는 그 나라 일정만 걸고 본문 부분일치로는 새지 않는다', () => {
+  const rawEvents = [
+    { id: 'ecb', title: 'ECB Interest Rate Decision', country: 'EU', importance: 1, date: '2026-09-10T12:15:00Z' },
+    { id: 'us-housing', title: 'Housing Starts', country: 'US', importance: 0, date: '2026-09-17T12:30:00Z' },
+  ];
+
+  const keywordEvents = filterMarketCalendarEvents(rawEvents, {
+    keywords: ['eu'],
+    keywordsOnly: true,
+  });
+  assert.deepEqual(keywordEvents.map(({ id }) => id), ['ecb']);
+});

@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, Plus, RotateCw, X } from 'lucide-react';
 import { fetchMarketCalendar } from '../services/marketCalendar';
 import {
+  MARKET_CALENDAR_COUNTRIES,
   buildMarketCalendarSearchTerms,
+  filterMarketCalendarEventsByCountry,
+  getMarketCountryLabel,
   groupMarketCalendarEventsByDate,
   normalizeMarketCalendarEvents,
 } from '../utils/marketCalendar';
@@ -69,6 +72,7 @@ const MarketCalendar = ({
   onRemoveKeyword,
 }) => {
   const [keywordInput, setKeywordInput] = useState('');
+  const [country, setCountry] = useState('');
   const [monthEvents, setMonthEvents] = useState([]);
   const [futureKeywordEvents, setFutureKeywordEvents] = useState([]);
   const [selectedEvent, setSelectedEvent] = useState(null);
@@ -97,13 +101,9 @@ const MarketCalendar = ({
         keywords,
       );
       setMonthEvents(normalized);
-      setSelectedEvent((previous) => (
-        normalized.find((event) => event.id === previous?.id) || normalized[0] || null
-      ));
     }).catch((error) => {
       if (controller.signal.aborted) return;
       setMonthEvents([]);
-      setSelectedEvent(null);
       setErrorMessage(error?.message || '주요 증시 일정을 가져오지 못했습니다.');
     }).finally(() => {
       if (!controller.signal.aborted) setIsLoading(false);
@@ -148,15 +148,39 @@ const MarketCalendar = ({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchKey, reloadToken]);
 
-  const eventsByDate = useMemo(() => groupMarketCalendarEventsByDate(monthEvents), [monthEvents]);
+  const visibleMonthEvents = useMemo(
+    () => filterMarketCalendarEventsByCountry(monthEvents, country),
+    [monthEvents, country],
+  );
+  /* 키워드 목록은 나라를 고르기 전까지 그대로 두고, 고른 뒤에만 그 나라로 좁힌다. */
+  const visibleFutureEvents = useMemo(() => (
+    country ? filterMarketCalendarEventsByCountry(futureKeywordEvents, country) : futureKeywordEvents
+  ), [futureKeywordEvents, country]);
+
+  const eventsByDate = useMemo(
+    () => groupMarketCalendarEventsByDate(visibleMonthEvents),
+    [visibleMonthEvents],
+  );
   const expandedEvents = expandedDate ? (eventsByDate[expandedDate] || []) : [];
-  const countryCount = new Set(monthEvents.map((event) => event.country)).size;
-  const importantEventCount = monthEvents.filter((event) => event.importance >= 1).length;
-  const keywordMatchCount = monthEvents.filter((event) => event.isKeywordMatch).length;
+  const importantEventCount = visibleMonthEvents.filter((event) => event.importance >= 1).length;
+  const keywordMatchCount = visibleMonthEvents.filter((event) => event.isKeywordMatch).length;
 
   useEffect(() => {
     if (expandedDate && !eventsByDate[expandedDate]) setExpandedDate('');
   }, [eventsByDate, expandedDate]);
+
+  /*
+   * 다른 달의 일정을 눌러 온 직후에는 그 달 데이터가 아직 도착하지 않았다.
+   * 이때 선택을 덮어쓰면 눌렀던 일정이 사라지므로 도착할 때까지 그대로 둔다.
+   */
+  useEffect(() => {
+    setSelectedEvent((previous) => {
+      if (previous && previous.date.slice(0, 7) !== month) return previous;
+      return visibleMonthEvents.find((event) => event.id === previous?.id)
+        || visibleMonthEvents[0]
+        || null;
+    });
+  }, [visibleMonthEvents, month]);
 
   const handleKeywordSubmit = (event) => {
     event.preventDefault();
@@ -168,8 +192,14 @@ const MarketCalendar = ({
 
   const selectFutureEvent = (event) => {
     setSelectedEvent(event);
+    setCountry(event.country);
     onMonthChange(event.date.slice(0, 7));
   };
+
+  const selectedCountryLabel = country ? getMarketCountryLabel(country) : '';
+  const emptyDetailMessage = country
+    ? '이번 달에 표시할 주요 일정이 없습니다.'
+    : '나라를 고르면 그 나라의 주요 증시 일정이 달력에 표시됩니다.';
 
   return (
     <>
@@ -180,27 +210,45 @@ const MarketCalendar = ({
               {month.replace('-', '년 ')}월 주요 증시 일정
             </p>
             <p className="text-[11px] md:text-[12px] font-semibold text-ink-mute mt-1">
-              중요도 높음 {importantEventCount}건 · 관심 키워드 {keywordMatchCount}건 · {countryCount || 0}개 시장
+              {country
+                ? `${selectedCountryLabel} · 중요도 높음 ${importantEventCount}건 · 관심 키워드 ${keywordMatchCount}건`
+                : '나라를 고르면 그 나라 일정만 달력에 표시합니다.'}
             </p>
           </div>
-          <form onSubmit={handleKeywordSubmit} className="flex w-full xl:w-auto gap-2">
-            <label htmlFor="market-calendar-keyword" className="sr-only">관심 일정 키워드</label>
-            <input
-              id="market-calendar-keyword"
-              value={keywordInput}
-              onChange={(event) => setKeywordInput(event.target.value)}
-              maxLength={40}
-              placeholder="예: FOMC, 금리, 물가, 연준의장"
-              className="min-w-0 flex-1 xl:w-64 rounded-xl border border-line bg-surface px-3 py-2 text-xs md:text-sm font-semibold text-ink placeholder:text-ink-mute"
-            />
-            <button
-              type="submit"
-              disabled={!keywordInput.trim() || keywords.length >= 20}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-ink px-3.5 py-2 text-xs md:text-sm font-bold text-surface disabled:opacity-40"
-            >
-              <Plus size={15} /> 키워드 추가
-            </button>
-          </form>
+          <div className="flex w-full xl:w-auto flex-col sm:flex-row gap-2">
+            <div className="shrink-0">
+              <label htmlFor="market-calendar-country" className="sr-only">일정을 볼 나라</label>
+              <select
+                id="market-calendar-country"
+                value={country}
+                onChange={(event) => setCountry(event.target.value)}
+                className="w-full sm:w-32 rounded-xl border border-line bg-surface px-3 py-2 text-xs md:text-sm font-bold text-ink"
+              >
+                <option value="">나라 선택</option>
+                {MARKET_CALENDAR_COUNTRIES.map(({ code, label }) => (
+                  <option key={code} value={code}>{label}</option>
+                ))}
+              </select>
+            </div>
+            <form onSubmit={handleKeywordSubmit} className="flex min-w-0 flex-1 gap-2">
+              <label htmlFor="market-calendar-keyword" className="sr-only">관심 일정 키워드</label>
+              <input
+                id="market-calendar-keyword"
+                value={keywordInput}
+                onChange={(event) => setKeywordInput(event.target.value)}
+                maxLength={40}
+                placeholder="예: FOMC, 금리, 물가, 연준의장"
+                className="min-w-0 flex-1 xl:w-64 rounded-xl border border-line bg-surface px-3 py-2 text-xs md:text-sm font-semibold text-ink placeholder:text-ink-mute"
+              />
+              <button
+                type="submit"
+                disabled={!keywordInput.trim() || keywords.length >= 20}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-ink px-3.5 py-2 text-xs md:text-sm font-bold text-surface disabled:opacity-40"
+              >
+                <Plus size={15} /> 키워드 추가
+              </button>
+            </form>
+          </div>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -227,9 +275,11 @@ const MarketCalendar = ({
           <div className="mt-4 rounded-2xl border border-line bg-surface p-4">
             <div className="flex items-center justify-between gap-3 mb-3">
               <div>
-                <p className="text-[11px] font-bold text-ink-mute">향후 1년 관심 키워드 일정</p>
+                <p className="text-[11px] font-bold text-ink-mute">
+                  향후 1년 관심 키워드 일정{country ? ` · ${selectedCountryLabel}` : ''}
+                </p>
                 <p className="text-xs md:text-sm font-bold text-ink mt-0.5">
-                  {isFutureLoading ? '관련 일정을 찾는 중…' : `${futureKeywordEvents.length.toLocaleString()}건 발견`}
+                  {isFutureLoading ? '관련 일정을 찾는 중…' : `${visibleFutureEvents.length.toLocaleString()}건 발견`}
                 </p>
               </div>
               {futureErrorMessage && (
@@ -240,15 +290,17 @@ const MarketCalendar = ({
             </div>
             {futureErrorMessage ? (
               <p className="text-xs font-semibold text-danger">{futureErrorMessage}</p>
-            ) : !isFutureLoading && futureKeywordEvents.length === 0 ? (
+            ) : !isFutureLoading && visibleFutureEvents.length === 0 ? (
               <p className="text-xs font-semibold text-ink-mute">
-                일정 제공처가 대략 한 달 앞까지만 데이터를 공개합니다. 그보다 먼 구간은
-                FOMC처럼 기관이 날짜를 미리 확정 공표한 일정만 표시되고, 나머지는 공개되는
-                대로 이 달력을 열 때 자동으로 반영됩니다.
+                {futureKeywordEvents.length > 0
+                  ? `${selectedCountryLabel} 일정 중에는 관심 키워드와 맞는 것이 없습니다. 나라 선택을 바꾸면 다른 시장 일정을 볼 수 있습니다.`
+                  : `일정 제공처가 대략 한 달 앞까지만 데이터를 공개합니다. 그보다 먼 구간은
+                    FOMC처럼 기관이 날짜를 미리 확정 공표한 일정만 표시되고, 나머지는 공개되는
+                    대로 이 달력을 열 때 자동으로 반영됩니다.`}
               </p>
             ) : (
               <div className="flex gap-2 overflow-x-auto scroll-soft pb-1">
-                {futureKeywordEvents.slice(0, 12).map((event) => (
+                {visibleFutureEvents.slice(0, 12).map((event) => (
                   <button
                     key={event.id}
                     type="button"
@@ -292,7 +344,7 @@ const MarketCalendar = ({
             </div>
           </div>
         ) : (
-          <div className={`grid grid-cols-7 gap-1.5 md:gap-2 ${isLoading ? 'opacity-50' : ''}`} aria-busy={isLoading}>
+          <div className={`grid grid-cols-7 gap-1.5 md:gap-2 ${isLoading && country ? 'opacity-50' : ''}`} aria-busy={isLoading && Boolean(country)}>
             {calendarCells.map((cell) => {
               const events = eventsByDate[cell.dateKey] || [];
               return (
@@ -395,7 +447,7 @@ const MarketCalendar = ({
             </div>
           ) : (
             <p className="text-center text-xs md:text-sm font-bold text-ink-mute">
-              {isLoading ? '주요 증시 일정을 불러오는 중입니다.' : '이번 달에 표시할 주요 일정이 없습니다.'}
+              {isLoading && country ? '주요 증시 일정을 불러오는 중입니다.' : emptyDetailMessage}
             </p>
           )}
         </div>
