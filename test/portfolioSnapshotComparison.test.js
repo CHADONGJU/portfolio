@@ -39,6 +39,13 @@ test('입출금과 일별 평가 기록도 클라우드 변경으로 감지한�
   ), false);
 });
 
+test('주요 증시 일정 관심 키워드 변경도 클라우드 변경으로 감지한다', () => {
+  assert.equal(arePortfolioSnapshotsEquivalent(
+    { marketCalendarKeywords: [] },
+    { marketCalendarKeywords: [{ id: 'jackson-hole', keyword: '잭슨홀' }] },
+  ), false);
+});
+
 test('루트 필드 비교는 객체 키 순서 차이를 무시한다', () => {
   assert.equal(arePortfolioRootFieldsEquivalent(
     { portfolioName: 'A', targetPortfolio: { budget: 10, categories: [] } },

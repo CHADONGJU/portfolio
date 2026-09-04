@@ -15,6 +15,7 @@ import AnnualDividendTrend from './components/AnnualDividendTrend';
 import DividendSummaryGrid from './components/DividendSummaryGrid';
 import FeatureInfo from './components/FeatureInfo';
 import ManualTradeEntryForm from './components/ManualTradeEntryForm';
+import MarketCalendar from './components/MarketCalendar';
 import StockFilterCombobox from './components/StockFilterCombobox';
 import StockInsightPanel from './components/StockInsightPanel';
 import SyncStatusToast from './components/SyncStatusToast';
@@ -32,6 +33,7 @@ import {
   getCategoryColor,
   LEGACY_PORTFOLIO_NAMES,
   getCategoryDetailColor,
+  MARKET_CALENDAR_KEYWORDS_STORAGE_KEY,
   MEMOS_STORAGE_KEY,
   PORTFOLIO_NAME_STORAGE_KEY,
   PORTFOLIO_SNAPSHOTS_STORAGE_KEY,
@@ -98,7 +100,10 @@ import {
   resolveKnownFeeAmount,
   roundTradeCost,
 } from './utils/tradeCosts';
-import { summarizeDividendCalendarEvents } from './utils/dividendCalendar';
+import {
+  getDividendCalendarForecastQuantity,
+  summarizeDividendCalendarEvents,
+} from './utils/dividendCalendar';
 import {
   buildAnnualDividendEvents,
   summarizeAnnualDividendTrend,
@@ -117,6 +122,10 @@ import {
 } from './utils/memoRecords';
 import { getDividendRefreshState, getDividendRefreshVersion } from './utils/dividendRefresh';
 import { isRecordForAsset } from './utils/assetIdentity';
+import {
+  createMarketCalendarKeyword,
+  normalizeMarketCalendarKeywords,
+} from './utils/marketCalendar';
 import {
   calculateDividendAmounts,
   isKoreanDividendSmallWithholdingApplicable,
@@ -196,6 +205,7 @@ const PORTFOLIO_STORAGE_KEYS = [
   TARGET_PORTFOLIO_STORAGE_KEY,
   CAPITAL_FLOWS_STORAGE_KEY,
   PORTFOLIO_SNAPSHOTS_STORAGE_KEY,
+  MARKET_CALENDAR_KEYWORDS_STORAGE_KEY,
 ];
 
 // 로그인하지 않은 상태에서 쓰는 저장 영역. 계정 영역과 절대 섞이면 안 된다.
@@ -685,6 +695,7 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
     dividendAssetRegistry: mergeDividendAssetRegistry(Array.isArray(snapshot.dividendAssetRegistry) ? snapshot.dividendAssetRegistry : [], [], assets),
     capitalFlows: mergeUniqueRecords(Array.isArray(snapshot.capitalFlows) ? snapshot.capitalFlows : []),
     portfolioSnapshots: mergeUniqueRecords(Array.isArray(snapshot.portfolioSnapshots) ? snapshot.portfolioSnapshots : []),
+    marketCalendarKeywords: normalizeMarketCalendarKeywords(snapshot.marketCalendarKeywords),
     targetPortfolio: pruneTargetPortfolio(snapshot.targetPortfolio),
     portfolioName: normalizePortfolioName(snapshot.portfolioName),
   };
@@ -1082,6 +1093,7 @@ const emptyPortfolioSnapshot = () => ({
   dividendAssetRegistry: [],
   capitalFlows: [],
   portfolioSnapshots: [],
+  marketCalendarKeywords: [],
   targetPortfolio: DEFAULT_TARGET_PORTFOLIO,
 });
 
@@ -1128,6 +1140,7 @@ const readStoredPortfolio = (scope) => {
     dividendAssetRegistry: read(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY, []),
     capitalFlows: read(CAPITAL_FLOWS_STORAGE_KEY, []),
     portfolioSnapshots: read(PORTFOLIO_SNAPSHOTS_STORAGE_KEY, []),
+    marketCalendarKeywords: normalizeMarketCalendarKeywords(read(MARKET_CALENDAR_KEYWORDS_STORAGE_KEY, [])),
     targetPortfolio: read(TARGET_PORTFOLIO_STORAGE_KEY, DEFAULT_TARGET_PORTFOLIO),
   };
 };
@@ -1207,6 +1220,7 @@ const App = () => {
   const [selectedDividendAsset, setSelectedDividendAsset] = useState(null);
   const [dividendFilter, setDividendFilter] = useState('전체');
   const [calendarMonth, setCalendarMonth] = useState(() => getMonthKey(new Date()));
+  const [calendarView, setCalendarView] = useState('dividend');
   const [annualDividendYear, setAnnualDividendYear] = useState(() => new Date().getFullYear());
   const [annualDividendFxRates, setAnnualDividendFxRates] = useState(() => (
     loadJson(ANNUAL_DIVIDEND_FX_RATES_STORAGE_KEY, {})
@@ -1460,6 +1474,9 @@ const buyLotDraftSummary = useMemo(() => {
   const [capitalFlows, setCapitalFlows] = useState(() => loadJson(scopedKey(CAPITAL_FLOWS_STORAGE_KEY), []));
   const [portfolioSnapshots, setPortfolioSnapshots] = useState(() => loadJson(scopedKey(PORTFOLIO_SNAPSHOTS_STORAGE_KEY), []));
   const [dividendAssetRegistry, setDividendAssetRegistry] = useState(() => loadJson(scopedKey(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY), []));
+  const [marketCalendarKeywords, setMarketCalendarKeywords] = useState(() => (
+    normalizeMarketCalendarKeywords(loadJson(scopedKey(MARKET_CALENDAR_KEYWORDS_STORAGE_KEY), []))
+  ));
   // 매수·매도 모달이 공유하는 기본 증권사. 매번 고르지 않아도 되게 기억해 둔다.
   const [preferredBrokerId, setPreferredBrokerId] = useState(() => (
     getBrokerPreset(loadJson(scopedKey(PREFERRED_BROKER_STORAGE_KEY), DEFAULT_BROKER_ID)).id
@@ -1484,8 +1501,9 @@ const buyLotDraftSummary = useMemo(() => {
     dividendAssetRegistry,
     capitalFlows,
     portfolioSnapshots,
+    marketCalendarKeywords,
     targetPortfolio,
-  }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, confirmedDividends, dividendAssetRegistry, capitalFlows, portfolioSnapshots, targetPortfolio]);
+  }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, confirmedDividends, dividendAssetRegistry, capitalFlows, portfolioSnapshots, marketCalendarKeywords, targetPortfolio]);
   const portfolioSnapshotRef = useRef(portfolioSnapshot);
   const cloudSnapshotRef = useRef(null);
   const cloudRevisionRef = useRef('');
@@ -1505,6 +1523,7 @@ const buyLotDraftSummary = useMemo(() => {
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY), dividendAssetRegistry);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(CAPITAL_FLOWS_STORAGE_KEY), capitalFlows);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(PORTFOLIO_SNAPSHOTS_STORAGE_KEY), portfolioSnapshots);
+  usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(MARKET_CALENDAR_KEYWORDS_STORAGE_KEY), marketCalendarKeywords);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(PORTFOLIO_NAME_STORAGE_KEY), portfolioName);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(TARGET_PORTFOLIO_STORAGE_KEY), targetPortfolio);
   usePersistedPortfolioSlice(isStorageScopeReady, scopedKey(PREFERRED_BROKER_STORAGE_KEY), preferredBrokerId);
@@ -1521,6 +1540,7 @@ const buyLotDraftSummary = useMemo(() => {
     setDividendAssetRegistry([]);
     setCapitalFlows([]);
     setPortfolioSnapshots([]);
+    setMarketCalendarKeywords([]);
     setPortfolioName(DEFAULT_PORTFOLIO_NAME);
     setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
     // 이전 계정의 가입일이 남아 있으면 로그아웃/계정 전환 뒤에도 그 날짜를
@@ -1538,6 +1558,7 @@ const buyLotDraftSummary = useMemo(() => {
     setDividendAssetRegistry(stored.dividendAssetRegistry);
     setCapitalFlows(stored.capitalFlows);
     setPortfolioSnapshots(stored.portfolioSnapshots);
+    setMarketCalendarKeywords(stored.marketCalendarKeywords);
     setPortfolioName(stored.portfolioName);
     setTargetPortfolio(stored.targetPortfolio);
   };
@@ -1726,6 +1747,7 @@ const buyLotDraftSummary = useMemo(() => {
           setDividendAssetRegistry(protectedData.dividendAssetRegistry);
           setCapitalFlows(protectedData.capitalFlows);
           setPortfolioSnapshots(protectedData.portfolioSnapshots);
+          setMarketCalendarKeywords(protectedData.marketCalendarKeywords);
           setPortfolioName(protectedData.portfolioName);
           setTargetPortfolio(protectedData.targetPortfolio);
           addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
@@ -1740,7 +1762,8 @@ const buyLotDraftSummary = useMemo(() => {
             || (localSnapshot.memos?.length || 0) > 0
             || (localSnapshot.tradeLedger?.length || 0) > 0
             || (localSnapshot.capitalFlows?.length || 0) > 0
-            || (localSnapshot.portfolioSnapshots?.length || 0) > 0;
+            || (localSnapshot.portfolioSnapshots?.length || 0) > 0
+            || (localSnapshot.marketCalendarKeywords?.length || 0) > 0;
 
           await migratePortfolioState(db, userId, localSnapshot, userEmail);
           if (cancelled) return;
@@ -1852,6 +1875,7 @@ const buyLotDraftSummary = useMemo(() => {
         setDividendAssetRegistry(protectedData.dividendAssetRegistry);
         setCapitalFlows(protectedData.capitalFlows);
         setPortfolioSnapshots(protectedData.portfolioSnapshots);
+        setMarketCalendarKeywords(protectedData.marketCalendarKeywords);
         setPortfolioName(protectedData.portfolioName);
         setTargetPortfolio(protectedData.targetPortfolio);
         addLog('다른 기기에서 변경된 포트폴리오를 반영했습니다.', 'success');
@@ -2622,6 +2646,9 @@ const buyLotDraftSummary = useMemo(() => {
           };
         }).filter(Boolean);
 
+        const forecastQuantity = getDividendCalendarForecastQuantity(summary, asset);
+        if (forecastQuantity <= 0) return paymentEvents;
+
         const nextDate = getNextEstimatedExDividendDate(history, today);
         if (!nextDate) return paymentEvents;
 
@@ -2631,7 +2658,7 @@ const buyLotDraftSummary = useMemo(() => {
         const eligibilityDate = getDividendEligibilityDate({ exDate, currency }) || exDate;
         if (!eligibilityDate.startsWith(monthPrefix)) return paymentEvents;
 
-        const quantity = parseNumber(asset?.quantity || latestDividend.quantity);
+        const quantity = forecastQuantity;
         const perShareGrossAmount = Number(latestDividend.perShareGrossAmount) || 0;
         const perShareNetAmount = Number(latestDividend.perShareNetAmount)
           || (Number(latestDividend.quantity) > 0 ? Number(latestDividend.amount) / Number(latestDividend.quantity) : 0);
@@ -2687,6 +2714,19 @@ const buyLotDraftSummary = useMemo(() => {
       setExpandedCalendarDate('');
     }
   }, [dividendCalendarEventsByDate, expandedCalendarDate]);
+  const addMarketCalendarKeyword = useCallback((value) => {
+    const nextKeyword = createMarketCalendarKeyword(value);
+    if (!nextKeyword) return;
+    setMarketCalendarKeywords((previous) => normalizeMarketCalendarKeywords([
+      ...previous,
+      nextKeyword,
+    ]));
+  }, []);
+  const removeMarketCalendarKeyword = useCallback((keywordId) => {
+    setMarketCalendarKeywords((previous) => (
+      previous.filter((entry) => entry.id !== keywordId)
+    ));
+  }, []);
   const targetBudgetKRW = parseNumber(targetPortfolio.budget) || totalConvertedKRW;
   const targetCategoryTotalPercent = targetPortfolio.categories.reduce((sum, category) => sum + (Number(category.percent) || 0), 0);
   const targetPortfolioGuide = useMemo(() => {
@@ -6203,11 +6243,31 @@ const buyLotDraftSummary = useMemo(() => {
           <div className="bg-surface rounded-[20px] overflow-hidden">
             <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div className="flex items-center gap-2">
-                <h3 className="text-base md:text-lg font-bold text-ink flex items-center gap-2">
-                  <CalendarDays size={18} className="text-ink-soft" />
-                  배당 캘린더
-                </h3>
-                <FeatureInfo text="공시 지급일은 한국시간 기준이며, 향후 배당락일은 최근 주기로 추정합니다." />
+                <CalendarDays size={18} className="shrink-0 text-ink-soft" />
+                <h3 className="sr-only">투자 캘린더</h3>
+                <div className="seg flex items-center gap-0.5 p-1 rounded-[14px]" role="tablist" aria-label="캘린더 종류">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={calendarView === 'dividend'}
+                    data-active={calendarView === 'dividend'}
+                    onClick={() => setCalendarView('dividend')}
+                    className="seg-item rounded-[10px] px-3 py-2 text-xs md:text-sm font-bold whitespace-nowrap text-ink-mute hover:text-ink"
+                  >
+                    배당 캘린더
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={calendarView === 'market'}
+                    data-active={calendarView === 'market'}
+                    onClick={() => setCalendarView('market')}
+                    className="seg-item rounded-[10px] px-3 py-2 text-xs md:text-sm font-bold whitespace-nowrap text-ink-mute hover:text-ink"
+                  >
+                    주요 증시 일정
+                  </button>
+                </div>
+                <FeatureInfo text={calendarView === 'dividend' ? '공시 지급일은 한국시간 기준이며, 향후 배당락일은 최근 주기로 추정합니다.' : '미국·한국·유로존·중국·일본의 중요 일정과 관심 키워드 일정을 한국시간으로 표시합니다.'} />
               </div>
               <div className="seg flex items-center gap-0.5 p-1 rounded-[14px]">
                 <button
@@ -6230,6 +6290,8 @@ const buyLotDraftSummary = useMemo(() => {
               </div>
             </div>
 
+            {calendarView === 'dividend' ? (
+            <>
             <div className="px-5 py-4 md:px-7 md:py-5 border-b border-line bg-canvas/60 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
                 <p className="text-[12px] md:text-xs font-bold text-ink-mute">
@@ -6377,14 +6439,27 @@ const buyLotDraftSummary = useMemo(() => {
                 )}
               </div>
             </div>
+            </>
+            ) : (
+              <MarketCalendar
+                month={calendarMonth}
+                calendarCells={dividendCalendarCells}
+                keywords={marketCalendarKeywords}
+                onMonthChange={setCalendarMonth}
+                onAddKeyword={addMarketCalendarKeyword}
+                onRemoveKeyword={removeMarketCalendarKeyword}
+              />
+            )}
           </div>
-          <AnnualDividendTrend
-            key={annualDividendYear}
-            year={annualDividendYear}
-            trend={annualDividendTrend}
-            isFxLoading={annualDividendFxLookupDates.length > 0}
-            onYearChange={setAnnualDividendYear}
-          />
+          {calendarView === 'dividend' && (
+            <AnnualDividendTrend
+              key={annualDividendYear}
+              year={annualDividendYear}
+              trend={annualDividendTrend}
+              isFxLoading={annualDividendFxLookupDates.length > 0}
+              onYearChange={setAnnualDividendYear}
+            />
+          )}
           </div>
         )}
       </div>

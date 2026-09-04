@@ -8,6 +8,7 @@ export const PORTFOLIO_COLLECTION_FIELDS = [
   'dividendAssetRegistry',
   'capitalFlows',
   'portfolioSnapshots',
+  'marketCalendarKeywords',
 ];
 
 const normalizeValue = (value) => {

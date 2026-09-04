@@ -1,5 +1,6 @@
 import { verifyFirebaseIdToken } from './firebaseAuth.js';
 import { consumeQuota, getSecondsUntilReset, refundQuota } from './quota.js';
+import { fetchMarketCalendarEvents, getCalendarRequest } from './marketCalendar.js';
 import { buildInsightMessages, normalizeAssetContext, stripReasoningPreamble } from './prompt.js';
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
@@ -20,7 +21,7 @@ const corsHeaders = (request, env) => {
   const origin = request.headers.get('Origin') || '';
   const allowed = parseList(env.ALLOWED_ORIGINS, '');
   const headers = {
-    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
@@ -33,6 +34,34 @@ const json = (body, status, request, env) => new Response(JSON.stringify(body), 
   status,
   headers: { 'Content-Type': 'application/json; charset=utf-8', ...corsHeaders(request, env) },
 });
+
+const handleMarketCalendar = async (request, env) => {
+  const requestConfig = getCalendarRequest(request.url);
+  if (!requestConfig) {
+    return json({
+      error: 'bad-request',
+      message: '조회 기간은 올바른 날짜로 최대 1년까지 지정해 주세요.',
+    }, 400, request, env);
+  }
+
+  try {
+    const events = await fetchMarketCalendarEvents(requestConfig);
+    return new Response(JSON.stringify({ events, fetchedAt: new Date().toISOString() }), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'public, max-age=300',
+        ...corsHeaders(request, env),
+      },
+    });
+  } catch (error) {
+    console.log('market-calendar-error', error?.message || error);
+    return json({
+      error: error?.name === 'AbortError' ? 'timeout' : 'upstream-failed',
+      message: '일정 제공처에서 데이터를 가져오지 못했습니다. 잠시 후 다시 시도해 주세요.',
+    }, 502, request, env);
+  }
+};
 
 const handleInsight = async (request, env) => {
   /*
@@ -145,6 +174,12 @@ export default {
     }
     if (pathname === '/health') {
       return json({ ok: true }, 200, request, env);
+    }
+    if (pathname === '/api/market-calendar') {
+      if (request.method !== 'GET') {
+        return json({ error: 'method-not-allowed' }, 405, request, env);
+      }
+      return handleMarketCalendar(request, env);
     }
     if (pathname !== '/api/insight') {
       return json({ error: 'not-found' }, 404, request, env);
