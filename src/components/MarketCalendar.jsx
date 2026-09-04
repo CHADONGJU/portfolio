@@ -6,6 +6,7 @@ import {
   groupMarketCalendarEventsByDate,
   normalizeMarketCalendarEvents,
 } from '../utils/marketCalendar';
+import { mergeKnownMarketEvents } from '../utils/marketScheduleBook';
 
 const formatDateKey = (date) => [
   date.getFullYear(),
@@ -85,13 +86,16 @@ const MarketCalendar = ({
     const controller = new AbortController();
     setIsLoading(true);
     setErrorMessage('');
+    const range = { from: `${month}-01`, to: getNextMonthKey(month) };
     fetchMarketCalendar({
-      from: `${month}-01`,
-      to: getNextMonthKey(month),
+      ...range,
       searchTerms,
       signal: controller.signal,
     }).then((events) => {
-      const normalized = normalizeMarketCalendarEvents(events, keywords);
+      const normalized = normalizeMarketCalendarEvents(
+        mergeKnownMarketEvents(events, range),
+        keywords,
+      );
       setMonthEvents(normalized);
       setSelectedEvent((previous) => (
         normalized.find((event) => event.id === previous?.id) || normalized[0] || null
@@ -127,8 +131,10 @@ const MarketCalendar = ({
       keywordsOnly: true,
       signal: controller.signal,
     }).then((events) => {
-      const normalized = normalizeMarketCalendarEvents(events, keywords)
-        .filter((event) => event.isKeywordMatch);
+      const normalized = normalizeMarketCalendarEvents(
+        mergeKnownMarketEvents(events, range),
+        keywords,
+      ).filter((event) => event.isKeywordMatch);
       setFutureKeywordEvents(dedupeEvents(normalized));
     }).catch((error) => {
       if (controller.signal.aborted) return;
@@ -184,7 +190,7 @@ const MarketCalendar = ({
               value={keywordInput}
               onChange={(event) => setKeywordInput(event.target.value)}
               maxLength={40}
-              placeholder="예: 잭슨홀, 파월, FOMC"
+              placeholder="예: FOMC, 금리, 물가, 연준의장"
               className="min-w-0 flex-1 xl:w-64 rounded-xl border border-line bg-surface px-3 py-2 text-xs md:text-sm font-semibold text-ink placeholder:text-ink-mute"
             />
             <button
@@ -236,7 +242,9 @@ const MarketCalendar = ({
               <p className="text-xs font-semibold text-danger">{futureErrorMessage}</p>
             ) : !isFutureLoading && futureKeywordEvents.length === 0 ? (
               <p className="text-xs font-semibold text-ink-mute">
-                아직 등록된 일정이 없습니다. 이후 일정이 공개되면 이 달력을 열 때 자동으로 반영됩니다.
+                일정 제공처가 대략 한 달 앞까지만 데이터를 공개합니다. 그보다 먼 구간은
+                FOMC처럼 기관이 날짜를 미리 확정 공표한 일정만 표시되고, 나머지는 공개되는
+                대로 이 달력을 열 때 자동으로 반영됩니다.
               </p>
             ) : (
               <div className="flex gap-2 overflow-x-auto scroll-soft pb-1">

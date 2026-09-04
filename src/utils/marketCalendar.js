@@ -3,7 +3,16 @@ const KEYWORD_LIMIT = 20;
 const KOREAN_KEYWORD_ALIASES = {
   잭슨홀: ['jackson hole', 'economic policy symposium'],
   연준: ['federal reserve', 'fed ', 'fomc'],
+  /*
+   * 의장 이름으로 검색하는 사람이 많은데 의장은 바뀐다. 이름 별칭은 그대로 두되
+   * 직책으로 찾으면 누가 앉아 있든 기자회견이 걸리도록 별도 항목을 둔다.
+   */
+  연준의장: ['fed press conference', 'fed chair', 'fomc press conference'],
+  의장: ['fed press conference', 'fed chair'],
+  기자회견: ['press conference'],
   파월: ['powell'],
+  워시: ['warsh'],
+  점도표: ['economic projections', 'interest rate projection', 'dot plot'],
   금리: ['interest rate', 'rate decision', 'monetary policy'],
   물가: ['inflation', 'consumer price', 'producer price', 'cpi', 'pce', 'ppi'],
   고용: ['employment', 'payroll', 'unemployment', 'jobless', 'jolts'],
@@ -23,6 +32,8 @@ const COUNTRY_LABELS = {
 const TITLE_TRANSLATIONS = [
   [/jackson hole|economic policy symposium/i, '잭슨홀 경제정책 심포지엄'],
   [/fomc.*minutes|minutes.*fomc/i, 'FOMC 회의록 공개'],
+  [/(?:fed|fomc).*press conference/i, '연준 기자회견'],
+  [/fomc economic projections|interest rate projection/i, 'FOMC 경제전망(점도표)'],
   [/fed.*interest rate decision|fomc.*rate decision/i, 'FOMC 기준금리 결정'],
   [/bank of korea.*interest rate decision|bok.*rate decision/i, '한국은행 기준금리 결정'],
   [/european central bank.*interest rate decision|ecb.*rate decision/i, 'ECB 기준금리 결정'],
@@ -89,12 +100,21 @@ export const createMarketCalendarKeyword = (value, createdAt = new Date().toISOS
   };
 };
 
+/*
+ * "연준 의장"처럼 띄어 쓰는 사람도 같은 별칭을 타야 한다. 별칭 표는 공백을 뺀
+ * 형태로 한 번 만들어 두고 조회할 때도 공백을 뺀다.
+ */
+const ALIAS_LOOKUP = Object.entries(KOREAN_KEYWORD_ALIASES).reduce((lookup, [key, aliases]) => {
+  lookup[key.replace(/\s+/g, '')] = aliases;
+  return lookup;
+}, {});
+
 export const buildMarketCalendarSearchTerms = (keywordRows = []) => {
   const terms = new Set();
   normalizeMarketCalendarKeywords(keywordRows).forEach(({ keyword }) => {
     const normalized = keyword.toLocaleLowerCase('ko-KR');
     terms.add(normalized);
-    (KOREAN_KEYWORD_ALIASES[normalized] || []).forEach((alias) => terms.add(alias));
+    (ALIAS_LOOKUP[normalized.replace(/\s+/g, '')] || []).forEach((alias) => terms.add(alias));
   });
   return [...terms];
 };

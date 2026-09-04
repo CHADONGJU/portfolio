@@ -47,3 +47,10 @@ test('일정은 한국시간 날짜 기준으로 묶는다', () => {
   assert.deepEqual(grouped['2026-09-11'].map(({ id }) => id), ['one', 'two']);
   assert.deepEqual(grouped['2026-09-16'].map(({ id }) => id), ['three']);
 });
+
+test('띄어 쓴 "연준 의장"도 기자회견 검색어로 확장한다', () => {
+  assert.deepEqual(
+    buildMarketCalendarSearchTerms([{ id: 'k1', keyword: '연준 의장' }]),
+    ['연준 의장', 'fed press conference', 'fed chair', 'fomc press conference'],
+  );
+});
