@@ -17,6 +17,7 @@ const KOREAN_KEYWORD_ALIASES = {
   물가: ['inflation', 'consumer price', 'producer price', 'cpi', 'pce', 'ppi'],
   고용: ['employment', 'payroll', 'unemployment', 'jobless', 'jolts'],
   한국은행: ['bank of korea', 'bok'],
+  금통위: ['bank of korea', 'bok', '금융통화위원회'],
   유럽중앙은행: ['european central bank', 'ecb'],
   일본은행: ['bank of japan', 'boj'],
 };
@@ -33,6 +34,7 @@ const TITLE_TRANSLATIONS = [
   [/jackson hole|economic policy symposium/i, '잭슨홀 경제정책 심포지엄'],
   [/fomc.*minutes|minutes.*fomc/i, 'FOMC 회의록 공개'],
   [/(?:fed|fomc).*press conference/i, '연준 기자회견'],
+  [/(?:ecb|european central bank).*press conference/i, 'ECB 기자회견'],
   [/fomc economic projections|interest rate projection/i, 'FOMC 경제전망(점도표)'],
   [/fed.*interest rate decision|fomc.*rate decision/i, 'FOMC 기준금리 결정'],
   [/bank of korea.*interest rate decision|bok.*rate decision/i, '한국은행 기준금리 결정'],
