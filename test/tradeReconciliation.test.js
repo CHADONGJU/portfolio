@@ -5,6 +5,8 @@ import {
   buildKrwCostBasisByAsset,
   buildPositionFromTradeRows,
   getTradeAssetKey,
+  recoverMissingAssetsFromTradeLedger,
+  reconcileAssetsAfterTradeDeletion,
   reconcileAssetsWithTradeLedger,
 } from '../src/utils/tradeReconciliation.js';
 
@@ -59,6 +61,103 @@ test('매수 기록이 없는 자산은 원장이 건드리지 않는다', () =>
   const reconciled = reconcileAssetsWithTradeLedger(assets, ledger);
   assert.equal(reconciled.length, 1);
   assert.equal(reconciled[0].quantity, 1000000);
+});
+
+test('잘못된 전량 매도 기록을 삭제하면 남은 매수 원장으로 보유 종목을 복구한다', () => {
+  const deletedSell = krw({
+    id: 's1', assetId: 1, category: '국내주식', round: 1,
+    side: 'sell', date: '2026-03-05', quantity: 10, price: 90000,
+  });
+  const remainingLedger = [
+    krw({
+      id: 'b1', assetId: 1, category: '국내주식', round: 1,
+      side: 'buy', date: '2026-01-05', quantity: 10, price: 70000,
+    }),
+  ];
+
+  const [restored] = reconcileAssetsAfterTradeDeletion([], remainingLedger, deletedSell);
+
+  assert.equal(restored.id, 1);
+  assert.equal(restored.ticker, '005930');
+  assert.equal(restored.quantity, 10);
+  assert.equal(restored.averagePrice, 70000);
+  assert.equal(restored.currentPrice, 70000);
+  assert.equal(restored.buyDate, '2026-01-05');
+});
+
+test('부분 매도 기록을 삭제하면 기존 종목 수량과 평단을 원장 기준으로 복구한다', () => {
+  const assets = [{
+    id: 1, name: '삼성전자', ticker: '005930', category: '국내주식', currency: 'KRW',
+    quantity: 4, averagePrice: 70000, originalAveragePrice: 70000, buyDate: '2026-01-05',
+  }];
+  const deletedSell = krw({
+    id: 's1', assetId: 1, category: '국내주식', round: 1,
+    side: 'sell', date: '2026-03-05', quantity: 6, price: 90000,
+  });
+  const remainingLedger = [
+    krw({
+      id: 'b1', assetId: 1, category: '국내주식', round: 1,
+      side: 'buy', date: '2026-01-05', quantity: 10, price: 70000,
+    }),
+  ];
+
+  const [restored] = reconcileAssetsAfterTradeDeletion(assets, remainingLedger, deletedSell);
+
+  assert.equal(restored.quantity, 10);
+  assert.equal(restored.averagePrice, 70000);
+});
+
+test('매도 기록 하나를 지워도 다른 매도로 전량 청산 상태라면 종목을 복구하지 않는다', () => {
+  const deletedSell = krw({
+    id: 's1', assetId: 1, category: '국내주식', round: 1,
+    side: 'sell', date: '2026-02-05', quantity: 4, price: 80000,
+  });
+  const remainingLedger = [
+    krw({
+      id: 'b1', assetId: 1, category: '국내주식', round: 1,
+      side: 'buy', date: '2026-01-05', quantity: 10, price: 70000,
+    }),
+    krw({
+      id: 's2', assetId: 1, category: '국내주식', round: 1,
+      side: 'sell', date: '2026-03-05', quantity: 10, price: 90000,
+    }),
+  ];
+
+  const restored = reconcileAssetsAfterTradeDeletion([], remainingLedger, deletedSell);
+
+  assert.deepEqual(restored, []);
+});
+
+test('이미 삭제가 끝난 뒤에도 남은 매수 원장 19주로 누락 자산을 자동 복구한다', () => {
+  const remainingLedger = [
+    krw({
+      id: 'b1', assetId: 1, category: '국내주식', round: 1,
+      side: 'buy', date: '2026-09-02', quantity: 19, price: 251000,
+    }),
+  ];
+
+  const [restored] = recoverMissingAssetsFromTradeLedger([], remainingLedger);
+
+  assert.equal(restored.name, '삼성전자');
+  assert.equal(restored.ticker, '005930');
+  assert.equal(restored.quantity, 19);
+  assert.equal(restored.averagePrice, 251000);
+  assert.equal(restored.buyDate, '2026-09-02');
+});
+
+test('원장상 전량 매도된 누락 종목은 앱 로드 때 복구하지 않는다', () => {
+  const ledger = [
+    krw({
+      id: 'b1', assetId: 1, category: '국내주식', round: 1,
+      side: 'buy', date: '2026-09-02', quantity: 19, price: 251000,
+    }),
+    krw({
+      id: 's1', assetId: 1, category: '국내주식', round: 1,
+      side: 'sell', date: '2026-09-03', quantity: 19, price: 252000,
+    }),
+  ];
+
+  assert.deepEqual(recoverMissingAssetsFromTradeLedger([], ledger), []);
 });
 
 test('회차가 다르면 자산 키가 달라져 원금이 섞이지 않는다', () => {

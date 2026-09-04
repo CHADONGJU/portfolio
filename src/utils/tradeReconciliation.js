@@ -411,3 +411,121 @@ export const reconcileAssetsWithTradeLedger = (assets = [], tradeLedger = []) =>
 
   return changed ? reconciled : assets;
 };
+
+/**
+ * 잘못 입력한 매도 기록을 지웠을 때 보유 종목을 원장 기준으로 되돌린다.
+ *
+ * 부분 매도였다면 기존 자산을 reconcileAssetsWithTradeLedger가 바로잡을 수 있지만,
+ * 전량 매도였다면 자산 자체가 목록에서 빠져 있어 갱신할 대상이 없다. 그 경우에만
+ * 남아 있는 매수 원장으로 최소 자산 정보를 재구성한다. 현재가는 곧 시세 동기화가
+ * 채우므로, 그 전까지 잘못된 손익을 만들지 않도록 원장 평단으로 시작한다.
+ */
+export const reconcileAssetsAfterTradeDeletion = (
+  assets = [],
+  tradeLedger = [],
+  deletedRecord = {},
+) => {
+  const reconciledAssets = reconcileAssetsWithTradeLedger(assets, tradeLedger);
+  if (getTradeRecordSide(deletedRecord) !== 'sell') return reconciledAssets;
+
+  const deletedAssetKey = getTradeAssetKey(deletedRecord);
+  if (reconciledAssets.some((asset) => getTradeAssetKey(asset) === deletedAssetKey)) {
+    return reconciledAssets;
+  }
+
+  const remainingRows = tradeLedger.filter((row) => getTradeAssetKey(row) === deletedAssetKey);
+  const position = buildPositionFromTradeRows(remainingRows);
+  if (!position.hasBuyRows || position.quantity <= EPSILON) return reconciledAssets;
+
+  const firstBuyRow = position.rows.find((row) => row.side === 'buy') || deletedRecord;
+  const sameStockAsset = reconciledAssets.find((asset) => (
+    getTradeAssetBaseKey(asset) === getTradeAssetBaseKey(deletedRecord)
+  ));
+  const averagePrice = position.averagePrice;
+  const currency = firstBuyRow.currency || deletedRecord.currency || 'KRW';
+  const now = new Date().toISOString();
+
+  const restoredAsset = {
+    id: firstBuyRow.assetId ?? deletedRecord.assetId ?? `restored-${deletedAssetKey}`,
+    name: firstBuyRow.name || deletedRecord.name || '',
+    ticker: firstBuyRow.ticker || deletedRecord.ticker || '',
+    category: firstBuyRow.category || deletedRecord.category || (currency === 'KRW' ? '국내주식' : '해외주식'),
+    currency,
+    accountType: firstBuyRow.accountType || deletedRecord.accountType || '',
+    accountTypeSource: firstBuyRow.accountTypeSource || deletedRecord.accountTypeSource || '',
+    round: getTradeRound(deletedRecord),
+    quantity: Number(position.quantity.toFixed(8)),
+    averagePrice,
+    originalAveragePrice: averagePrice,
+    currentPrice: sameStockAsset?.currentPrice || averagePrice,
+    originalCurrency: currency,
+    originalCurrentPrice: sameStockAsset?.originalCurrentPrice || averagePrice,
+    manualPurchaseKRW: null,
+    buyDate: position.firstBuyDate,
+    createdAt: firstBuyRow.createdAt || now,
+    updatedAt: now,
+  };
+
+  return [...reconciledAssets, restoredAsset];
+};
+
+/**
+ * 매수 원장상 보유 수량이 남아 있지만 자산 목록에는 없는 포지션을 복구한다.
+ *
+ * 예전 화면을 열어둔 채 전량 매도 기록을 삭제한 경우처럼, 삭제 이벤트 시점의 복구를
+ * 이미 놓친 데이터도 다음 앱 로드에서 고칠 수 있어야 한다. 자산 삭제 기능은 연결된
+ * 원장까지 함께 지우므로 사용자가 명시적으로 삭제한 자산을 되살리지는 않는다.
+ */
+export const recoverMissingAssetsFromTradeLedger = (assets = [], tradeLedger = []) => {
+  if (!Array.isArray(tradeLedger) || tradeLedger.length === 0) return assets;
+
+  let recoveredAssets = reconcileAssetsWithTradeLedger(assets, tradeLedger);
+  const rowsByAsset = new Map();
+  tradeLedger.forEach((row) => {
+    const key = getTradeAssetKey(row);
+    if (!rowsByAsset.has(key)) rowsByAsset.set(key, []);
+    rowsByAsset.get(key).push(row);
+  });
+
+  rowsByAsset.forEach((rows, assetKey) => {
+    if (recoveredAssets.some((asset) => getTradeAssetKey(asset) === assetKey)) return;
+
+    const position = buildPositionFromTradeRows(rows);
+    if (!position.hasBuyRows || position.quantity <= EPSILON) return;
+
+    const firstBuyRow = position.rows.find((row) => row.side === 'buy');
+    if (!firstBuyRow || firstBuyRow.category === '현금') return;
+
+    const sameStockAsset = recoveredAssets.find((asset) => (
+      getTradeAssetBaseKey(asset) === getTradeAssetBaseKey(firstBuyRow)
+    ));
+    const averagePrice = position.averagePrice;
+    const currency = firstBuyRow.currency || 'KRW';
+    const preferredId = firstBuyRow.assetId ?? `restored-${assetKey}`;
+    const idAlreadyUsed = recoveredAssets.some((asset) => String(asset.id) === String(preferredId));
+    const now = new Date().toISOString();
+
+    recoveredAssets = [...recoveredAssets, {
+      id: idAlreadyUsed ? `restored-${assetKey}` : preferredId,
+      name: firstBuyRow.name || '',
+      ticker: firstBuyRow.ticker || '',
+      category: firstBuyRow.category || (currency === 'KRW' ? '국내주식' : '해외주식'),
+      currency,
+      accountType: firstBuyRow.accountType || '',
+      accountTypeSource: firstBuyRow.accountTypeSource || '',
+      round: getTradeRound(firstBuyRow),
+      quantity: Number(position.quantity.toFixed(8)),
+      averagePrice,
+      originalAveragePrice: averagePrice,
+      currentPrice: sameStockAsset?.currentPrice || averagePrice,
+      originalCurrency: currency,
+      originalCurrentPrice: sameStockAsset?.originalCurrentPrice || averagePrice,
+      manualPurchaseKRW: null,
+      buyDate: position.firstBuyDate,
+      createdAt: firstBuyRow.createdAt || now,
+      updatedAt: now,
+    }];
+  });
+
+  return recoveredAssets;
+};

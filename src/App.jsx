@@ -74,6 +74,8 @@ import {
   getTradeAssetKey,
   getTradeRecordDate,
   getTradeRound,
+  recoverMissingAssetsFromTradeLedger,
+  reconcileAssetsAfterTradeDeletion,
   reconcileAssetsWithTradeLedger,
   resolveNextTradeRound,
   scaleManualPurchaseKRW,
@@ -1948,7 +1950,7 @@ const buyLotDraftSummary = useMemo(() => {
     if (!isCloudPortfolioLoaded || tradeLedger.length === 0) return;
     setAssets(prevAssets => {
       const mergedAssets = mergeUniqueAssets(prevAssets);
-      const reconciledAssets = reconcileAssetsWithTradeLedger(mergedAssets, tradeLedger);
+      const reconciledAssets = recoverMissingAssetsFromTradeLedger(mergedAssets, tradeLedger);
 
       // 원장상 전량 매도된 종목은 목록에서 빠지는 게 정상이다. 예전에는 '개수가 줄면
       // 통째로 버리기'로 막았는데, 그러면 한 종목만 청산돼도 나머지 종목의 수량·평단
@@ -3244,12 +3246,17 @@ const buyLotDraftSummary = useMemo(() => {
   const removeTrade = (record, e) => {
     if (e) e.stopPropagation();
     const hasLinkedMemo = record.memoRecordId !== null && record.memoRecordId !== undefined;
+    const isSellRecord = getTradeSide(record) === 'sell';
 
     if (record.sourceType === 'ledger') {
       const nextLedger = tradeLedger.filter(entry => entry.id !== record.id);
       setTradeLedger(nextLedger);
       setAssets(prevAssets => {
-        const reconciledAssets = reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), nextLedger);
+        const reconciledAssets = reconcileAssetsAfterTradeDeletion(
+          mergeUniqueAssets(prevAssets),
+          nextLedger,
+          record,
+        );
         return reconciledAssets.filter((asset) => {
           if (!isRecordForAsset(record, asset)) return true;
           return nextLedger.some(entry => isRecordForAsset(entry, asset) && getTradeSide(entry) === 'buy');
@@ -3285,9 +3292,11 @@ const buyLotDraftSummary = useMemo(() => {
     }
 
     addLog(
-      hasLinkedMemo
-        ? '매매 기록과 연결된 메모를 함께 삭제했습니다.'
-        : '매매 기록이 삭제되었습니다.',
+      isSellRecord
+        ? `매도 기록${hasLinkedMemo ? '과 연결된 메모를 ' : '을 '}삭제하고 보유 수량을 다시 계산했습니다.`
+        : hasLinkedMemo
+          ? '매수 기록과 연결된 메모를 함께 삭제하고 보유 수량을 다시 계산했습니다.'
+          : '매수 기록을 삭제하고 보유 수량을 다시 계산했습니다.',
       'success',
     );
   };
@@ -5118,7 +5127,7 @@ const buyLotDraftSummary = useMemo(() => {
         {activeTab === 'history' && (
           <div className="space-y-8 anim-fade">
             <h3 className="text-lg md:text-xl font-bold text-ink flex items-center gap-2"><TrendingUp className="text-ink-soft" size={20} /> 평가손익(미실현) 요약</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
               <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
                 <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><Banknote size={20} /></div>
                 <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">국내주식 평가손익</p>
@@ -5131,13 +5140,6 @@ const buyLotDraftSummary = useMemo(() => {
                 <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">해외주식 평가손익</p>
                 <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${dashboardSummary.usdEvaluationProfit >= 0 ? 'text-up' : 'text-down'}`}>
                   {dashboardSummary.usdEvaluationProfit > 0 ? '+' : ''}{formatMoney(dashboardSummary.usdEvaluationProfit, 'USD')}
-                </p>
-              </div>
-              <div className="bg-ink p-5 md:p-7 rounded-2xl shadow-sm flex flex-col justify-center text-surface relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-4 opacity-10"><PieIcon size={50}/></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">총 환산 평가손익</p>
-                <p className={`text-3xl md:text-4xl font-bold tracking-tighter ${dashboardSummary.investedProfitKRW >= 0 ? 'text-up' : 'text-down'}`}>
-                  {dashboardSummary.investedProfitKRW > 0 ? '+' : ''}{formatMoney(dashboardSummary.investedProfitKRW, 'KRW')}
                 </p>
               </div>
             </div>
@@ -5626,7 +5628,7 @@ const buyLotDraftSummary = useMemo(() => {
                             </td>
                             <td className="px-4 py-4 md:px-8 md:py-6 text-center whitespace-nowrap">
                               {!trade.isUnlinkedMemo ? (
-                                <button onClick={(e) => removeTrade(trade, e)} className="text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors p-1.5 md:p-2 rounded-xl" title="매매 기록 삭제 · 메모는 보존"><Trash2 size={16} /></button>
+                                <button onClick={(e) => removeTrade(trade, e)} className="text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors p-1.5 md:p-2 rounded-xl" title={side === 'sell' ? '매도 기록 삭제 · 보유 수량 다시 계산' : '매수 기록 삭제 · 보유 수량 다시 계산'}><Trash2 size={16} /></button>
                               ) : (
                                 <div className="inline-flex items-center justify-center gap-2">
                                   <span className="text-[11px] font-bold text-ink-mute">메모만 보존</span>
