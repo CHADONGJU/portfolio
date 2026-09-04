@@ -3,11 +3,19 @@ const ALLOWED_COUNTRIES = ['US', 'KR', 'EU', 'CN', 'JP'];
 const MAX_RANGE_DAYS = 370;
 const UPSTREAM_TIMEOUT_MS = 20_000;
 
-const normalizeKeyword = (value = '') => String(value || '')
+const KEYWORD_MAX_LENGTH = 80;
+
+const normalizeSearchText = (value = '') => String(value || '')
   .trim()
   .replace(/\s+/g, ' ')
-  .toLocaleLowerCase()
-  .slice(0, 80);
+  .toLocaleLowerCase();
+
+/*
+ * 키워드는 길이를 자르지만, 비교 대상인 일정 본문까지 자르면 안 된다.
+ * comment는 300자를 넘는 일이 흔해서 앞부분만 보면 FOMC 같은 키워드가
+ * 열 건 중 한 건만 걸린다.
+ */
+const normalizeKeyword = (value = '') => normalizeSearchText(value).slice(0, KEYWORD_MAX_LENGTH);
 
 const parseDateKey = (value = '') => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -43,7 +51,7 @@ const isKeywordMatch = (event, keywords) => {
     event?.category,
     event?.comment,
     event?.source,
-  ].map(normalizeKeyword).join(' ');
+  ].map(normalizeSearchText).join(' ');
   return keywords.some((keyword) => searchable.includes(keyword));
 };
 

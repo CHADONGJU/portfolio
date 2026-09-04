@@ -40,3 +40,23 @@ test('기본 달력은 중요 일정만, 키워드 전용 조회는 일치하는
   });
   assert.deepEqual(keywordEvents.map(({ id }) => id), ['keyword']);
 });
+
+test('일정 본문 뒷부분에 있는 키워드도 놓치지 않는다', () => {
+  const longComment = `${'The Federal Reserve publishes a detailed statement after every meeting. '.repeat(6)}The FOMC decision is announced at 2pm.`;
+  const rawEvents = [
+    {
+      id: 'fed-projection',
+      title: 'Interest Rate Projection - Longer',
+      comment: longComment,
+      importance: 0,
+      date: '2026-09-16T18:00:00Z',
+    },
+  ];
+
+  assert.ok(longComment.indexOf('FOMC') > 80, '키워드가 80자 뒤에 있어야 의미 있는 검증이다');
+  const keywordEvents = filterMarketCalendarEvents(rawEvents, {
+    keywords: ['fomc'],
+    keywordsOnly: true,
+  });
+  assert.deepEqual(keywordEvents.map(({ id }) => id), ['fed-projection']);
+});
