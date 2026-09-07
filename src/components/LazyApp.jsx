@@ -1,4 +1,5 @@
 import { Suspense, lazy } from 'react';
+import { useAuth } from '../context/useAuth';
 
 /**
  * 로그인 화면은 App(수천 줄)과 Firestore 코드가 전혀 필요 없다. 정적으로 import하면
@@ -17,10 +18,13 @@ const AppLoading = () => (
   </div>
 );
 
-const LazyApp = () => (
+const LazyApp = () => {
+  const { user } = useAuth();
+  return (
   <Suspense fallback={<AppLoading />}>
-    <App />
+    <App key={user?.uid || 'guest'} />
   </Suspense>
-);
+  );
+};
 
 export default LazyApp;

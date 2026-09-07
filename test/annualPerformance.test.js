@@ -7,7 +7,7 @@ import {
   summarizeCapitalFlows,
   upsertDailyPortfolioSnapshot,
   withCurrentPortfolioSnapshot,
-} from '../src/utils/annualPerformance.js';
+} from '../archive/annualPerformance.js';
 
 // 연 순수익 = 그 해 실현손익(수수료·거래세 차감 후) + 그 해 배당. 평가손익(미실현)은
 // 넣지 않는다 — 연초 평가손익 기준값을 알 수 없는 계좌에서 무엇을 가정하든 지어낸

@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "test": "node --test",
     "preview": "vite preview",
-    "deploy": "npm run build && npx firebase-tools deploy --only hosting,firestore:rules"
+    "deploy": "npm run build && npx firebase-tools deploy --only hosting,firestore:rules",
+    "test:browser": "node scripts/browser-smoke.mjs"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.2.2",
@@ -30,6 +31,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "playwright": "^1.62.1",
     "vite": "^8.0.10"
   }
 }

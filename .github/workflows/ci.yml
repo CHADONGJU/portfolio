@@ -26,6 +26,12 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser interactions and offline recovery
+        run: npm run test:browser
+
       # 빌드까지 깨지지 않는지 확인한다. 배포 전 마지막 관문.
       - name: Build
         run: npm run build

@@ -1,4 +1,4 @@
-import { Children, cloneElement, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 
 const FOCUSABLE_SELECTOR = [
   'a[href]',
@@ -25,8 +25,8 @@ const getFocusableItems = (container) => (
  * - 잘못 연 매도 모달을 Escape로 닫을 수 없었고,
  * - 닫은 뒤 포커스가 어디로 갔는지 알 수 없었다.
  *
- * 자식 패널 엘리먼트에 필요한 속성만 얹으므로 기존 레이아웃(flex 정렬, 최대 너비)은
- * 그대로 유지된다.
+ * 실제 DOM 컨테이너에 ref와 접근성 속성을 둔다. 자식이 함수 컴포넌트여도
+ * 포커스 관리와 키보드 탐색이 동일하게 동작한다.
  */
 const ModalOverlay = ({ onClose, labelledBy, overlayClassName = '', children }) => {
   const panelRef = useRef(null);
@@ -55,7 +55,10 @@ const ModalOverlay = ({ onClose, labelledBy, overlayClassName = '', children }) 
 
       const first = items[0];
       const last = items[items.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (!panelRef.current?.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -70,8 +73,6 @@ const ModalOverlay = ({ onClose, labelledBy, overlayClassName = '', children }) 
       previouslyFocused?.focus?.({ preventScroll: true });
     };
   }, []);
-
-  const panel = Children.only(children);
 
   return (
     /*
@@ -88,14 +89,15 @@ const ModalOverlay = ({ onClose, labelledBy, overlayClassName = '', children }) 
       className={`fixed inset-0 bg-ink/60 backdrop-blur-[2px] overflow-y-auto anim-fade ${overlayClassName}`}
       role="presentation"
     >
-      <div className="min-h-full flex items-end md:items-center justify-center p-0 md:p-4">
-        {cloneElement(panel, {
-          ref: panelRef,
-          role: 'dialog',
-          'aria-modal': 'true',
-          'aria-labelledby': labelledBy,
-          tabIndex: -1,
-        })}
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        tabIndex={-1}
+        className="min-h-full flex items-end md:items-center justify-center p-0 md:p-4 outline-none"
+      >
+        {children}
       </div>
     </div>
   );

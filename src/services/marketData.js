@@ -1,3 +1,6 @@
+import { fetchBufferedResponse as fetchWithTimeout } from '../utils/network.js';
+import { formatKoreanDate } from '../utils/dates.js';
+
 /**
  * 환율 요청에 타임아웃이 없으면, 제공자가 연결만 받고 응답하지 않을 때 동기화 루프
  * 전체가 영원히 pending 상태로 멈춘다. 그러면 "실행 중" 플래그가 풀리지 않아
@@ -5,17 +8,6 @@
  */
 const FX_TIMEOUT_MS = 8000;
 const PROXY_TIMEOUT_MS = 7000;
-
-const fetchWithTimeout = async (url, options = {}, timeoutMs = PROXY_TIMEOUT_MS) => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-};
 
 export const fetchKrwRate = async (currency = 'USD') => {
   const baseCurrency = String(currency || 'USD').toUpperCase();
@@ -53,8 +45,6 @@ export const fetchKrwRate = async (currency = 'USD') => {
 };
 
 export const fetchUsdKrwRate = () => fetchKrwRate('USD');
-
-export const fetchJpyKrwRate = () => fetchKrwRate('JPY');
 
 // Yahoo는 런던 상장 종목을 펜스(GBp) 단위로 돌려준다.
 // 통화 코드를 그대로 저장하면 대소문자 불일치로 환율이 1이 적용되므로
@@ -302,15 +292,18 @@ export const fetchTextWithSafeProxy = async (url) => (
   fetchViaProxies(buildProxyList(url, { jinaFirst: true }), parseProxyText)
 );
 
-export const fetchUsdKrwRateByDate = async (date) => {
+export const fetchKrwRateByDate = async (currency, date) => {
+  const code = String(currency || "KRW").toUpperCase();
+  if (code === "KRW") return 1;
   if (!date) return null;
 
-  const today = new Date().toISOString().split('T')[0];
-  if (date >= today) return fetchUsdKrwRate();
+  const today = formatKoreanDate();
+  if (date === today) return fetchKrwRate(code);
+  if (date > today) return null;
 
   const historicalUrls = [
-    `https://api.frankfurter.app/${date}?from=USD&to=KRW`,
-    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/usd.json`,
+    `https://api.frankfurter.app/${date}?from=${encodeURIComponent(code)}&to=KRW`,
+    `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@${date}/v1/currencies/${code.toLowerCase()}.json`,
   ];
 
   for (const url of historicalUrls) {
@@ -319,7 +312,7 @@ export const fetchUsdKrwRateByDate = async (date) => {
       if (!response.ok) continue;
 
       const data = await response.json();
-      const rate = data?.rates?.KRW ?? data?.usd?.krw;
+      const rate = data?.rates?.KRW ?? data?.[code.toLowerCase()]?.krw;
       if (Number.isFinite(Number(rate)) && Number(rate) > 0) return Number(rate);
     } catch {
       continue;
@@ -328,6 +321,8 @@ export const fetchUsdKrwRateByDate = async (date) => {
 
   return null;
 };
+
+export const fetchUsdKrwRateByDate = (date) => fetchKrwRateByDate('USD', date);
 
 const normalizeTicker = (ticker) => ticker
   .toUpperCase()
@@ -874,11 +869,6 @@ export const fetchStockQuote = async (asset) => {
   }
 
   return null;
-};
-
-export const fetchStockPrice = async (asset) => {
-  const quote = await fetchStockQuote(asset);
-  return quote?.price ?? null;
 };
 
 const getDividendTickers = (input) => {

@@ -1,6 +1,7 @@
 import { Plus, X } from 'lucide-react';
 import { formatInputNumber, sanitizeNumericInput } from '../utils/formatters';
 import FeatureInfo from './FeatureInfo';
+import { PORTFOLIO_CURRENCIES } from '../utils/currencies';
 
 /**
  * placeholder는 라벨이 아니다. 값을 입력하는 순간 사라져서 그 칸이 무엇이었는지
@@ -72,8 +73,7 @@ const ManualTradeEntryForm = ({ value, stockOptions, onChange, onSubmit, onClose
         onChange={(event) => onChange({ ...value, currency: event.target.value })}
         className={FIELD_CLASS}
       >
-        <option value="KRW">KRW</option>
-        <option value="USD">USD</option>
+        {PORTFOLIO_CURRENCIES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
       </select>
     </div>
 

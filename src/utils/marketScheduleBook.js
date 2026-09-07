@@ -197,8 +197,8 @@ export const mergeKnownMarketEvents = (events = [], { from, to } = {}) => {
   const seen = new Set(fetched.map((event) => (
     getDedupeKey(event.country, event.date, event.title || event.indicator)
   )));
-  const fromTime = from ? new Date(`${from}T00:00:00.000Z`).getTime() : Number.NEGATIVE_INFINITY;
-  const toTime = to ? new Date(`${to}T00:00:00.000Z`).getTime() : Number.POSITIVE_INFINITY;
+  const fromTime = from ? new Date(`${from}T00:00:00+09:00`).getTime() : Number.NEGATIVE_INFINITY;
+  const toTime = to ? new Date(`${to}T00:00:00+09:00`).getTime() : Number.POSITIVE_INFINITY;
 
   const supplements = buildKnownMarketEvents().filter((event) => {
     const time = new Date(event.date).getTime();

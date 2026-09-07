@@ -120,6 +120,23 @@ const getRecordSortTime = (record = {}) => {
   return Number.isFinite(createdTime) ? createdTime : 0;
 };
 
+const getEntryTime = (row) => {
+  const explicit = Date.parse(row.executedAt || row.createdAt || '');
+  if (Number.isFinite(explicit)) return explicit;
+  const encoded = (String(row.sourceId || '') + ' ' + String(row.id || '')).match(/(?:^|\D)(1\d{12})(?=\D|$)/);
+  return encoded ? Number(encoded[1]) : 0;
+};
+
+export const compareTradeOrder = (left, right) => {
+  const dateDelta = getRecordSortTime(left) - getRecordSortTime(right);
+  if (dateDelta) return dateDelta;
+  const leftTime = getEntryTime(left);
+  const rightTime = getEntryTime(right);
+  if (leftTime !== rightTime) return leftTime - rightTime;
+  // Historical rows without any timing evidence retain the stable fallback.
+  return String(left.id || left.sourceId || '').localeCompare(String(right.id || right.sourceId || ''));
+};
+
 export const normalizeTradeRow = (record = {}) => {
   const side = getTradeRecordSide(record);
   const date = getTradeRecordDate(record);
@@ -192,11 +209,7 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
   const normalizedRows = rows
     .map(normalizeTradeRow)
     .filter((row) => row.name && row.date && row.quantity > 0)
-    .sort((a, b) => {
-      const timeDelta = getRecordSortTime(a) - getRecordSortTime(b);
-      if (timeDelta !== 0) return timeDelta;
-      return String(a.id || a.sourceId || '').localeCompare(String(b.id || b.sourceId || ''));
-    })
+    .sort(compareTradeOrder)
     .map((row) => {
       if (row.side === 'buy') {
         quantity += row.quantity;
@@ -339,7 +352,7 @@ export const buildCanonicalTradeRows = ({ tradeLedger = [], trades = [], resolve
 
   return [...rowsByAsset.values()]
     .flatMap((rows) => buildPositionFromTradeRows(rows, { resolveKrwRate }).rows)
-    .sort((a, b) => getRecordSortTime(b) - getRecordSortTime(a));
+    .sort((a, b) => compareTradeOrder(b, a));
 };
 
 /**

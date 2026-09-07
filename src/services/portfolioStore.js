@@ -2,8 +2,8 @@ import {
   collection,
   deleteField,
   doc,
-  getDoc,
-  getDocs,
+  getDocFromServer,
+  getDocsFromServer,
   onSnapshot,
   serverTimestamp,
   setDoc,
@@ -82,15 +82,16 @@ const commitOperations = async (database, operations = []) => {
 };
 
 const readCollectionRows = async (database, userId, field) => {
-  const snapshot = await getDocs(collection(database, 'portfolioStates', userId, field));
+  const snapshot = await getDocsFromServer(collection(database, 'portfolioStates', userId, field));
   return snapshot.docs.map((entry) => entry.data());
 };
 
 const getPortfolioRevision = (snapshotData = {}) => {
   const updatedAt = snapshotData?.updatedAt;
-  if (typeof updatedAt?.toMillis === 'function') return String(updatedAt.toMillis());
+  const prefix = snapshotData.writeRevision ? `${snapshotData.writeRevision}:` : '';
+  if (typeof updatedAt?.toMillis === 'function') return `${prefix}${updatedAt.toMillis()}`;
   if (Number.isFinite(updatedAt?.seconds)) {
-    return `${updatedAt.seconds}:${updatedAt.nanoseconds || 0}`;
+    return `${prefix}${updatedAt.seconds}:${updatedAt.nanoseconds || 0}`;
   }
   return '';
 };
@@ -122,7 +123,7 @@ export const mergeRootAndCollectionState = (rootData = {}, collectionData = {}) 
 };
 
 export const loadPortfolioState = async (database, userId) => {
-  const rootSnapshot = await getDoc(doc(database, 'portfolioStates', userId));
+  const rootSnapshot = await getDocFromServer(doc(database, 'portfolioStates', userId));
   if (!rootSnapshot.exists()) {
     return { exists: false, data: null, needsMigration: false, revision: '' };
   }
@@ -187,7 +188,7 @@ export const migratePortfolioState = async (database, userId, snapshot, userEmai
   const existingCollectionSnapshots = await Promise.all(
     PORTFOLIO_COLLECTION_FIELDS.map(async (field) => [
       field,
-      await getDocs(collection(database, 'portfolioStates', userId, field)),
+      await getDocsFromServer(collection(database, 'portfolioStates', userId, field)),
     ]),
   );
 
@@ -231,6 +232,7 @@ export const migratePortfolioState = async (database, userId, snapshot, userEmai
 
   await setDoc(rootRef, {
     ...buildRootMetadata(snapshot, userEmail),
+    writeRevision: crypto.randomUUID(),
     migrationCompletedAt: serverTimestamp(),
   }, { merge: true });
 };
@@ -273,19 +275,16 @@ export const savePortfolioStateDiff = async (
 
   await commitOperations(database, operations);
   const rootRef = doc(database, 'portfolioStates', userId);
-  await setDoc(rootRef, buildRootMetadata(nextSnapshot, userEmail), { merge: true });
-
-  /**
-   * 방금 쓴 문서의 리비전을 돌려준다. 호출부가 이 값을 기억해두지 않으면,
-   * 서버 ack이 도착했을 때 실시간 구독이 "모르는 리비전"으로 보고 포트폴리오
-   * 전체(루트 + 서브컬렉션 7개)를 다시 내려받는다. 편집 한 번에 수천 건 읽기.
-   * 루트 1건만 더 읽어서 그 재조회를 통째로 없앤다.
-   */
-  const savedRoot = await getDoc(rootRef);
+  // A client id is deliberately different from an observed server revision.
+  // Reconcile the acknowledged server snapshot rather than accidentally claim
+  // a concurrent device's revision as ours. The timestamp also detects writes
+  // from older clients that do not know about writeRevision.
+  const revision = crypto.randomUUID();
+  await setDoc(rootRef, { ...buildRootMetadata(nextSnapshot, userEmail), writeRevision: revision }, { merge: true });
 
   return {
     changed: true,
     operationCount: operations.length,
-    revision: savedRoot.exists() ? getPortfolioRevision(savedRoot.data()) : '',
+    revision,
   };
 };

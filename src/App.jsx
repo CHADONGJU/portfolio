@@ -11,6 +11,7 @@ import UserSettingsPanel from './components/UserSettingsPanel';
 import AnnualReturnGoalCard from './components/AnnualReturnGoalCard';
 import AnnualReturnHistory from './components/AnnualReturnHistory';
 import BrokerFeeFields from './components/BrokerFeeFields';
+import BuyLotsEditor from './components/BuyLotsEditor';
 import AnnualDividendTrend from './components/AnnualDividendTrend';
 import DividendSummaryGrid from './components/DividendSummaryGrid';
 import FeatureInfo from './components/FeatureInfo';
@@ -23,6 +24,12 @@ import TabNav from './components/TabNav';
 import TradeMemoEditor from './components/TradeMemoEditor';
 import { useAuth } from './context/useAuth';
 import useTheme from './hooks/useTheme';
+import usePortfolioCloudSync from './hooks/usePortfolioCloudSync';
+import PortfolioSaveStatus from './components/PortfolioSaveStatus';
+import { readPortfolioJournal } from './utils/portfolioSyncJournal';
+import { formatKoreanDate } from './utils/dates';
+import { editBuyLot, resolveBuyLotFxRate } from './utils/buyLotEditing';
+import { PORTFOLIO_CURRENCIES, resolveManualTradeAsset } from './utils/currencies';
 import {
   AUTO_DIVIDENDS_STORAGE_KEY,
   ASSETS_STORAGE_KEY,
@@ -45,18 +52,12 @@ import {
 import {
   fetchDividends,
   fetchKrwRate,
+  fetchKrwRateByDate,
   fetchStockQuote,
   fetchTradingViewQuotes,
   fetchUsdKrwRate,
   fetchUsdKrwRateByDate,
 } from './services/marketData';
-import {
-  loadPortfolioState,
-  migratePortfolioState,
-  saveJoinedAt,
-  savePortfolioStateDiff,
-  subscribePortfolioState,
-} from './services/portfolioStore';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
 import { canSummarizeAsset } from './utils/stockInsightPayload';
 import {
@@ -65,11 +66,9 @@ import {
   hasStoredKey,
   loadJson,
   moveStorageScope,
-  removeStoredKeys,
   saveJson,
   setStorageErrorHandler,
 } from './utils/storage';
-import { arePortfolioSnapshotsEquivalent } from './utils/portfolioSnapshotComparison';
 import {
   buildCanonicalTradeRows,
   buildPositionFromTradeRows,
@@ -109,7 +108,6 @@ import {
   summarizeAnnualDividendTrend,
 } from './utils/annualDividendTrend';
 import { buildStockSearchOptions } from './utils/stockSearchOptions';
-import { upsertDailyPortfolioSnapshot } from './utils/annualPerformance';
 import {
   calculateAnnualTradeReturn,
   getAnnualTradeYears,
@@ -213,7 +211,6 @@ const GUEST_STORAGE_SCOPE = 'guest';
 
 // 클라우드 저장 실패는 대부분 일시적인 네트워크 문제다. 재시도가 없으면 방금 추가한
 // 자산이 이 기기에만 남고, 나중에 원격 스냅샷에 덮여 사라진다.
-const CLOUD_SAVE_RETRY_DELAYS_MS = [3000, 10000, 30000];
 
 // 가상화폐 기능을 제거하면서, 기존에 남아 있는 가상화폐 데이터를 1회 정리한다.
 const CRYPTO_CATEGORY = '가상화폐';
@@ -701,6 +698,12 @@ const compactPortfolioSnapshot = (snapshot = {}) => {
   };
 };
 
+const protectPortfolioDividends = (remote, local) => ({
+  ...remote,
+  autoDividends: mergeAutomaticDividendRecords(remote.autoDividends, local.autoDividends),
+  confirmedDividends: mergeDividendRecords(local.confirmedDividends, remote.confirmedDividends),
+});
+
 const getTargetGroups = (targetPortfolio, categoryId) => {
   const savedGroups = targetPortfolio.groups?.[categoryId] || [];
   const legacyItems = targetPortfolio.items?.[categoryId] || [];
@@ -1082,21 +1085,6 @@ const getTargetItemSnapshotKey = (targetPortfolio) => targetPortfolio.categories
   )))
   .join('|');
 
-const emptyPortfolioSnapshot = () => ({
-  portfolioName: DEFAULT_PORTFOLIO_NAME,
-  assets: [],
-  trades: [],
-  memos: [],
-  tradeLedger: [],
-  autoDividends: [],
-  confirmedDividends: [],
-  dividendAssetRegistry: [],
-  capitalFlows: [],
-  portfolioSnapshots: [],
-  marketCalendarKeywords: [],
-  targetPortfolio: DEFAULT_TARGET_PORTFOLIO,
-});
-
 /**
  * 계정 분리 이전 버전이 남긴 비-네임스페이스 키를 현재 저장 영역으로 승계한다.
  *
@@ -1129,7 +1117,7 @@ const usePersistedPortfolioSlice = (canPersist, key, value) => {
 const readStoredPortfolio = (scope) => {
   const read = (key, fallback) => loadJson(getScopedStorageKey(key, scope), fallback);
 
-  return {
+  const stored = {
     portfolioName: normalizePortfolioName(read(PORTFOLIO_NAME_STORAGE_KEY, DEFAULT_PORTFOLIO_NAME)),
     assets: migrateUserConfirmedAccountTypes(read(ASSETS_STORAGE_KEY, [])),
     trades: read(TRADES_STORAGE_KEY, []),
@@ -1143,6 +1131,8 @@ const readStoredPortfolio = (scope) => {
     marketCalendarKeywords: normalizeMarketCalendarKeywords(read(MARKET_CALENDAR_KEYWORDS_STORAGE_KEY, [])),
     targetPortfolio: read(TARGET_PORTFOLIO_STORAGE_KEY, DEFAULT_TARGET_PORTFOLIO),
   };
+  const journal = readPortfolioJournal(scope);
+  return journal ? { ...stored, ...journal.local } : stored;
 };
 
 const App = () => {
@@ -1153,7 +1143,6 @@ const App = () => {
   const [exchangeRate, setExchangeRate] = useState(0); 
   const [jpyKrwRate, setJpyKrwRate] = useState(0);
   const [currencyRates, setCurrencyRates] = useState({ KRW: 1 });
-  const [isLiveMode] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
   /**
    * 시세 동기화가 "한 번은 끝났다"는 표시. 이게 없으면 화면이 뜬 직후(아직 동기화가
@@ -1163,16 +1152,6 @@ const App = () => {
   const [activeTab, setActiveTab] = useState('portfolio');
   const [isFetching, setIsFetching] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const [isCloudPortfolioLoaded, setIsCloudPortfolioLoaded] = useState(!user || !db);
-  const [cloudPortfolioUserId, setCloudPortfolioUserId] = useState('');
-  const [cloudLoadFailed, setCloudLoadFailed] = useState(false);
-  const [cloudRetryToken, setCloudRetryToken] = useState(0);
-  // 연 수익률 계산의 시작점. 클라우드 문서에 이미 저장된 값을 최우선으로 쓰고,
-  // 처음 보는 계정이면 Firebase 가입일(없으면 지금)로 1회만 기록한다.
-  // 가입일은 클라우드에 남겨 두되(계정 기록용) 수익률 계산 근거로는 쓰지 않는다 —
-  // 이 앱에 등록한 날일 뿐, 그 계좌가 그날 생겼다는 뜻이 아니다.
-  const [, setJoinedAt] = useState('');
-  const loadedUserIdRef = useRef('');
   const [assetPendingRemoval, setAssetPendingRemoval] = useState(null);
 
   // 피드백 로그 (3초 뒤 자동 삭제)
@@ -1234,7 +1213,7 @@ const App = () => {
   const [annualReturnYear, setAnnualReturnYear] = useState(() => new Date().getFullYear());
 
   const [isAdding, setIsAdding] = useState(false);
-  const defaultBuyDate = new Date().toISOString().split('T')[0];
+  const defaultBuyDate = formatKoreanDate();
   const [isAddingDividend, setIsAddingDividend] = useState(false);
   const dividendImportInputRef = useRef(null);
   const [actualDividendForm, setActualDividendForm] = useState({
@@ -1441,12 +1420,13 @@ const buyLotDraftSummary = useMemo(() => {
     claimLegacyPortfolioStorage(storageScope);
   }, [storageScope]);
 
+  const initialPortfolio = useMemo(() => readStoredPortfolio(storageScope), [storageScope]);
   const [assets, setAssets] = useState(() => (
-    migrateUserConfirmedAccountTypes(loadJson(scopedKey(ASSETS_STORAGE_KEY), []))
+    migrateUserConfirmedAccountTypes(initialPortfolio.assets)
   ));
-  const [trades, setTrades] = useState(() => loadJson(scopedKey(TRADES_STORAGE_KEY), []));
-  const [memos, setMemos] = useState(() => loadJson(scopedKey(MEMOS_STORAGE_KEY), []));
-  const [tradeLedger, setTradeLedger] = useState(() => loadJson(scopedKey(TRADE_LEDGER_STORAGE_KEY), []));
+  const [trades, setTrades] = useState(() => initialPortfolio.trades);
+  const [memos, setMemos] = useState(() => initialPortfolio.memos);
+  const [tradeLedger, setTradeLedger] = useState(() => initialPortfolio.tradeLedger);
 
   /**
    * 이번 매도 수량에 배분되는 매수 수수료(현지 통화). 이동평균으로 비례 배분한다.
@@ -1469,13 +1449,13 @@ const buyLotDraftSummary = useMemo(() => {
     // 실제로 값을 바꾸는 입력은 아래 셋뿐이다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ), [selectedAssetToSell, sellForm.quantity, tradeLedger]);
-  const [portfolioName, setPortfolioName] = useState(() => normalizePortfolioName(loadJson(scopedKey(PORTFOLIO_NAME_STORAGE_KEY), DEFAULT_PORTFOLIO_NAME)));
-  const [targetPortfolio, setTargetPortfolio] = useState(() => loadJson(scopedKey(TARGET_PORTFOLIO_STORAGE_KEY), DEFAULT_TARGET_PORTFOLIO));
-  const [capitalFlows, setCapitalFlows] = useState(() => loadJson(scopedKey(CAPITAL_FLOWS_STORAGE_KEY), []));
-  const [portfolioSnapshots, setPortfolioSnapshots] = useState(() => loadJson(scopedKey(PORTFOLIO_SNAPSHOTS_STORAGE_KEY), []));
-  const [dividendAssetRegistry, setDividendAssetRegistry] = useState(() => loadJson(scopedKey(DIVIDEND_ASSET_REGISTRY_STORAGE_KEY), []));
+  const [portfolioName, setPortfolioName] = useState(() => normalizePortfolioName(initialPortfolio.portfolioName));
+  const [targetPortfolio, setTargetPortfolio] = useState(() => initialPortfolio.targetPortfolio);
+  const [capitalFlows, setCapitalFlows] = useState(() => initialPortfolio.capitalFlows);
+  const [portfolioSnapshots, setPortfolioSnapshots] = useState(() => initialPortfolio.portfolioSnapshots);
+  const [dividendAssetRegistry, setDividendAssetRegistry] = useState(() => initialPortfolio.dividendAssetRegistry);
   const [marketCalendarKeywords, setMarketCalendarKeywords] = useState(() => (
-    normalizeMarketCalendarKeywords(loadJson(scopedKey(MARKET_CALENDAR_KEYWORDS_STORAGE_KEY), []))
+    normalizeMarketCalendarKeywords(initialPortfolio.marketCalendarKeywords)
   ));
   // 매수·매도 모달이 공유하는 기본 증권사. 매번 고르지 않아도 되게 기억해 둔다.
   const [preferredBrokerId, setPreferredBrokerId] = useState(() => (
@@ -1486,8 +1466,8 @@ const buyLotDraftSummary = useMemo(() => {
     getTargetItemSnapshotKey(targetPortfolio)
   ), [targetPortfolio]);
 
-  const [autoDividends, setAutoDividends] = useState(() => loadJson(scopedKey(AUTO_DIVIDENDS_STORAGE_KEY), []));
-  const [confirmedDividends, setConfirmedDividends] = useState(() => loadJson(scopedKey(CONFIRMED_DIVIDENDS_STORAGE_KEY), []));
+  const [autoDividends, setAutoDividends] = useState(() => initialPortfolio.autoDividends);
+  const [confirmedDividends, setConfirmedDividends] = useState(() => initialPortfolio.confirmedDividends);
   const initialLedgerMigrationDoneRef = useRef(false);
 
   const portfolioSnapshot = useMemo(() => ({
@@ -1505,9 +1485,6 @@ const buyLotDraftSummary = useMemo(() => {
     targetPortfolio,
   }), [portfolioName, assets, trades, memos, tradeLedger, autoDividends, confirmedDividends, dividendAssetRegistry, capitalFlows, portfolioSnapshots, marketCalendarKeywords, targetPortfolio]);
   const portfolioSnapshotRef = useRef(portfolioSnapshot);
-  const cloudSnapshotRef = useRef(null);
-  const cloudRevisionRef = useRef('');
-  const applyingCloudSnapshotRef = useRef(false);
 
   // 계정이 바뀐 직후에는 화면 상태가 아직 이전 계정 것이다. 그대로 저장하면
   // 새 계정 영역에 남의 데이터가 기록되므로, 영역 전환이 끝날 때까지 저장을 멈춘다.
@@ -1530,25 +1507,7 @@ const buyLotDraftSummary = useMemo(() => {
   useEffect(() => { targetPortfolioRef.current = targetPortfolio; }, [targetPortfolio]);
   useEffect(() => { portfolioSnapshotRef.current = portfolioSnapshot; }, [portfolioSnapshot]);
 
-  const resetPortfolioState = () => {
-    setAssets([]);
-    setTrades([]);
-    setMemos([]);
-    setTradeLedger([]);
-    setAutoDividends([]);
-    setConfirmedDividends([]);
-    setDividendAssetRegistry([]);
-    setCapitalFlows([]);
-    setPortfolioSnapshots([]);
-    setMarketCalendarKeywords([]);
-    setPortfolioName(DEFAULT_PORTFOLIO_NAME);
-    setTargetPortfolio(DEFAULT_TARGET_PORTFOLIO);
-    // 이전 계정의 가입일이 남아 있으면 로그아웃/계정 전환 뒤에도 그 날짜를
-    // 기준으로 연 수익률을 계산해 말도 안 되는 수익률이 뜬다.
-    setJoinedAt('');
-  };
-
-  const applyStoredPortfolio = (stored) => {
+  const applyStoredPortfolio = useCallback((stored) => {
     setAssets(stored.assets);
     setTrades(stored.trades);
     setMemos(stored.memos);
@@ -1561,7 +1520,17 @@ const buyLotDraftSummary = useMemo(() => {
     setMarketCalendarKeywords(stored.marketCalendarKeywords);
     setPortfolioName(stored.portfolioName);
     setTargetPortfolio(stored.targetPortfolio);
-  };
+  }, []);
+
+  const notifyPortfolioSync = useCallback((...args) => addLogRef.current(...args), []);
+  const cloudSync = usePortfolioCloudSync({
+    database: db, user, snapshot: portfolioSnapshot, ready: isStorageScopeReady,
+    compact: compactPortfolioSnapshot, protect: protectPortfolioDividends,
+    onApply: applyStoredPortfolio, onLog: notifyPortfolioSync,
+  });
+  const isCloudPortfolioLoaded = cloudSync.loaded;
+  const cloudLoadFailed = cloudSync.failed;
+  const cloudPortfolioUserId = cloudSync.userId;
 
   // 로그인/로그아웃/계정 전환으로 저장 영역이 바뀌면, 화면 상태를 새 영역의
   // 저장값으로 통째로 갈아끼운다. 이전 계정 상태가 새 영역으로 흘러가지 않는다.
@@ -1586,22 +1555,13 @@ const buyLotDraftSummary = useMemo(() => {
     }
 
     applyStoredPortfolio(readStoredPortfolio(storageScope));
-    cloudSnapshotRef.current = null;
-    cloudRevisionRef.current = '';
     setPersistedStorageScope(storageScope);
-  }, [storageScope, persistedStorageScope]);
+  }, [storageScope, persistedStorageScope, applyStoredPortfolio]);
 
   const handleSignOut = async () => {
-    // 로그아웃 후에도 localStorage가 남아 있으면, 같은 기기에서
-    // '로그인 없이 보기'로 들어온 다음 사람에게 이전 사용자 데이터가 그대로 보인다.
-    removeStoredKeys(PORTFOLIO_STORAGE_KEYS.map(key => scopedKey(key)));
-    resetPortfolioState();
-    setCloudPortfolioUserId('');
-    setCloudLoadFailed(false);
-    cloudSnapshotRef.current = null;
-    cloudRevisionRef.current = '';
-
     try {
+      // Account-scoped caches and the durable journal survive sign-out. Guest
+      // mode uses a separate namespace and cannot display these records.
       await signOutUser();
     } catch (error) {
       console.error('Sign out failed:', error);
@@ -1640,326 +1600,6 @@ const buyLotDraftSummary = useMemo(() => {
     setTargetPortfolio(purged.targetPortfolio);
     addLog(`가상화폐 관련 기록 ${removedCount.toLocaleString()}건을 정리했습니다.`, 'success');
   }, [isCloudPortfolioLoaded, cloudLoadFailed, cloudPortfolioUserId, userId]);
-
-  useEffect(() => {
-    if (!userId || !db) {
-      setIsCloudPortfolioLoaded(true);
-      setCloudPortfolioUserId('');
-      setJoinedAt('');
-      return undefined;
-    }
-
-    let cancelled = false;
-
-    // 계정이 바뀌었는데 이전 사용자 상태가 메모리에 남아 있으면,
-    // 아래 '원격 문서 없음' 경로에서 남의 데이터를 새 계정에 올려버린다.
-    const previousUserId = loadedUserIdRef.current;
-    const isAccountSwitch = Boolean(previousUserId) && previousUserId !== userId;
-    if (isAccountSwitch) resetPortfolioState();
-
-    const loadCloudPortfolio = async () => {
-      setIsCloudPortfolioLoaded(false);
-      setCloudLoadFailed(false);
-
-      let loadSucceeded = false;
-
-      try {
-        const cloudState = await loadPortfolioState(db, userId);
-
-        if (cancelled) return;
-
-        const resolveJoinedAtFallback = () => {
-          const creationTime = user?.metadata?.creationTime;
-          const parsedCreation = creationTime ? new Date(creationTime) : null;
-          return parsedCreation && Number.isFinite(parsedCreation.getTime())
-            ? formatDateKey(parsedCreation)
-            : formatDateKey(new Date());
-        };
-
-        if (cloudState.exists) {
-          const existingJoinedAt = String(cloudState.data?.joinedAt || '').slice(0, 10);
-          if (existingJoinedAt) {
-            setJoinedAt(existingJoinedAt);
-          } else {
-            const fallbackJoinedAt = resolveJoinedAtFallback();
-            setJoinedAt(fallbackJoinedAt);
-            saveJoinedAt(db, userId, fallbackJoinedAt).catch((error) => {
-              console.error('가입일 기록 실패:', error);
-            });
-          }
-
-          const compactedData = compactPortfolioSnapshot(cloudState.data);
-          const persistedCompactedData = {
-            ...compactedData,
-            assets: mergeUniqueAssets(Array.isArray(cloudState.data.assets) ? cloudState.data.assets : []),
-          };
-          const migratedAccountTypes = JSON.stringify(persistedCompactedData.assets)
-            !== JSON.stringify(compactedData.assets);
-          const localData = compactPortfolioSnapshot(
-            (!isAccountSwitch && portfolioSnapshotRef.current) || emptyPortfolioSnapshot(),
-          );
-          const protectedData = {
-            ...compactedData,
-            autoDividends: mergeAutomaticDividendRecords(
-              compactedData.autoDividends,
-              localData.autoDividends,
-            ),
-            confirmedDividends: mergeDividendRecords(
-              localData.confirmedDividends,
-              compactedData.confirmedDividends,
-            ),
-          };
-          const restoredLocalDividends = protectedData.confirmedDividends.length
-            > compactedData.confirmedDividends.length;
-          const restoredLocalAutoDividends = protectedData.autoDividends.length
-            > compactedData.autoDividends.length;
-          const removedDuplicateAutoDividends = protectedData.autoDividends.length
-            < compactedData.autoDividends.length;
-          if (cloudState.needsMigration) {
-            await migratePortfolioState(db, userId, protectedData, userEmail);
-            if (cancelled) return;
-            addLog('클라우드 저장 구조를 안전하게 최신 버전으로 이전했습니다.', 'success');
-          } else if (
-            restoredLocalDividends
-            || restoredLocalAutoDividends
-            || removedDuplicateAutoDividends
-            || migratedAccountTypes
-          ) {
-            await savePortfolioStateDiff(db, userId, protectedData, persistedCompactedData, userEmail);
-            if (cancelled) return;
-            addLog(
-              migratedAccountTypes
-                ? '확인된 계좌 유형과 배당 내역을 클라우드에 반영했습니다.'
-                : '이 기기에 남아 있던 배당 내역을 클라우드에 복구했습니다.',
-              'success',
-            );
-          }
-
-          cloudSnapshotRef.current = protectedData;
-          cloudRevisionRef.current = cloudState.revision || '';
-          applyingCloudSnapshotRef.current = true;
-          setAssets(protectedData.assets);
-          setTrades(protectedData.trades);
-          setMemos(protectedData.memos);
-          setTradeLedger(protectedData.tradeLedger);
-          setAutoDividends(protectedData.autoDividends);
-          setConfirmedDividends(protectedData.confirmedDividends);
-          setDividendAssetRegistry(protectedData.dividendAssetRegistry);
-          setCapitalFlows(protectedData.capitalFlows);
-          setPortfolioSnapshots(protectedData.portfolioSnapshots);
-          setMarketCalendarKeywords(protectedData.marketCalendarKeywords);
-          setPortfolioName(protectedData.portfolioName);
-          setTargetPortfolio(protectedData.targetPortfolio);
-          addLog('로그인 계정의 저장 데이터를 불러왔습니다.', 'success');
-        } else {
-          // 원격 문서가 없다고 해서 로컬을 지우면, 로그인 없이 쓰던 기록이 통째로 날아간다.
-          // 다만 계정을 갈아탄 경우에는 앞선 사용자의 데이터이므로 절대 올리면 안 된다.
-          const localSnapshot = compactPortfolioSnapshot(
-            (!isAccountSwitch && portfolioSnapshotRef.current) || emptyPortfolioSnapshot(),
-          );
-          const hasLocalData = (localSnapshot.assets?.length || 0) > 0
-            || (localSnapshot.trades?.length || 0) > 0
-            || (localSnapshot.memos?.length || 0) > 0
-            || (localSnapshot.tradeLedger?.length || 0) > 0
-            || (localSnapshot.capitalFlows?.length || 0) > 0
-            || (localSnapshot.portfolioSnapshots?.length || 0) > 0
-            || (localSnapshot.marketCalendarKeywords?.length || 0) > 0;
-
-          await migratePortfolioState(db, userId, localSnapshot, userEmail);
-          if (cancelled) return;
-          const fallbackJoinedAt = resolveJoinedAtFallback();
-          setJoinedAt(fallbackJoinedAt);
-          saveJoinedAt(db, userId, fallbackJoinedAt).catch((error) => {
-            console.error('가입일 기록 실패:', error);
-          });
-          cloudSnapshotRef.current = localSnapshot;
-          cloudRevisionRef.current = '';
-          applyingCloudSnapshotRef.current = true;
-
-          addLog(
-            hasLocalData
-              ? '이 기기에 있던 데이터를 계정에 연결했습니다.'
-              : '새 포트폴리오를 시작합니다.',
-            'success',
-          );
-        }
-
-        loadSucceeded = true;
-      } catch (error) {
-        console.error('Cloud portfolio load failed:', error);
-        if (!cancelled) {
-          setCloudLoadFailed(true);
-          addLog('클라우드 데이터를 불러오지 못했습니다. 저장이 잠시 멈춥니다.', 'error');
-        }
-      } finally {
-        if (!cancelled) {
-          setIsCloudPortfolioLoaded(true);
-          // 읽기에 실패한 상태로 저장 게이트를 열면, 비어 있는 로컬 상태가
-          // 원격 문서를 통째로 덮어써 복구가 불가능해진다.
-          if (loadSucceeded) {
-            loadedUserIdRef.current = userId;
-            setCloudPortfolioUserId(userId);
-          }
-        }
-      }
-    };
-
-    loadCloudPortfolio();
-    return () => {
-      cancelled = true;
-    };
-  }, [userId, userEmail, cloudRetryToken, user?.metadata?.creationTime]);
-
-  useEffect(() => {
-    if (!userId || !db || !isCloudPortfolioLoaded || cloudLoadFailed || cloudPortfolioUserId !== userId) {
-      return undefined;
-    }
-
-    let cancelled = false;
-    let isReloading = false;
-
-    const unsubscribe = subscribePortfolioState(db, userId, async ({ exists, revision }) => {
-      if (cancelled || !exists || !revision || revision === cloudRevisionRef.current || isReloading) return;
-      isReloading = true;
-
-      try {
-        const cloudState = await loadPortfolioState(db, userId);
-        if (cancelled || !cloudState.exists) return;
-
-        const compactedData = compactPortfolioSnapshot(cloudState.data);
-        const persistedCompactedData = {
-          ...compactedData,
-          assets: mergeUniqueAssets(Array.isArray(cloudState.data.assets) ? cloudState.data.assets : []),
-        };
-        const migratedAccountTypes = JSON.stringify(persistedCompactedData.assets)
-          !== JSON.stringify(compactedData.assets);
-        const currentData = compactPortfolioSnapshot(portfolioSnapshotRef.current);
-        const protectedData = {
-          ...compactedData,
-          autoDividends: mergeAutomaticDividendRecords(
-            compactedData.autoDividends,
-            currentData.autoDividends,
-          ),
-          confirmedDividends: mergeDividendRecords(
-            currentData.confirmedDividends,
-            compactedData.confirmedDividends,
-          ),
-        };
-        const restoredLocalDividends = protectedData.confirmedDividends.length
-          > compactedData.confirmedDividends.length;
-        const restoredLocalAutoDividends = protectedData.autoDividends.length
-          > compactedData.autoDividends.length;
-        const removedDuplicateAutoDividends = protectedData.autoDividends.length
-          < compactedData.autoDividends.length;
-        if (
-          restoredLocalDividends
-          || restoredLocalAutoDividends
-          || removedDuplicateAutoDividends
-          || migratedAccountTypes
-        ) {
-          await savePortfolioStateDiff(db, userId, protectedData, persistedCompactedData, userEmail);
-          if (cancelled) return;
-        }
-        cloudSnapshotRef.current = protectedData;
-        cloudRevisionRef.current = cloudState.revision || revision;
-
-        if (arePortfolioSnapshotsEquivalent(currentData, protectedData)) return;
-
-        applyingCloudSnapshotRef.current = true;
-        setAssets(protectedData.assets);
-        setTrades(protectedData.trades);
-        setMemos(protectedData.memos);
-        setTradeLedger(protectedData.tradeLedger);
-        setAutoDividends(protectedData.autoDividends);
-        setConfirmedDividends(protectedData.confirmedDividends);
-        setDividendAssetRegistry(protectedData.dividendAssetRegistry);
-        setCapitalFlows(protectedData.capitalFlows);
-        setPortfolioSnapshots(protectedData.portfolioSnapshots);
-        setMarketCalendarKeywords(protectedData.marketCalendarKeywords);
-        setPortfolioName(protectedData.portfolioName);
-        setTargetPortfolio(protectedData.targetPortfolio);
-        addLog('다른 기기에서 변경된 포트폴리오를 반영했습니다.', 'success');
-      } catch (error) {
-        console.error('Realtime cloud portfolio reload failed:', error);
-      } finally {
-        isReloading = false;
-      }
-    }, (error) => {
-      // 구독이 죽으면(토큰 만료, 규칙 변경) 기기 간 동기화가 조용히 멈춘다.
-      // 저장은 계속되므로, 사용자가 모른 채 두 기기가 갈라지는 게 최악이다.
-      console.error('Realtime cloud portfolio subscription failed:', error);
-      if (cancelled) return;
-      addLogRef.current('실시간 동기화가 끊겼습니다. 다른 기기의 변경이 반영되지 않습니다.', 'error');
-    });
-
-    // 구독만 끊고 끝내면, 진행 중이던 loadPortfolioState가 나중에 resolve되면서
-    // 이전 계정의 데이터를 새 계정 화면에 setState 해버린다.
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, [userId, userEmail, isCloudPortfolioLoaded, cloudLoadFailed, cloudPortfolioUserId]);
-
-  useEffect(() => {
-    if (!userId || !db || !isCloudPortfolioLoaded || cloudLoadFailed || cloudPortfolioUserId !== userId) return undefined;
-    if (applyingCloudSnapshotRef.current) {
-      applyingCloudSnapshotRef.current = false;
-      return undefined;
-    }
-
-    let disposed = false;
-    let saveTimer = null;
-
-    const runSave = async (attempt) => {
-      try {
-        const compactedSnapshot = compactPortfolioSnapshot(portfolioSnapshot);
-        const result = await savePortfolioStateDiff(
-          db,
-          userId,
-          compactedSnapshot,
-          cloudSnapshotRef.current,
-          userEmail,
-        );
-        if (disposed) return;
-
-        cloudSnapshotRef.current = compactedSnapshot;
-        // 내가 쓴 리비전을 기억해두지 않으면 실시간 구독이 이 저장을 '남의 변경'으로
-        // 착각해 포트폴리오 전체를 다시 내려받는다.
-        if (result?.revision) cloudRevisionRef.current = result.revision;
-        if (attempt > 0) addLogRef.current('클라우드 저장을 다시 시도해 성공했습니다.', 'success');
-      } catch (error) {
-        if (disposed) return;
-        console.error('Cloud portfolio save failed:', error);
-
-        // 규칙 위반이나 안전장치에 걸린 저장은 다시 시도해도 결과가 같다.
-        const isRetryable = error?.code !== 'unsafe-portfolio-shrink'
-          && error?.code !== 'permission-denied';
-
-        if (isRetryable && attempt < CLOUD_SAVE_RETRY_DELAYS_MS.length) {
-          addLogRef.current(
-            `클라우드 저장에 실패했습니다. ${Math.round(CLOUD_SAVE_RETRY_DELAYS_MS[attempt] / 1000)}초 뒤 다시 시도합니다.`,
-            'error',
-          );
-          saveTimer = setTimeout(() => runSave(attempt + 1), CLOUD_SAVE_RETRY_DELAYS_MS[attempt]);
-          return;
-        }
-
-        const message = error?.code === 'unsafe-portfolio-shrink'
-          ? '데이터가 비정상적으로 대량 감소해 클라우드 저장을 차단했습니다. 기존 기록은 유지됩니다.'
-          : error?.code === 'permission-denied'
-            ? '클라우드 저장 권한이 없습니다. Firestore 규칙을 확인해주세요.'
-            : '클라우드 저장에 계속 실패했습니다. 이 기기에는 저장돼 있으니 연결을 확인해주세요.';
-        addLogRef.current(message, 'error');
-      }
-    };
-
-    saveTimer = setTimeout(() => runSave(0), 700);
-
-    return () => {
-      disposed = true;
-      clearTimeout(saveTimer);
-    };
-  }, [userId, userEmail, isCloudPortfolioLoaded, cloudLoadFailed, cloudPortfolioUserId, portfolioSnapshot]);
 
   useEffect(() => {
     if (!isCloudPortfolioLoaded) return;
@@ -2252,12 +1892,12 @@ const buyLotDraftSummary = useMemo(() => {
 
     fetchLiveData();
     let interval;
-    if (isLiveMode) interval = setInterval(fetchLiveData, AUTO_SYNC_INTERVAL_MS); 
+    interval = setInterval(fetchLiveData, AUTO_SYNC_INTERVAL_MS);
     return () => {
       cancelled = true;
       if (interval) clearInterval(interval);
     };
-  }, [isLiveMode, refreshTrigger, isCloudPortfolioLoaded]);
+  }, [refreshTrigger, isCloudPortfolioLoaded]);
 
   const dividendEntryAssets = useMemo(() => (
     buildDividendCalculationAssets(assets, tradeLedger)
@@ -2572,22 +2212,7 @@ const buyLotDraftSummary = useMemo(() => {
       return Number(currencyRates[code]) > 0 ? Number(currencyRates[code]) : 0;
     },
   }), [canonicalTradeRows, annualReturnYear, currencyRates, exchangeRate, jpyKrwRate]);
-  useEffect(() => {
-    if (!isStorageScopeReady || !isCloudPortfolioLoaded || cloudLoadFailed || isFetching || !lastUpdated) return;
-    if (!(Number(totalConvertedKRW) > 0)) return;
-
-    const date = formatDateKey(new Date());
-    setPortfolioSnapshots((previous) => upsertDailyPortfolioSnapshot(previous, {
-      id: `snapshot-${date}`,
-      date,
-      valueKRW: totalConvertedKRW,
-      unrealizedProfitKRW: dashboardSummary.investedProfitKRW,
-      source: 'auto',
-    }));
-  }, [
-    isStorageScopeReady, isCloudPortfolioLoaded, cloudLoadFailed, isFetching, lastUpdated,
-    totalConvertedKRW, dashboardSummary.investedProfitKRW,
-  ]);
+  // Historical snapshots remain available in saved data; no unused daily rows are appended.
   const dividendCurrencyParts = useMemo(() => (
     Object.entries(dashboardSummary.dividendByCurrency || {})
       .filter(([, amount]) => Math.abs(Number(amount) || 0) > 0.000001)
@@ -3441,7 +3066,7 @@ const buyLotDraftSummary = useMemo(() => {
     // 거래일이 오늘일 때만 지금 환율을 쓰고, 지난 날짜는 0으로 두었다가 그날 환율을 받아 채운다.
     // 단, 호출한 쪽이 이미 쓴 환율을 알려줬다면(원화로 입력한 경우) 그것을 최우선으로 남긴다.
     const knownFxRate = Number(explicitFxRate) > 0 ? Number(explicitFxRate) : 0;
-    const isTradedToday = date === new Date().toISOString().split('T')[0];
+    const isTradedToday = date === formatKoreanDate();
     const entry = buildLedgerEntry({
       sourceId,
       asset,
@@ -3794,7 +3419,7 @@ const buyLotDraftSummary = useMemo(() => {
       return;
     }
 
-    const matchedAsset = assets.find((asset) => asset.name === manualMemo.stockName);
+    const matchedAsset = resolveManualTradeAsset(manualMemo, assets);
     const manualMemoAsset = {
       id: matchedAsset?.id ?? null,
       name: manualMemo.stockName,
@@ -3850,7 +3475,7 @@ const buyLotDraftSummary = useMemo(() => {
   setSelectedAssetToUpdate(asset);
   setAddBuyForm({
     ...initialAddBuyState,
-    buyDate: new Date().toISOString().split('T')[0],
+    buyDate: formatKoreanDate(),
     brokerId: preferredBrokerId,
     brokerFeeRate: formatFeeRateInput(getBrokerFeeRatePercent(preferredBrokerId, asset.category)),
   });
@@ -3870,7 +3495,7 @@ const buyLotDraftSummary = useMemo(() => {
 
   const openSellModal = (asset) => {
   const defaultBrokerId = preferredBrokerId;
-  const sellDate = new Date().toISOString().split('T')[0];
+  const sellDate = formatKoreanDate();
   setSelectedAssetToSell(asset);
   setSellForm({
     ...initialSellFormState,
@@ -3933,7 +3558,7 @@ const buyLotDraftSummary = useMemo(() => {
 
   const updateBuyLotDraft = (draftId, field, value) => {
   setBuyLotDrafts(prevDrafts => prevDrafts.map(lot => (
-    lot.draftId === draftId ? { ...lot, [field]: value } : lot
+    lot.draftId === draftId ? editBuyLot(lot, field, value) : lot
   )));
 };
 
@@ -4002,16 +3627,27 @@ const buyLotDraftSummary = useMemo(() => {
   const now = new Date().toISOString();
   const existingBuyRows = getAssetBuyLedgerRows(selectedAssetToManageBuys, tradeLedger);
   const existingBuyRowsById = new Map(existingBuyRows.map(row => [String(row.id), row]));
+  const hasUnresolvedChangedDate = normalizedDrafts.some((lot) => {
+    const existingRow = existingBuyRowsById.get(String(lot.ledgerId));
+    if (existingRow && getRecordDate(existingRow) === lot.date) return false;
+    return resolveBuyLotFxRate({
+      lot, existingRow, currency: selectedAssetToManageBuys.currency,
+      lookedUpRate: getBuyDateFxState(selectedAssetToManageBuys.currency, lot.date).rate,
+    }) <= 0;
+  });
+  if (hasUnresolvedChangedDate) {
+    addLog('변경한 매수일의 환율을 확인하지 못했습니다. 조회 완료 후 다시 저장해 주세요.', 'error');
+    return;
+  }
   const sortedDrafts = [...normalizedDrafts].sort((a, b) => (
     getDateTimestampSeconds(a.date) - getDateTimestampSeconds(b.date)
   ));
   const nextBuyRows = sortedDrafts.map((lot, index) => {
     const existingRow = lot.ledgerId ? existingBuyRowsById.get(String(lot.ledgerId)) : null;
-    const storedFxRate = Number(lot.fxRate) > 0 ? Number(lot.fxRate) : Number(existingRow?.fxRate) || 0;
-    const lookedUpFxRate = getBuyDateFxState(selectedAssetToManageBuys.currency, lot.date).rate;
-    const fxRate = (selectedAssetToManageBuys.currency || 'KRW') === 'KRW'
-      ? 1
-      : (storedFxRate > 0 ? storedFxRate : Number(lookedUpFxRate) || 0);
+    const fxRate = resolveBuyLotFxRate({
+      lot, existingRow, currency: selectedAssetToManageBuys.currency,
+      lookedUpRate: getBuyDateFxState(selectedAssetToManageBuys.currency, lot.date).rate,
+    });
 
     return {
       ...(existingRow || {}),
@@ -4541,39 +4177,25 @@ const buyLotDraftSummary = useMemo(() => {
   ]);
 
   useEffect(() => {
-    let cancelled = false;
-
     pendingBuyDateFxLookups.forEach(({ currency, date }) => {
       const key = getBuyDateFxKey(currency, date);
       const cached = buyDateFxRatesRef.current[key];
       if (cached && (cached.status === 'loading' || cached.status === 'ready')) return;
-
+      buyDateFxRatesRef.current[key] = { rate: 0, status: 'loading' };
       setBuyDateFxRates(prev => ({ ...prev, [key]: { rate: 0, status: 'loading' } }));
-
-      const resolve = async () => {
-        // USD만 날짜별 과거 환율을 받아올 수 있다. 나머지는 현재 환율로 대신한다.
-        if (currency === 'USD') {
-          const rate = await fetchUsdKrwRateByDate(date);
-          if (Number(rate) > 0) return { rate: Number(rate), status: 'ready' };
-        }
-        const fallback = getCachedKrwRate(currency, currencyRates, exchangeRate || 0, jpyKrwRate || 0);
-        if (Number(fallback) > 0) return { rate: Number(fallback), status: 'ready' };
-        return { rate: 0, status: 'error' };
-      };
-
-      resolve()
-        .then((result) => {
-          if (cancelled) return;
-          setBuyDateFxRates(prev => ({ ...prev, [key]: result }));
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setBuyDateFxRates(prev => ({ ...prev, [key]: { rate: 0, status: 'error' } }));
-        });
+      fetchKrwRateByDate(currency, date).then((rate) => {
+        const result = Number(rate) > 0
+          ? { rate: Number(rate), status: 'ready' }
+          : { rate: 0, status: 'error' };
+        buyDateFxRatesRef.current[key] = result;
+        setBuyDateFxRates(prev => ({ ...prev, [key]: result }));
+      }).catch(() => {
+        const result = { rate: 0, status: 'error' };
+        buyDateFxRatesRef.current[key] = result;
+        setBuyDateFxRates(prev => ({ ...prev, [key]: result }));
+      });
     });
-
-    return () => { cancelled = true; };
-  }, [pendingBuyDateFxLookups, currencyRates, exchangeRate, jpyKrwRate]);
+  }, [pendingBuyDateFxLookups]);
 
   const handleAddAsset = () => {
     if (!newAsset.name || !newAsset.quantity) return;
@@ -4751,22 +4373,7 @@ const buyLotDraftSummary = useMemo(() => {
           onSignOut={handleSignOut}
         />
 
-        {cloudLoadFailed && (
-          <div
-            role="alert"
-            className="px-5 py-4 bg-warn-soft rounded-2xl flex flex-col sm:flex-row sm:items-center gap-3"
-          >
-            <p className="flex-1 text-[14px] font-semibold text-ink leading-relaxed">
-              클라우드 데이터를 불러오지 못해 저장을 멈췄습니다. 지금 수정한 내용은 이 기기에만 남으며, 다시 불러오면 계정에 저장된 내용으로 대체됩니다.
-            </p>
-            <button
-              onClick={() => setCloudRetryToken(token => token + 1)}
-              className="shrink-0 h-11 px-5 bg-ink text-surface rounded-xl font-bold text-[14px] hover:opacity-90 transition-opacity whitespace-nowrap"
-            >
-              다시 불러오기
-            </button>
-          </div>
-        )}
+        <PortfolioSaveStatus sync={cloudSync} />
 
         {/* 탭 */}
         <TabNav activeTab={activeTab} onChange={setActiveTab} />
@@ -6564,9 +6171,7 @@ const buyLotDraftSummary = useMemo(() => {
                     }))}
                     className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
                   >
-                    <option value="KRW">KRW</option>
-                    <option value="USD">USD</option>
-                    <option value="JPY">JPY</option>
+                    {PORTFOLIO_CURRENCIES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
                   </select>
                 </div>
               </div>
@@ -6658,9 +6263,7 @@ const buyLotDraftSummary = useMemo(() => {
               value={newAsset.currency}
               onChange={(e) => setNewAsset({ ...newAsset, currency: e.target.value })}
             >
-              <option value="KRW">원화 (KRW)</option>
-              <option value="USD">달러 (USD)</option>
-              <option value="JPY">엔화 (JPY)</option>
+              {PORTFOLIO_CURRENCIES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
             </select>
             {/* 해외주식·원자재는 티커를 보고 통화가 자동으로 정해진다.
                 여기서 원화를 골라도 달러로 저장되므로, 실제로 쓰일 통화를 분명히 알려준다. */}
@@ -6841,178 +6444,16 @@ const buyLotDraftSummary = useMemo(() => {
 )}
 
 {/* 매수 기록 관리 모달 */}
-{selectedAssetToManageBuys && (() => {
-  return (
+{selectedAssetToManageBuys && (
   <ModalOverlay overlayClassName="z-[105]" labelledBy="manage-buys-title" onClose={closeBuyLotsModal}>
-    <div className="bg-surface w-full max-w-4xl h-[92dvh] md:h-auto md:max-h-[92dvh] rounded-t-[24px] md:rounded-[24px] shadow-modal anim-rise flex flex-col overflow-hidden">
-      <div className="flex justify-between items-start gap-4 px-6 pt-6 md:px-7 md:pt-7 mb-5 md:mb-6 shrink-0">
-        <div className="min-w-0">
-          <h3 id="manage-buys-title" className="text-lg md:text-xl font-bold text-ink truncate">
-            {selectedAssetToManageBuys.name} 매수 기록
-          </h3>
-          <p className="text-[12px] md:text-xs text-ink-mute font-bold mt-1 truncate">
-            {selectedAssetToManageBuys.ticker || '-'} · {buyLotDrafts.length.toLocaleString()}개 기록
-          </p>
-        </div>
-        <button
-          onClick={closeBuyLotsModal}
-          className="p-2 bg-canvas hover:bg-line-soft rounded-full transition-colors shrink-0"
-        >
-          <X size={18} />
-        </button>
-      </div>
-
-      <div className="grid grid-cols-3 gap-2 md:gap-3 px-6 md:px-7 mb-4 md:mb-5 shrink-0">
-        <div className="rounded-xl bg-canvas px-3 py-2.5 md:px-4 md:py-3">
-          <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">총 매수수량</p>
-          <p className="mt-1 text-sm md:text-base font-bold text-ink">
-            {buyLotDraftSummary.totalQuantity.toLocaleString()}{selectedAssetToManageBuys.category === '원자재' ? '단위' : '주'}
-          </p>
-        </div>
-        <div className="rounded-xl bg-canvas px-3 py-2.5 md:px-4 md:py-3">
-          <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">평단</p>
-          <p className="mt-1 text-sm md:text-base font-bold text-ink">
-            {formatMoney(buyLotDraftSummary.averagePrice, selectedAssetToManageBuys.currency)}
-          </p>
-        </div>
-        <div className="rounded-xl bg-canvas px-3 py-2.5 md:px-4 md:py-3">
-          <p className="text-[11px] md:text-[11px] font-bold text-ink-mute">최초 매수일</p>
-          <p className="mt-1 text-sm md:text-base font-bold text-ink">
-            {buyLotDrafts.map(lot => lot.date).filter(Boolean).sort()[0] || '-'}
-          </p>
-          {buyLotDraftSummary.totalBuyFee > 0 && (
-            <p className="text-[11px] font-bold text-ink-mute mt-1">
-              매수 수수료 {formatMoney(buyLotDraftSummary.totalBuyFee, selectedAssetToManageBuys.currency)}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <div className="mx-6 md:mx-7 hairline rounded-xl bg-canvas px-3 py-3 md:px-4 md:py-3.5 mb-4 md:mb-5 shrink-0">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-4">
-          <div>
-            <label htmlFor="buy-lots-account-type" className="block text-[11px] font-bold text-ink-mute mb-1">보유 계좌</label>
-            <p id="buy-lots-account-type-hint" className="text-[11px] md:text-[12px] font-bold text-ink-mute leading-relaxed">
-              ISA·연금계좌는 국내 상장 ETF 분배금의 즉시 원천징수를 유예합니다.
-            </p>
-          </div>
-          <select
-            id="buy-lots-account-type"
-            aria-describedby="buy-lots-account-type-hint"
-            className="w-full sm:w-40 px-3 h-11 bg-surface rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-            value={accountTypeDraft}
-            onChange={(event) => setAccountTypeDraft(normalizeAccountType(event.target.value))}
-          >
-            {ACCOUNT_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto scroll-soft px-6 md:px-7 pb-4">
-        <div className="hidden md:grid grid-cols-[1.05fr_1fr_1fr_0.7fr_1fr_44px] gap-3 px-2 pb-2 text-[11px] font-bold text-ink-mute">
-          <span>매수일</span>
-          <span className="text-right">단가</span>
-          <span className="text-right">수량</span>
-          <span className="text-right">수수료</span>
-          <span className="text-right">매수금액</span>
-          <span></span>
-        </div>
-        <div className="space-y-3">
-          {buyLotDrafts.map((lot, index) => {
-            const lotQuantity = parseNumber(lot.quantity);
-            const lotPrice = parseNumber(lot.price);
-            const lotAmount = lotQuantity * lotPrice;
-
-            return (
-              <div key={lot.draftId} className="grid grid-cols-1 md:grid-cols-[1.05fr_1fr_1fr_0.7fr_1fr_44px] gap-2 md:gap-3 items-end rounded-xl bg-canvas bg-canvas/70 p-3">
-                <div>
-                  <label htmlFor={`buy-lot-${lot.draftId}-date`} className="md:hidden block text-[11px] font-bold text-ink-mute mb-1">매수일</label>
-                  <input
-                    id={`buy-lot-${lot.draftId}-date`}
-                    aria-label={`${index + 1}번째 매수 기록의 매수일`}
-                    type="date"
-                    className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-                    value={lot.date}
-                    onChange={(e) => updateBuyLotDraft(lot.draftId, 'date', e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label htmlFor={`buy-lot-${lot.draftId}-price`} className="md:hidden block text-[11px] font-bold text-ink-mute mb-1">단가</label>
-                  <input
-                    id={`buy-lot-${lot.draftId}-price`}
-                    aria-label={`${index + 1}번째 매수 기록의 단가`}
-                    type="text"
-                    inputMode="decimal"
-                    className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm text-right"
-                    value={formatInputNumber(lot.price)}
-                    onChange={(e) => updateBuyLotDraft(lot.draftId, 'price', sanitizeNumericInput(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <label htmlFor={`buy-lot-${lot.draftId}-quantity`} className="md:hidden block text-[11px] font-bold text-ink-mute mb-1">수량</label>
-                  <input
-                    id={`buy-lot-${lot.draftId}-quantity`}
-                    aria-label={`${index + 1}번째 매수 기록의 수량`}
-                    type="text"
-                    inputMode="decimal"
-                    className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm text-right"
-                    value={formatInputNumber(lot.quantity)}
-                    onChange={(e) => updateBuyLotDraft(lot.draftId, 'quantity', sanitizeNumericInput(e.target.value))}
-                  />
-                </div>
-                <div>
-                  <label htmlFor={`buy-lot-${lot.draftId}-fee`} className="md:hidden block text-[11px] font-bold text-ink-mute mb-1">매수 수수료</label>
-                  <input
-                    id={`buy-lot-${lot.draftId}-fee`}
-                    aria-label={`${index + 1}번째 매수 기록의 매수 수수료`}
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0"
-                    className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm text-right"
-                    value={formatInputNumber(lot.brokerFee ?? '')}
-                    onChange={(e) => updateBuyLotDraft(lot.draftId, 'brokerFee', sanitizeNumericInput(e.target.value))}
-                  />
-                </div>
-                <div className="px-3 py-2.5 rounded-xl bg-canvas text-right">
-                  <p className="md:hidden text-[11px] font-bold text-ink-mute mb-1">매수금액</p>
-                  <p className="font-bold text-ink text-xs md:text-sm">
-                    {formatMoney(lotAmount, selectedAssetToManageBuys.currency)}
-                  </p>
-                </div>
-                <button
-                  onClick={() => removeBuyLotDraft(lot.draftId)}
-                  disabled={buyLotDrafts.length <= 1}
-                  className="h-10 md:h-11 inline-flex items-center justify-center rounded-xl text-ink-mute hover:text-danger hover:bg-danger-soft disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-ink-mute transition-colors"
-                  title={`${index + 1}번째 매수 기록 삭제`}
-                >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="flex flex-col md:flex-row gap-2 md:gap-3 px-6 md:px-7 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-7 border-t border-line-soft bg-surface shrink-0">
-        <button
-          onClick={addBuyLotDraft}
-          className="inline-flex items-center justify-center gap-2 px-5 py-3 bg-line-soft hover:bg-line text-ink-soft rounded-xl font-bold text-xs md:text-sm transition-colors"
-        >
-          <Plus size={16} /> 매수 기록 추가
-        </button>
-        <button
-          onClick={handleSaveBuyLots}
-          className="flex-1 h-12 px-6 bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
-        >
-          매수 기록 저장하기
-        </button>
-      </div>
-    </div>
+    <BuyLotsEditor
+      asset={selectedAssetToManageBuys} drafts={buyLotDrafts} summary={buyLotDraftSummary}
+      accountType={accountTypeDraft} onAccountTypeChange={setAccountTypeDraft}
+      onClose={closeBuyLotsModal} onUpdate={updateBuyLotDraft} onRemove={removeBuyLotDraft}
+      onAdd={addBuyLotDraft} onSave={handleSaveBuyLots}
+    />
   </ModalOverlay>
-  );
-})()}
+)}
 
 {/* 추가 매수 모달 */}
 {isUpdatingAsset && selectedAssetToUpdate && (
