@@ -9,7 +9,10 @@ const fixture = {
   portfolioName: '점검용 포트폴리오',
   assets: [{ id: 'fixture', name: '테스트 주식', ticker: 'TEST', category: '해외주식', currency: 'USD', originalCurrency: 'USD', quantity: 10, averagePrice: 100, currentPrice: 120, originalAveragePrice: 100, originalCurrentPrice: 120, buyDate: '2026-09-01' }],
   tradeLedger: [{ id: 'buy-fixture', assetId: 'fixture', name: '테스트 주식', ticker: 'TEST', category: '해외주식', currency: 'USD', side: 'buy', quantity: 10, price: 100, date: '2026-09-01', fxRate: 1300, createdAt: '2026-09-01T01:00:00Z' }],
-  memos: [], trades: [], autoDividends: [], confirmedDividends: [], dividendAssetRegistry: [],
+  memos: [],
+  // Real accounts can retain old trades that the editable ledger view excludes.
+  trades: Array.from({ length: 10 }, (_, id) => ({ id: `legacy-${id}`, name: '과거 기록', sellDate: '2025-01-01', quantity: 1, sellPrice: 50 })),
+  autoDividends: [], confirmedDividends: [], dividendAssetRegistry: [],
   capitalFlows: [{ id: 'archived-flow', amountKRW: 1300000, date: '2026-09-01' }],
   portfolioSnapshots: [{ id: 'archived-snapshot', date: '2026-09-01', valueKRW: 1300000 }],
 };
@@ -23,16 +26,20 @@ const authModule = `
   };
 `;
 const storeModule = `
+  import { assertSafePortfolioWrite } from '../utils/portfolioWriteSafety.js';
   const read = () => JSON.parse(localStorage.getItem('review-server'));
   const offline = () => localStorage.getItem('review-offline') === '1';
   export const loadPortfolioState = async () => {
-    if (offline()) throw new Error('offline fixture');
+    if (offline()) throw Object.assign(new Error('offline fixture'), { code: 'unavailable' });
     return { exists: true, data: read(), revision: localStorage.getItem('review-revision') || '1' };
   };
-  export const savePortfolioStateDiff = async (_db, _user, next) => {
+  export const savePortfolioStateDiff = async (_db, _user, next, previous) => {
+    assertSafePortfolioWrite(previous, next);
     await new Promise(resolve => setTimeout(resolve, 50));
-    if (offline()) throw new Error('offline fixture');
-    localStorage.setItem('review-server', JSON.stringify(next));
+    if (offline()) throw Object.assign(new Error('offline fixture'), { code: 'unavailable' });
+    // Like Firestore diffs, leave rows outside the editable baseline untouched.
+    const archived = read().trades.filter(row => !(previous?.trades || []).some(old => old.id === row.id));
+    localStorage.setItem('review-server', JSON.stringify({ ...next, trades: [...archived, ...next.trades] }));
     const revision = String(Number(localStorage.getItem('review-revision') || 1) + 1);
     localStorage.setItem('review-revision', revision);
     return { changed: true, revision };
@@ -81,6 +88,7 @@ try {
   page.setDefaultTimeout(45000);
   await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.getByRole('heading', { name: '점검용 포트폴리오', exact: true }).waitFor();
+  await page.getByRole('status').filter({ hasText: /^저장 완료$/ }).waitFor();
   const verifyDialog = async (opener, name) => {
     await opener.click();
     const dialog = page.getByRole('dialog', { name });
@@ -118,6 +126,7 @@ try {
   await page.evaluate(() => localStorage.removeItem('review-offline'));
   await page.getByRole('button', { name: '다시 연결', exact: true }).click();
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('review-server')).portfolioName === '오프라인 수정 보존');
+  await page.getByRole('status').filter({ hasText: /^저장 완료$/ }).waitFor();
 
   await page.getByRole('button', { name: '수익·배당', exact: true }).click();
   await page.getByRole('button', { name: '누락 매매 기록 추가', exact: true }).click();
@@ -130,6 +139,7 @@ try {
   const preserved = await page.evaluate(() => JSON.parse(localStorage.getItem('review-server')));
   assert.deepEqual(preserved.capitalFlows, fixture.capitalFlows);
   assert.deepEqual(preserved.portfolioSnapshots, fixture.portfolioSnapshots);
+  assert.deepEqual(preserved.trades, fixture.trades);
   assert.ok(await page.getByText('$120.00', { exact: true }).count() > 0);
   await mkdir('test-results', { recursive: true });
   await page.screenshot({ path: 'test-results/mobile-portfolio.png', fullPage: true });

@@ -6,6 +6,7 @@ import {
 import { createPortfolioSyncSession } from '../services/portfolioSyncSession.js';
 import { readPortfolioJournal, writePortfolioJournal } from '../utils/portfolioSyncJournal.js';
 import { formatKoreanDate } from '../utils/dates.js';
+import { getPortfolioSyncError } from '../utils/portfolioSyncErrors.js';
 
 const RETRY_DELAYS = [3000, 10000, 30000];
 
@@ -67,8 +68,8 @@ export default function usePortfolioCloudSync({ database, user, snapshot, ready,
         session.refresh(revision).catch(() => {
           if (!disposed) callbacks.current.onLog('다른 기기의 변경을 불러오지 못했습니다. 미전송 기록은 유지됩니다.', 'error');
         });
-      }, () => {
-        if (!disposed) callbacks.current.onLog('실시간 동기화가 끊겼습니다. 다시 연결해 주세요.', 'error');
+      }, (error) => {
+        if (!disposed) callbacks.current.onLog(getPortfolioSyncError(error).message, 'error');
       });
     }).catch(() => {
       if (!disposed) setState((previous) => ({ ...previous, loaded: true, failed: true }));
@@ -91,8 +92,7 @@ export default function usePortfolioCloudSync({ database, user, snapshot, ready,
         await session.flush();
       } catch (error) {
         if (disposed) return;
-        if (!['unsafe-portfolio-shrink', 'permission-denied', 'local-persistence-failed'].includes(error.code)
-          && attempt < RETRY_DELAYS.length) {
+        if (getPortfolioSyncError(error).retryable && attempt < RETRY_DELAYS.length) {
           timer = setTimeout(() => save(attempt + 1), RETRY_DELAYS[attempt]);
         }
       }

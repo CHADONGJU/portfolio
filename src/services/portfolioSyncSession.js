@@ -1,4 +1,5 @@
 import { arePortfolioSnapshotsEquivalent } from '../utils/portfolioSnapshotComparison.js';
+import { getPortfolioSyncError } from '../utils/portfolioSyncErrors.js';
 import {
   appendPortfolioRecovery, hasPendingPortfolio, mergePendingPortfolio,
 } from '../utils/portfolioSyncJournal.js';
@@ -17,16 +18,18 @@ export const createPortfolioSyncSession = ({
   let closed = false;
   let chain = Promise.resolve();
   let phase = 'loading';
+  let syncError = null;
   const pending = () => hasPendingPortfolio(journal);
   const report = () => {
-    if (!closed) onStatus({ phase, pending: pending(), recoveryCount: journal.recoveries?.length || 0 });
+    if (!closed) onStatus({ phase, error: syncError, pending: pending(), recoveryCount: journal.recoveries?.length || 0 });
   };
   const store = () => {
     if (!persist(journal)) {
       phase = 'local-error';
-      report();
       const error = new Error('미전송 기록을 이 기기에 보관하지 못했습니다.');
       error.code = 'local-persistence-failed';
+      syncError = getPortfolioSyncError(error);
+      report();
       throw error;
     }
   };
@@ -63,7 +66,11 @@ export const createPortfolioSyncSession = ({
         const merged = mergePendingPortfolio(journal.base || opening, local, remoteSnapshot);
         if (merged.conflicts.length) remember({ reason: 'concurrent-edits', conflicts: merged.conflicts });
         const next = compact(protect(merged.snapshot, local));
-        journal = { ...journal, base: remote.data, local: next, opening: undefined, revision: remote.revision || '' };
+        // Diff the same normalized representation on both sides. Using raw
+        // server rows here mistakes view normalization for mass deletion and
+        // can permanently trip the write guard. Excluded server rows are not
+        // part of the editable baseline, so later diffs leave them untouched.
+        journal = { ...journal, base: remoteSnapshot, local: next, opening: undefined, revision: remote.revision || '' };
         store();
         if (remote.needsMigration) {
           await migrate(next);
@@ -77,12 +84,14 @@ export const createPortfolioSyncSession = ({
           onApply(view);
         }
       }
-      loaded = true;
       phase = pending() ? 'pending' : 'saved';
+      syncError = null;
       store();
+      loaded = true;
       report();
     } catch (error) {
       if (phase !== 'local-error') phase = 'error';
+      syncError = getPortfolioSyncError(error);
       report();
       throw error;
     }
@@ -97,7 +106,7 @@ export const createPortfolioSyncSession = ({
       view = next;
       journal = { ...journal, local: merged.snapshot };
       if (merged.conflicts.length) remember({ reason: 'edits-during-sync', conflicts: merged.conflicts });
-      phase = pending() ? 'pending' : 'saved';
+      if (!syncError) phase = pending() ? 'pending' : 'saved';
       store();
       report();
     },
@@ -106,16 +115,19 @@ export const createPortfolioSyncSession = ({
       store();
       const sent = compact(journal.local);
       phase = 'saving';
+      syncError = null;
       report();
       try {
         const result = await save(sent, journal.base);
         if (closed) return;
         journal = { ...journal, base: sent, revision: result?.revision || journal.revision };
         phase = pending() ? 'pending' : 'saved';
+        syncError = null;
         store();
         report();
       } catch (error) {
         if (phase !== 'local-error') phase = 'error';
+        syncError = getPortfolioSyncError(error);
         report();
         throw error;
       }

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPortfolioSyncSession } from '../src/services/portfolioSyncSession.js';
 import { mergePendingPortfolio } from '../src/utils/portfolioSyncJournal.js';
+import { assertSafePortfolioWrite } from '../src/utils/portfolioWriteSafety.js';
 
 const snapshot = (memos = [], extra = {}) => ({ memos, assets: [], tradeLedger: [], ...extra });
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -117,4 +118,78 @@ test('local storage failure stops cloud replacement and preserves memory for exp
   await assert.rejects(app.session.refresh(), (error) => error.code === 'local-persistence-failed');
   assert.equal(app.applied.length, 0);
   assert.equal(app.session.getJournal().recoveries[0].snapshot.memos[0].text, 'local');
+});
+
+test('legacy records excluded from the editable view do not trigger a destructive-write guard on every save', async () => {
+  const archivedTrades = Array.from({ length: 10 }, (_, id) => ({ id: `legacy-${id}`, sellDate: '2025-01-01' }));
+  const remote = snapshot([], { portfolioName: 'Portfolio', trades: archivedTrades });
+  const writes = [];
+  const app = setup({
+    initial: remote,
+    // The app derives its editable trades from the canonical trade ledger.
+    compact: (value) => ({ ...value, trades: (value.trades || []).filter((trade) => trade.ledgerId) }),
+    load: async () => ({ exists: true, data: remote, revision: 'r1' }),
+    save: async (next, previous) => {
+      assertSafePortfolioWrite(previous, next);
+      writes.push({ next, previous });
+      return { revision: 'r2' };
+    },
+  });
+  await app.session.refresh();
+  assert.equal(app.session.hasPending(), false, 'loading and normalizing records is not a user edit');
+  await app.session.flush();
+  assert.equal(writes.length, 0);
+  app.session.capture({ ...app.applied.at(-1), portfolioName: 'Renamed' });
+  await app.session.flush();
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].next.portfolioName, 'Renamed');
+  assert.deepEqual(writes[0].previous.trades, [], 'diff must not delete excluded server records');
+  assert.deepEqual(remote.trades, archivedTrades);
+  assert.equal(app.session.hasPending(), false);
+});
+
+test('reconnecting repairs a journal with a raw baseline while preserving unsent edits and recoveries', async () => {
+  const remote = snapshot([], { portfolioName: 'Before', trades: Array.from({ length: 10 }, (_, id) => ({ id })) });
+  const local = { ...remote, trades: [], portfolioName: 'Unsent name' };
+  const recoveries = [{ reason: 'before-first-sync', snapshot: remote }];
+  const statuses = [];
+  const app = setup({
+    initial: local,
+    journal: { version: 1, base: remote, local, revision: 'r1', recoveries },
+    compact: (value) => ({ ...value, trades: [] }),
+    load: async () => ({ exists: true, data: remote, revision: 'r1' }),
+    save: async (next, previous) => { assertSafePortfolioWrite(previous, next); return { revision: 'r2' }; },
+    onStatus: (status) => statuses.push(status),
+  });
+  await app.session.refresh();
+  assert.equal(app.session.getJournal().local.portfolioName, 'Unsent name');
+  await app.session.flush();
+  assert.equal(statuses.at(-1).phase, 'saved');
+  assert.equal(statuses.at(-1).error, null);
+  assert.deepEqual(app.stored().recoveries, recoveries);
+});
+
+test('a write guard failure remains a processing error while later edits are safely captured', async () => {
+  const statuses = [];
+  const app = setup({
+    save: async () => { throw Object.assign(new Error('guard'), { code: 'unsafe-portfolio-shrink' }); },
+    onStatus: (status) => statuses.push(status),
+  });
+  await app.session.refresh();
+  app.session.capture(snapshot([{ id: 'memo', text: 'first' }]));
+  await assert.rejects(app.session.flush());
+  app.session.capture(snapshot([{ id: 'memo', text: 'second' }]));
+  assert.equal(statuses.at(-1).phase, 'error');
+  assert.equal(statuses.at(-1).error.code, 'unsafe-portfolio-shrink');
+  assert.equal(statuses.at(-1).error.retryable, false);
+  assert.equal(app.stored().local.memos[0].text, 'second');
+});
+
+test('failed initial journal acknowledgement does not mark the session ready for saves', async () => {
+  let stores = 0;
+  const app = setup({ persist: () => ++stores !== 2 });
+  await assert.rejects(app.session.refresh(), (error) => error.code === 'local-persistence-failed');
+  assert.equal(app.session.isLoaded(), false);
+  await app.session.refresh();
+  assert.equal(app.session.isLoaded(), true);
 });
