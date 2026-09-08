@@ -1,5 +1,12 @@
 const CURRENCY_ORDER = ['KRW', 'USD', 'JPY'];
 
+// The calendar and bars share payout events; changing a view only selects a
+// month, never recalculates amounts or moves forecasts to an eligibility date.
+export const selectDividendMonthEvents = (events = [], monthKey = '') => (
+  events.filter((event) => event.date?.slice(0, 7) === monthKey)
+    .sort((left, right) => left.date.localeCompare(right.date) || left.name.localeCompare(right.name))
+);
+
 const getCurrencyOrder = (currency) => {
   const index = CURRENCY_ORDER.indexOf(currency);
   return index === -1 ? CURRENCY_ORDER.length : index;

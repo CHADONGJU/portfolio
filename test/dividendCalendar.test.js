@@ -3,8 +3,10 @@ import test from 'node:test';
 
 import {
   getDividendCalendarForecastQuantity,
+  selectDividendMonthEvents,
   summarizeDividendCalendarEvents,
 } from '../src/utils/dividendCalendar.js';
+import { buildAnnualDividendEvents, summarizeAnnualDividendTrend } from '../src/utils/annualDividendTrend.js';
 
 test('과거 보유 UNH의 배당 기록 수량으로 미래 배당을 다시 만들지 않는다', () => {
   const historicalUnh = {
@@ -55,4 +57,36 @@ test('ignores invalid amounts and keeps valid zero amounts in the event count', 
     estimatedCount: 1,
     totals: [{ currency: 'JPY', amount: 0 }],
   });
+});
+
+test('October calendar and bars include the same payouts, currencies and forecasts beyond the next cycle', () => {
+  const events = buildAnnualDividendEvents({
+    year: 2026, today: new Date('2026-09-08T00:00:00Z'),
+    assets: [{ name: 'Monthly', ticker: 'MONTH', currency: 'USD', quantity: 10 }],
+    dividendSummary: [{
+      name: 'Monthly', ticker: 'MONTH', currency: 'USD', isCurrentHolding: true, expectedAmount: 42,
+      history: [
+        { id: 'aug', exDate: '2026-08-10', paymentDate: '2026-08-15', currency: 'USD', quantity: 10, amount: 42 },
+        { id: 'jul', exDate: '2026-07-10', paymentDate: '2026-07-15', currency: 'USD', quantity: 10, amount: 42 },
+      ],
+    }, {
+      name: 'September payout', currency: 'USD', isCurrentHolding: false,
+      history: [{ id: 'boundary', paymentDate: '2026-09-30', currency: 'USD', amount: 10 }],
+    }, {
+      name: 'Legacy receipt', currency: 'KRW', isCurrentHolding: false,
+      history: [{ id: 'receipt', date: '2026-10-02', currency: 'KRW', amount: 2000 }],
+    }],
+  });
+  const calendar = selectDividendMonthEvents(events, '2026-10');
+  assert.deepEqual(calendar.map((event) => [event.name, event.date, event.netAmount]), [
+    ['September payout', '2026-10-01', 10],
+    ['Legacy receipt', '2026-10-02', 2000],
+    ['Monthly', '2026-10-16', 42],
+  ]);
+  const trend = summarizeAnnualDividendTrend({ events, resolveKrwRate: (event) => event.currency === 'KRW' ? 1 : 1400 });
+  assert.deepEqual(calendar.map((event) => event.id).sort(), trend.months[9].events.map((event) => event.id).sort());
+  assert.equal(trend.months[9].total, 74800);
+  assert.deepEqual(summarizeDividendCalendarEvents(calendar).totals, [
+    { currency: 'KRW', amount: 2000 }, { currency: 'USD', amount: 52 },
+  ]);
 });

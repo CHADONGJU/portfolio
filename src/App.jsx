@@ -83,7 +83,6 @@ import {
 } from './utils/tradeReconciliation';
 import {
   addMonthsClamped,
-  estimateDividendIntervalMonths,
 } from './utils/dividendInterval';
 import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
 import { buildTradeSummary } from './utils/tradeSummary';
@@ -100,7 +99,7 @@ import {
   roundTradeCost,
 } from './utils/tradeCosts';
 import {
-  getDividendCalendarForecastQuantity,
+  selectDividendMonthEvents,
   summarizeDividendCalendarEvents,
 } from './utils/dividendCalendar';
 import {
@@ -149,7 +148,6 @@ import {
   getDividendExDate,
   getDividendOfficialPaymentDate,
   getDividendReportingDate,
-  isDividendReportingDateShifted,
 } from './utils/dividendDates';
 import {
   isConfirmedDividendRecord,
@@ -259,23 +257,6 @@ const buildCalendarCells = (monthKey) => {
       isCurrentMonth: date.getMonth() === month - 1,
     };
   });
-};
-const getNextEstimatedExDividendDate = (history = [], today = new Date()) => {
-  const sortedDates = history
-    .map((dividend) => new Date(`${dividend.date}T00:00:00`))
-    .filter((date) => Number.isFinite(date.getTime()))
-    .sort((a, b) => b - a);
-  if (sortedDates.length === 0) return null;
-
-  const intervalMonths = estimateDividendIntervalMonths(sortedDates[1], sortedDates[0]);
-  let nextDate = addMonthsClamped(sortedDates[0], intervalMonths);
-  const safeLimit = addMonthsClamped(today, 24);
-
-  while (nextDate < today && nextDate < safeLimit) {
-    nextDate = addMonthsClamped(nextDate, intervalMonths);
-  }
-
-  return Number.isFinite(nextDate.getTime()) ? nextDate : null;
 };
 /**
  * 거래 기록의 대표 날짜. utils/tradeReconciliation의 getTradeRecordDate와 반드시
@@ -1198,9 +1179,9 @@ const App = () => {
   const [assetCurrencyView, setAssetCurrencyView] = useState({});
   const [selectedDividendAsset, setSelectedDividendAsset] = useState(null);
   const [dividendFilter, setDividendFilter] = useState('전체');
-  const [calendarMonth, setCalendarMonth] = useState(() => getMonthKey(new Date()));
+  const [calendarMonth, setCalendarMonth] = useState(() => formatKoreanDate().slice(0, 7));
   const [calendarView, setCalendarView] = useState('dividend');
-  const [annualDividendYear, setAnnualDividendYear] = useState(() => new Date().getFullYear());
+  const annualDividendYear = Number(calendarMonth.slice(0, 4));
   const [annualDividendFxRates, setAnnualDividendFxRates] = useState(() => (
     loadJson(ANNUAL_DIVIDEND_FX_RATES_STORAGE_KEY, {})
   ));
@@ -1983,7 +1964,7 @@ const buyLotDraftSummary = useMemo(() => {
     year: annualDividendYear,
   }), [annualDividendYear, dividendSummary, enhancedAssets]);
   const annualDividendFxLookupDates = useMemo(() => {
-    const todayKey = formatDateKey(new Date());
+    const todayKey = formatKoreanDate();
     return [...new Set(annualDividendEvents
       .filter((event) => (
         !event.isEstimated
@@ -2233,84 +2214,9 @@ const buyLotDraftSummary = useMemo(() => {
     ));
   }, [stockPerformanceSummary, performanceSearchTerm]);
   const dividendCalendarCells = useMemo(() => buildCalendarCells(calendarMonth), [calendarMonth]);
-  const dividendCalendarEvents = useMemo(() => {
-    const monthPrefix = calendarMonth;
-    const today = new Date();
-
-    return dividendSummary
-      .flatMap((summary) => {
-        const history = Array.isArray(summary.history) ? summary.history : [];
-        const asset = enhancedAssets.find(candidate => candidate.name === summary.name);
-        const paymentEvents = history.map((dividend) => {
-          const officialPaymentDate = getDividendOfficialPaymentDate(dividend);
-          if (!officialPaymentDate) return null;
-
-          const dateKey = getDividendReportingDate(dividend);
-          if (!dateKey.startsWith(monthPrefix)) return null;
-
-          const quantity = Number(dividend.quantity) || parseNumber(asset?.quantity);
-          const grossAmount = Number(dividend.grossAmount)
-            || (Number(dividend.perShareGrossAmount) || 0) * quantity;
-          const netAmount = Number(dividend.amount) || 0;
-          if (quantity <= 0 || (grossAmount <= 0 && netAmount <= 0)) return null;
-
-          return {
-            id: `${dividend.id || summary.name}-payment-${dateKey}`,
-            date: dateKey,
-            dateLabel: isDividendReportingDateShifted(dividend) ? '한국시간 지급일' : '지급일',
-            officialPaymentDate,
-            exDate: getDividendExDate(dividend),
-            eligibilityDate: dividend.recordDate || getDividendEligibilityDate(dividend),
-            name: summary.name,
-            ticker: dividend.ticker || asset?.ticker || summary.ticker || summary.name,
-            currency: dividend.currency || asset?.currency || summary.currency || 'KRW',
-            grossAmount,
-            netAmount,
-            quantity,
-            isEstimated: false,
-          };
-        }).filter(Boolean);
-
-        const forecastQuantity = getDividendCalendarForecastQuantity(summary, asset);
-        if (forecastQuantity <= 0) return paymentEvents;
-
-        const nextDate = getNextEstimatedExDividendDate(history, today);
-        if (!nextDate) return paymentEvents;
-
-        const latestDividend = history[0] || {};
-        const currency = asset?.currency || summary.currency || latestDividend.currency || 'KRW';
-        const exDate = formatDateKey(nextDate);
-        const eligibilityDate = getDividendEligibilityDate({ exDate, currency }) || exDate;
-        if (!eligibilityDate.startsWith(monthPrefix)) return paymentEvents;
-
-        const quantity = forecastQuantity;
-        const perShareGrossAmount = Number(latestDividend.perShareGrossAmount) || 0;
-        const perShareNetAmount = Number(latestDividend.perShareNetAmount)
-          || (Number(latestDividend.quantity) > 0 ? Number(latestDividend.amount) / Number(latestDividend.quantity) : 0);
-        const grossAmount = perShareGrossAmount * quantity;
-        const netAmount = perShareNetAmount * quantity || Number(summary.expectedAmount) || 0;
-        const ticker = asset?.ticker || summary.ticker || summary.name;
-
-        if (quantity <= 0 || (grossAmount <= 0 && netAmount <= 0)) return paymentEvents;
-
-        return [...paymentEvents, {
-          id: `${summary.name}-estimated-record-${eligibilityDate}`,
-          date: eligibilityDate,
-          dateLabel: '예상 배당기준일',
-          exDate,
-          eligibilityDate,
-          officialPaymentDate: '',
-          name: summary.name,
-          ticker,
-          currency,
-          grossAmount,
-          netAmount,
-          quantity,
-          isEstimated: true,
-        }];
-      })
-      .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
-  }, [calendarMonth, dividendSummary, enhancedAssets]);
+  const dividendCalendarEvents = useMemo(() => (
+    selectDividendMonthEvents(annualDividendEvents, calendarMonth)
+  ), [annualDividendEvents, calendarMonth]);
   const dividendCalendarEventsByDate = useMemo(() => (
     dividendCalendarEvents.reduce((acc, event) => {
       if (!acc[event.date]) acc[event.date] = [];
@@ -5874,7 +5780,7 @@ const buyLotDraftSummary = useMemo(() => {
                     주요 증시 일정
                   </button>
                 </div>
-                <FeatureInfo text={calendarView === 'dividend' ? '공시 지급일은 한국시간 기준이며, 향후 배당락일은 최근 주기로 추정합니다.' : '미국·한국·유로존·중국·일본의 중요 일정과 관심 키워드 일정을 한국시간으로 표시합니다.'} />
+                <FeatureInfo text={calendarView === 'dividend' ? '캘린더와 그래프는 같은 지급 일정과 세후 금액을 사용합니다. 공시 지급일은 한국시간 기준이며, 예상 지급일은 최근 배당 주기와 지급 간격으로 추정합니다.' : '미국·한국·유로존·중국·일본의 중요 일정과 관심 키워드 일정을 한국시간으로 표시합니다.'} />
               </div>
               <div className="seg flex items-center gap-0.5 p-1 rounded-[14px]">
                 <button
@@ -5899,7 +5805,7 @@ const buyLotDraftSummary = useMemo(() => {
 
             {calendarView === 'dividend' ? (
             <>
-            <div className="px-5 py-4 md:px-7 md:py-5 border-b border-line bg-canvas/60 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div role="region" aria-label="월별 배당 합계" className="px-5 py-4 md:px-7 md:py-5 border-b border-line bg-canvas/60 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
                 <p className="text-[12px] md:text-xs font-bold text-ink-mute">
                   {calendarMonth.replace('-', '년 ')}월 세후 예상 배당 합계
@@ -5908,15 +5814,22 @@ const buyLotDraftSummary = useMemo(() => {
                   지급 확정 {dividendCalendarMonthlySummary.confirmedCount.toLocaleString()}건 · 예상 {dividendCalendarMonthlySummary.estimatedCount.toLocaleString()}건 · 통화별 합계
                 </p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {dividendCalendarMonthlySummary.totals.length > 0 ? (
-                  dividendCalendarMonthlySummary.totals.map(({ currency, amount }) => (
-                    <span key={currency} className="figure px-3 py-2 rounded-xl bg-surface border border-line-soft text-sm md:text-base font-bold text-ink">
-                      {formatMoney(amount, currency)}
-                    </span>
-                  ))
-                ) : (
-                  <span className="text-xs md:text-sm font-bold text-ink-mute">예정 금액 없음</span>
+              <div className="flex flex-col items-start md:items-end gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {dividendCalendarMonthlySummary.totals.length > 0 ? (
+                    dividendCalendarMonthlySummary.totals.map(({ currency, amount }) => (
+                      <span key={currency} className="figure px-3 py-2 rounded-xl bg-surface border border-line-soft text-sm md:text-base font-bold text-ink">
+                        {formatMoney(amount, currency)}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-xs md:text-sm font-bold text-ink-mute">예정 금액 없음</span>
+                  )}
+                </div>
+                {dividendCalendarMonthlySummary.totals.length > 0 && (
+                  <p className="figure text-xs font-semibold text-ink-mute">
+                    원화 환산 {formatMoney(annualDividendTrend.months[Number(calendarMonth.slice(5, 7)) - 1].total, 'KRW')}
+                  </p>
                 )}
               </div>
             </div>
@@ -5948,7 +5861,8 @@ const buyLotDraftSummary = useMemo(() => {
                           <button
                             key={event.id}
                             onClick={() => setSelectedCalendarEventId(event.id)}
-                            title={`${event.name} 세전 ${formatMoney(event.grossAmount, event.currency)} / 세후 ${formatMoney(event.netAmount, event.currency)}`}
+                            aria-label={`${event.date} ${event.name} ${event.isEstimated ? '예상' : '지급 확정'} 세후 ${formatMoney(event.netAmount, event.currency)}`}
+                            title={`${event.dateLabel} ${event.date} · ${event.name} 세후 ${formatMoney(event.netAmount, event.currency)}`}
                             className={`w-full truncate rounded-md px-1.5 py-1 text-[11px] md:text-[12px] font-semibold text-left transition-all ${selectedCalendarEvent?.id === event.id ? 'bg-ink text-surface shadow-card' : event.isEstimated ? 'bg-brand-soft text-ink-soft hover:bg-line' : 'bg-up-soft text-up hover:brightness-95'}`}
                           >
                             {event.name}
@@ -6022,18 +5936,18 @@ const buyLotDraftSummary = useMemo(() => {
                     <div>
                       <p className="text-[12px] md:text-xs font-bold text-ink-mute mb-1">{selectedCalendarEvent.dateLabel} {selectedCalendarEvent.date}</p>
                       <h4 className="text-lg md:text-xl font-bold text-ink">{selectedCalendarEvent.name}</h4>
-                      <p className="text-xs md:text-sm font-bold text-ink-soft mt-1">{selectedCalendarEvent.ticker} · {selectedCalendarEvent.quantity.toLocaleString()}주 기준</p>
+                      <p className="text-xs md:text-sm font-bold text-ink-soft mt-1">{selectedCalendarEvent.ticker} · {selectedCalendarEvent.quantity > 0 ? `${selectedCalendarEvent.quantity.toLocaleString()}주 기준` : '수량 미기록'}</p>
                       <p className="text-[11px] md:text-xs font-bold text-ink-mute mt-1">
-                        배당기준일 {selectedCalendarEvent.eligibilityDate || selectedCalendarEvent.date}
+                        {selectedCalendarEvent.isEstimated ? '예상 배당기준일' : '배당기준일'} {selectedCalendarEvent.eligibilityDate || '미기록'}
                       </p>
                       <p className="text-[11px] md:text-xs font-bold text-ink-mute mt-1">
-                        배당지급일 {selectedCalendarEvent.officialPaymentDate || '미정'}
+                        {selectedCalendarEvent.isEstimated ? `예상 지급일 ${selectedCalendarEvent.date}` : `배당지급일 ${selectedCalendarEvent.officialPaymentDate || '미기록'}`}
                       </p>
                     </div>
                     <div className="grid grid-cols-2 gap-3 min-w-full md:min-w-80">
                       <div className="bg-surface border border-line-soft rounded-xl p-4">
                         <p className="text-[12px] font-bold text-ink-mute mb-1">{selectedCalendarEvent.isEstimated ? '세전 예상' : '세전'}</p>
-                        <p className="figure text-base md:text-lg font-bold text-ink">{formatMoney(selectedCalendarEvent.grossAmount, selectedCalendarEvent.currency)}</p>
+                        <p className="figure text-base md:text-lg font-bold text-ink">{selectedCalendarEvent.grossAmount > 0 ? formatMoney(selectedCalendarEvent.grossAmount, selectedCalendarEvent.currency) : '미기록'}</p>
                       </div>
                       <div className="bg-surface border border-line-soft rounded-xl p-4">
                         <p className="text-[12px] font-bold text-ink-mute mb-1">{selectedCalendarEvent.isEstimated ? '세후 예상' : '세후'}</p>
@@ -6060,11 +5974,12 @@ const buyLotDraftSummary = useMemo(() => {
           </div>
           {calendarView === 'dividend' && (
             <AnnualDividendTrend
-              key={annualDividendYear}
               year={annualDividendYear}
+              selectedMonth={Number(calendarMonth.slice(5, 7))}
               trend={annualDividendTrend}
               isFxLoading={annualDividendFxLookupDates.length > 0}
-              onYearChange={setAnnualDividendYear}
+              onYearChange={(year) => setCalendarMonth(`${year}-${calendarMonth.slice(5, 7)}`)}
+              onMonthChange={(month) => setCalendarMonth(`${annualDividendYear}-${String(month).padStart(2, '0')}`)}
             />
           )}
           </div>

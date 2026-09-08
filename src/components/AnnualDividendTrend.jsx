@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatMoney } from '../utils/formatters';
 import FeatureInfo from './FeatureInfo';
@@ -23,15 +23,7 @@ const getSegmentColor = (name, assetIndex) => (
     : DIVIDEND_GREEN_COLORS[assetIndex % DIVIDEND_GREEN_COLORS.length]
 );
 
-const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
-  const currentYear = new Date().getFullYear();
-  const currentMonth = new Date().getMonth() + 1;
-  const latestMonthWithData = [...trend.months]
-    .reverse()
-    .find((month) => month.total > 0)?.month;
-  const initialMonth = latestMonthWithData || (year === currentYear ? currentMonth : 12);
-  const [selectedMonth, setSelectedMonth] = useState(initialMonth);
-
+const AnnualDividendTrend = ({ year, selectedMonth, trend, isFxLoading, onYearChange, onMonthChange }) => {
   const selectedMonthData = trend.months.find((month) => month.month === selectedMonth) || trend.months[0];
   const detailRows = useMemo(() => {
     const rows = new Map();
@@ -64,7 +56,7 @@ const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
   ];
 
   return (
-    <section className="bg-surface rounded-[20px] overflow-hidden">
+    <section aria-label="연간 배당 흐름" className="bg-surface rounded-[20px] overflow-hidden">
       <div className="p-5 md:p-7 border-b border-line flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div className="flex items-center gap-2">
           <h3 className="text-base md:text-lg font-bold text-ink flex items-center gap-2">
@@ -148,8 +140,9 @@ const AnnualDividendTrend = ({ year, trend, isFxLoading, onYearChange }) => {
                     <button
                       key={month.month}
                       type="button"
-                      onClick={() => setSelectedMonth(month.month)}
+                      onClick={() => onMonthChange(month.month)}
                       aria-label={`${month.month}월 세후 배당 ${formatMoney(month.total, 'KRW')}`}
+                      aria-pressed={selectedMonth === month.month}
                       /* focus:outline-none만 두면 전역 :focus-visible 규칙보다 특이도가
                          높아 차트 전체에 포커스 표시가 사라진다. 대체 링을 함께 준다. */
                       className="group flex-1 h-full min-w-9 sm:min-w-12 flex flex-col items-center justify-end focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-surface rounded-lg"

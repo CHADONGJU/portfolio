@@ -12,7 +12,13 @@ const fixture = {
   memos: [],
   // Real accounts can retain old trades that the editable ledger view excludes.
   trades: Array.from({ length: 10 }, (_, id) => ({ id: `legacy-${id}`, name: '과거 기록', sellDate: '2025-01-01', quantity: 1, sellPrice: 50 })),
-  autoDividends: [], confirmedDividends: [], dividendAssetRegistry: [],
+  autoDividends: [
+    { id: 'div-jul', date: '2026-07-20', paymentDate: '2026-08-05' },
+    { id: 'div-aug', date: '2026-08-20', paymentDate: '2026-09-05' },
+    { id: 'div-sep', date: '2026-09-20', paymentDate: '2026-10-05' },
+  ].map(row => ({ ...row, exDate: row.date, name: '테스트 주식', ticker: 'TEST', currency: 'USD',
+    quantity: 10, perShareGrossAmount: 5, perShareNetAmount: 4.2, grossAmount: 50, amount: 42, fxRate: 1400, entitlementVerified: true })),
+  confirmedDividends: [], dividendAssetRegistry: [],
   capitalFlows: [{ id: 'archived-flow', amountKRW: 1300000, date: '2026-09-01' }],
   portfolioSnapshots: [{ id: 'archived-snapshot', date: '2026-09-01', valueKRW: 1300000 }],
 };
@@ -84,11 +90,33 @@ try {
     return route.fulfill({ json: {} });
   });
   const page = await context.newPage();
+  await page.clock.setFixedTime(new Date('2026-09-08T03:00:00Z'));
   page.on('pageerror', (error) => errors.push(error.message));
   page.setDefaultTimeout(45000);
   await page.goto(origin, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.getByRole('heading', { name: '점검용 포트폴리오', exact: true }).waitFor();
   await page.getByRole('status').filter({ hasText: /^저장 완료$/ }).waitFor();
+
+  // Both views use October payouts, including a declared event whose ex-date
+  // is in September; selecting either view also selects the other one.
+  await page.getByRole('button', { name: '캘린더', exact: true }).click();
+  await page.getByRole('button', { name: '다음 달', exact: true }).click();
+  const annualChart = page.getByRole('region', { name: '연간 배당 흐름', exact: true });
+  const calendarTotal = page.getByRole('region', { name: '월별 배당 합계', exact: true });
+  await calendarTotal.getByText('2026년 10월 세후 예상 배당 합계', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '2026-10-06 테스트 주식 지급 확정 세후 $42.00', exact: true }).waitFor();
+  assert.equal(await calendarTotal.getByText('$42.00', { exact: true }).count(), 1);
+  await calendarTotal.getByText('원화 환산 ₩58,800', { exact: true }).waitFor();
+  assert.equal(await annualChart.getByRole('button', { name: '10월 세후 배당 ₩58,800', exact: true }).getAttribute('aria-pressed'), 'true');
+  await annualChart.getByText('지급 확정 · $42.00', { exact: true }).waitFor();
+  await annualChart.getByRole('button', { name: /^11월 세후 배당/ }).click();
+  await calendarTotal.getByText('2026년 11월 세후 예상 배당 합계', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '2026-11-05 테스트 주식 예상 세후 $42.00', exact: true }).waitFor();
+  await annualChart.getByRole('button', { name: '다음 연도', exact: true }).click();
+  await calendarTotal.getByText('2027년 11월 세후 예상 배당 합계', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '이전 달', exact: true }).click();
+  assert.equal(await annualChart.getByRole('button', { name: /^10월 세후 배당/ }).getAttribute('aria-pressed'), 'true');
+  await page.getByRole('button', { name: '내 포트폴리오', exact: true }).click();
   const verifyDialog = async (opener, name) => {
     await opener.click();
     const dialog = page.getByRole('dialog', { name });
@@ -143,12 +171,20 @@ try {
   assert.ok(await page.getByText('$120.00', { exact: true }).count() > 0);
   await mkdir('test-results', { recursive: true });
   await page.screenshot({ path: 'test-results/mobile-portfolio.png', fullPage: true });
+  await page.getByRole('button', { name: '캘린더', exact: true }).click();
+  // The earlier offline reload resets the view to September 2026.
+  await annualChart.getByRole('button', { name: /^10월 세후 배당/ }).click();
+  await calendarTotal.getByText('2026년 10월 세후 예상 배당 합계', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '2026-10-06 테스트 주식 지급 확정 세후 $42.00', exact: true }).waitFor();
+  assert.equal(await annualChart.getByRole('button', { name: '10월 세후 배당 ₩58,800', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await page.screenshot({ path: 'test-results/mobile-october-calendar.png', fullPage: true });
   await page.getByRole('button', { name: '로그아웃', exact: true }).click();
   await page.getByRole('button', { name: '로그인 없이 둘러보기' }).click();
   assert.equal(await page.getByText('테스트 주식', { exact: true }).count(), 0);
   assert.equal(await page.evaluate(() => Boolean(localStorage.getItem('portfolio_sync_journal_v1::fixture-user'))), true);
   assert.deepEqual(errors, []);
-  console.log('Browser checks passed: desktop/mobile dialogs, FX date edit, offline reload/reconnect, JPY, archival data, account isolation.');
+  console.log('Browser checks passed: October calendar/chart payouts and navigation, desktop/mobile dialogs, FX date edit, offline reload/reconnect, JPY, archival data, account isolation.');
 } finally {
   await context.close();
   await browser.close();

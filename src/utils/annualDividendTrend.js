@@ -1,10 +1,21 @@
 import {
   getDividendExDate,
+  getDividendEligibilityDate,
   getDividendOfficialPaymentDate,
   getDividendReportingDate,
+  isDividendReportingDateShifted,
 } from './dividendDates.js';
+import { getDividendCalendarForecastQuantity } from './dividendCalendar.js';
+import { getAutomaticDividendEventKey, getDividendRecordIdentity } from './dividendRecords.js';
+import { formatKoreanDate } from './dates.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const getPaymentIdentity = (dividend) => {
+  const identity = getDividendRecordIdentity(dividend);
+  if (dividend.id !== undefined && dividend.id !== null && String(dividend.id)) return identity;
+  return `${identity}::${getAutomaticDividendEventKey(dividend)}`;
+};
 
 const toUtcDate = (dateKey = '') => {
   const date = new Date(`${dateKey}T00:00:00Z`);
@@ -35,8 +46,8 @@ const addUtcMonthsClamped = (date, months) => {
 };
 
 const getEstimatedIntervalMonths = (history = []) => {
-  const dates = history
-    .map((dividend) => toUtcDate(getDividendExDate(dividend)))
+  const dates = [...new Set(history.map((dividend) => getDividendExDate(dividend)))]
+    .map(toUtcDate)
     .filter(Boolean)
     .sort((left, right) => right - left);
   if (dates.length < 2) return 3;
@@ -50,8 +61,10 @@ const getEstimatedIntervalMonths = (history = []) => {
 };
 
 const getEstimatedPaymentLagDays = (history = []) => {
-  const knownLags = history
+  const knownLags = [...history]
+    .sort((left, right) => getDividendExDate(right).localeCompare(getDividendExDate(left)))
     .map((dividend) => {
+      if (!getDividendOfficialPaymentDate(dividend)) return null;
       const exDate = toUtcDate(getDividendExDate(dividend));
       const paymentDate = toUtcDate(getDividendReportingDate(dividend));
       if (!exDate || !paymentDate) return null;
@@ -64,42 +77,61 @@ const getEstimatedPaymentLagDays = (history = []) => {
 };
 
 const buildEstimatedEvents = ({ summary, asset, year, today }) => {
-  const history = Array.isArray(summary.history) ? summary.history : [];
+  const currency = String(summary.currency || asset?.currency || 'KRW').toUpperCase();
+  const scheduleHistory = Array.isArray(summary.scheduleHistory)
+    ? summary.scheduleHistory
+    : summary.history;
+  const history = (Array.isArray(scheduleHistory) ? scheduleHistory : [])
+    .map((dividend) => ({ ...dividend, currency: dividend.currency || currency }));
+  const quantity = getDividendCalendarForecastQuantity(summary, asset);
   const exDates = history
     .map((dividend) => toUtcDate(getDividendExDate(dividend)))
     .filter(Boolean)
     .sort((left, right) => right - left);
   const amount = Number(summary.expectedAmount) || 0;
-  if (exDates.length === 0 || amount <= 0) return [];
+  if (exDates.length === 0 || amount <= 0 || quantity <= 0) return [];
 
   const intervalMonths = getEstimatedIntervalMonths(history);
   const paymentLagDays = getEstimatedPaymentLagDays(history);
-  const todayDate = toUtcDate(today.toISOString().slice(0, 10));
+  const todayDate = toUtcDate(formatKoreanDate(today));
+  if (!todayDate) return [];
   const targetEnd = new Date(Date.UTC(year, 11, 31));
   const safeEnd = addUtcMonthsClamped(todayDate, 24);
+  const latestDividend = [...history]
+    .sort((left, right) => getDividendExDate(right).localeCompare(getDividendExDate(left)))[0] || {};
+  const perShareGrossAmount = Number(latestDividend.perShareGrossAmount)
+    || (Number(latestDividend.quantity) > 0
+      ? (Number(latestDividend.grossAmount) || 0) / Number(latestDividend.quantity)
+      : 0);
+  let cycle = 1;
   let estimatedExDate = addUtcMonthsClamped(exDates[0], intervalMonths);
-
-  while (estimatedExDate < todayDate && estimatedExDate <= safeEnd) {
-    estimatedExDate = addUtcMonthsClamped(estimatedExDate, intervalMonths);
-  }
 
   const events = [];
   while (estimatedExDate <= targetEnd && estimatedExDate <= safeEnd) {
     const estimatedPaymentDate = addUtcDays(estimatedExDate, paymentLagDays);
-    if (estimatedPaymentDate.getUTCFullYear() === year) {
+    if (estimatedPaymentDate >= todayDate && estimatedPaymentDate.getUTCFullYear() === year) {
       const date = formatUtcDateKey(estimatedPaymentDate);
+      const exDate = formatUtcDateKey(estimatedExDate);
       events.push({
         id: `${summary.name}-estimated-${date}`,
         name: summary.name,
         ticker: summary.ticker || asset?.ticker || summary.name,
         date,
+        dateLabel: '예상 지급일',
+        exDate,
+        eligibilityDate: getDividendEligibilityDate({ exDate, currency }),
+        officialPaymentDate: '',
         fxDate: date,
-        currency: String(summary.currency || asset?.currency || 'KRW').toUpperCase(),
+        currency,
         amount,
+        netAmount: amount,
+        grossAmount: perShareGrossAmount * quantity,
+        quantity,
         isEstimated: true,
       });
     }
-    estimatedExDate = addUtcMonthsClamped(estimatedExDate, intervalMonths);
+    cycle += 1;
+    estimatedExDate = addUtcMonthsClamped(exDates[0], intervalMonths * cycle);
   }
 
   return events;
@@ -111,23 +143,60 @@ export const buildAnnualDividendEvents = ({
   year,
   today = new Date(),
 }) => dividendSummary.flatMap((summary) => {
-  const history = Array.isArray(summary.history) ? summary.history : [];
   const asset = assets.find((candidate) => candidate.name === summary.name);
-  const confirmedEvents = history.map((dividend) => {
-    const date = getDividendReportingDate(dividend);
+  const history = Array.isArray(summary.history) ? summary.history : [];
+  const todayKey = formatKoreanDate(today);
+  // Receipt history stays authoritative for past cash. Add published future
+  // payments from the same formula ledger without bringing excluded past rows
+  // back into totals or counting a manually confirmed receipt twice.
+  const futurePayments = (Array.isArray(summary.scheduleHistory) ? summary.scheduleHistory : [])
+    .filter((dividend) => {
+      const datedDividend = {
+        ...dividend,
+        currency: dividend.currency || summary.currency || asset?.currency || 'KRW',
+      };
+      return getDividendOfficialPaymentDate(datedDividend)
+        && getDividendReportingDate(datedDividend) > todayKey;
+    });
+  const knownPayments = new Set(history.map(getPaymentIdentity));
+  const paymentHistory = [...history, ...futurePayments.filter((dividend) => {
+    const identity = getPaymentIdentity(dividend);
+    if (knownPayments.has(identity)) return false;
+    knownPayments.add(identity);
+    return true;
+  })];
+  const confirmedEvents = paymentHistory.map((dividend, index) => {
+    const currency = String(dividend.currency || summary.currency || asset?.currency || 'KRW').toUpperCase();
+    const datedDividend = { ...dividend, currency };
+    const date = getDividendReportingDate(datedDividend);
     if (!date || Number(date.slice(0, 4)) !== year) return null;
 
     const amount = Number(dividend.amount) || 0;
     if (amount <= 0) return null;
+    const officialPaymentDate = getDividendOfficialPaymentDate(datedDividend);
+    const quantity = Number(dividend.quantity) || 0;
+    const recordId = dividend.id !== undefined && dividend.id !== null && String(dividend.id)
+      ? String(dividend.id)
+      : `${summary.name}-${getPaymentIdentity(dividend)}-${index}`;
 
     return {
-      id: `${dividend.id || summary.name}-annual-${date}`,
+      id: `${recordId}-annual-${date}`,
       name: summary.name,
       ticker: dividend.ticker || summary.ticker || asset?.ticker || summary.name,
       date,
-      fxDate: getDividendOfficialPaymentDate(dividend) || date,
-      currency: String(dividend.currency || summary.currency || asset?.currency || 'KRW').toUpperCase(),
+      dateLabel: officialPaymentDate
+        ? (isDividendReportingDateShifted(datedDividend) ? '한국시간 지급일' : '지급일')
+        : '배당 기록일',
+      exDate: getDividendExDate(datedDividend),
+      eligibilityDate: dividend.recordDate || getDividendEligibilityDate(datedDividend),
+      officialPaymentDate,
+      fxDate: officialPaymentDate || date,
+      currency,
       amount,
+      netAmount: amount,
+      grossAmount: Number(dividend.grossAmount)
+        || (Number(dividend.perShareGrossAmount) || 0) * quantity,
+      quantity,
       fxRate: Number(dividend.fxRate) || 0,
       isEstimated: false,
     };
@@ -135,7 +204,8 @@ export const buildAnnualDividendEvents = ({
 
   // 매도 종목의 과거 수령액은 그래프에 남기되, 보유 수량이 0인 종목의 미래
   // 배당을 계속 만들어내지는 않는다.
-  const estimatedEvents = year >= today.getFullYear() && summary.isCurrentHolding !== false
+  const estimatedEvents = year >= Number(formatKoreanDate(today).slice(0, 4))
+    && getDividendCalendarForecastQuantity(summary, asset) > 0
     ? buildEstimatedEvents({ summary, asset, year, today })
     : [];
 

@@ -502,6 +502,7 @@ export const usePortfolioMetrics = ({
           expectedAnnualAmount: 0,
           annualDividendYieldPercent: null,
           history: [],
+          scheduleHistory: [],
         };
         return;
       }
@@ -576,6 +577,9 @@ export const usePortfolioMetrics = ({
         // Detail history is a receipt ledger, not a forecast. Keep future events in
         // assetDivs for the next-dividend estimate, but never list them as received.
         history: sortDividendRecordsNewestFirst(receivedAssetDivs),
+        // Upcoming declared payments belong in the calendar and chart, while
+        // receipt details above continue to contain only received dividends.
+        scheduleHistory: assetDivs,
       };
     });
     
