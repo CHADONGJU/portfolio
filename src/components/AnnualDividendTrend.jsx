@@ -63,7 +63,7 @@ const AnnualDividendTrend = ({ year, selectedMonth, trend, isFxLoading, onYearCh
             <BarChart3 size={18} className="text-ink-soft" />
             연간 배당 흐름
           </h3>
-          <FeatureInfo text="지급월별 세후 배당 전망입니다. 실제 수령 기록과 최근 배당 주기를 반복한 향후 예상이 함께 있으며, 빗금은 아직 공시되지 않은 추정값입니다." />
+          <FeatureInfo text="지급월별 세후 배당 전망입니다. 수령·지급 예정은 이미 받은 배당과 공시된 향후 지급을 합친 금액이며, 목표 수익률에는 수령한 배당만 반영합니다. 빗금은 아직 공시되지 않은 추정값입니다." />
         </div>
 
         <div className="seg inline-flex self-start lg:self-auto items-center gap-0.5 p-1 rounded-[14px]">
@@ -95,7 +95,7 @@ const AnnualDividendTrend = ({ year, selectedMonth, trend, isFxLoading, onYearCh
             <p className="text-[11px] md:text-xs font-bold text-ink-mute mb-1">연간 세후 배당 전망</p>
             <p className="figure text-xl md:text-2xl font-bold text-ink">{formatMoney(trend.annualTotal, 'KRW')}</p>
             <p className="text-[11px] font-semibold text-ink-mute mt-1">
-              확정 {formatMoney(trend.confirmedTotal, 'KRW')} · 예상 {formatMoney(trend.estimatedTotal, 'KRW')}
+              수령·지급 예정 {formatMoney(trend.confirmedTotal, 'KRW')} · 미공시 예상 {formatMoney(trend.estimatedTotal, 'KRW')}
             </p>
           </div>
           <div className="bg-canvas rounded-2xl p-4 md:p-5">

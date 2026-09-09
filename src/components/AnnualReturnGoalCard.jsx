@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, Target } from 'lucide-react';
 import { formatInputNumber, sanitizeNumericInput } from '../utils/formatters.js';
+import { getAnnualReturnUnavailableMessage } from './annualReturnMessages.js';
 
 const AnnualReturnGoalCard = ({ year, earliestYear, targetPercent, performance, onTargetChange, onYearChange }) => {
   const currentYear = new Date().getFullYear();
@@ -25,19 +26,17 @@ const AnnualReturnGoalCard = ({ year, earliestYear, targetPercent, performance, 
     ? `달성률 ${achievementLabel}%`
     : target <= 0
       ? '목표 수익률을 입력하세요.'
-      : '이 해의 매도 기록이 쌓이면 자동 계산합니다.';
-  const insufficientMessage = (performance?.buyCount || 0) > 0 && (performance?.sellCount || 0) === 0
-    ? '아직 매도한 기록이 없습니다. 매도가 생기면 그 해 매매 수익률을 자동 계산합니다.'
-    : '이 해의 매매 기록이 아직 없습니다. 매수·매도 기록을 넣으면 자동 계산합니다.';
+      : '원가 기록을 확인하면 자동 계산합니다.';
+  const insufficientMessage = getAnnualReturnUnavailableMessage(performance);
 
   return (
-    <section className="bg-surface rounded-[20px] overflow-hidden">
+    <section aria-label="목표 수익률" className="bg-surface rounded-[20px] overflow-hidden">
       <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div className="flex items-center gap-2">
           <Target size={18} className="text-ink-soft" />
           <div>
             <h3 className="text-base md:text-lg font-bold text-ink">{year}년 목표 수익률</h3>
-            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">목표와 실제 연도별 수익률을 이 화면에서 함께 관리합니다.</p>
+            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">투입원가 기준 실현 수익률 · 확정 배당 {performance?.includeDividends ? '포함' : '제외'} · 평가손익 제외</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">

@@ -196,6 +196,30 @@ test('공식 지급일이 지난 보유수량 검증 계산분은 홈페이지 �
   assert.equal(rows.reduce((sum, row) => sum + row.amount, 0), 15780);
 });
 
+test('미래 실제 입금 기록은 보존하고 입력한 지급일이 되어야 수령액에 반영한다', () => {
+  const records = [{
+    id: 'future-manual', ticker: 'JEPI', currency: 'USD', amount: 100,
+    actualPaymentDate: '2026-10-02', status: 'actual', confirmationSource: 'user-entry',
+  }];
+  const original = structuredClone(records);
+
+  assert.deepEqual(selectReceivedDividendRecords(records, '2026-10-01'), []);
+  assert.deepEqual(selectReceivedDividendRecords(records, '2026-10-02').map((row) => row.id), ['future-manual']);
+  assert.deepEqual(records, original);
+});
+
+test('확정 상태도 한국 지급일을 기준으로 집계하며 날짜 없는 수령액은 제외한다', () => {
+  const records = [
+    { id: 'official', paymentDate: '2026-09-30' },
+    { id: 'actual', actualPaymentDate: '2026-09-30' },
+    { id: 'future-legacy', date: '2026-10-01' },
+    { id: 'undated', period: '2026-09' },
+  ].map((record) => ({ ...record, currency: 'USD', amount: 10, status: 'confirmed' }));
+
+  assert.deepEqual(selectReceivedDividendRecords(records, '2026-09-30').map((row) => row.id), ['actual']);
+  assert.deepEqual(selectReceivedDividendRecords(records, '2026-10-01').map((row) => row.id), ['official', 'actual', 'future-legacy']);
+});
+
 test('지급일이 없는 해외 배당락일 추정치는 입금 합계에 포함하지 않는다', () => {
   const rows = selectReceivedDividendRecords([
     { id: 'foreign', ticker: 'TEST', amount: 0.75, currency: 'USD', date: '2026-07-30', entitlementVerified: true },

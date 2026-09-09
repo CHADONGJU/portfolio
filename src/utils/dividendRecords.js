@@ -228,13 +228,16 @@ export const normalizeDividendValidationRecords = (dividends = []) => (
 export const selectReceivedDividendRecords = (dividends = [], today = getKoreaDateKey()) => (
   dividends.filter((dividend) => {
     if (isDeletedDividendRecord(dividend) || !Number.isFinite(Number(dividend.amount))) return false;
+    const paymentDate = getDividendReportingDate(dividend);
     if (isConfirmedDividendRecord(dividend)) {
-      return Boolean(dividend.actualPaymentDate || dividend.paymentDate || dividend.date || dividend.period);
+      // An explicit receipt still needs a payment day that has arrived. Preserve
+      // future-dated records in the ledger, but do not recognize them as income
+      // before that Korean reporting date.
+      return Boolean(paymentDate && paymentDate <= today);
     }
 
     // Formula rows are counted only after the official payment date and only when
     // their record-date holdings were verified from the transaction ledger.
-    const paymentDate = getDividendReportingDate(dividend);
     const currency = String(dividend.currency || '').toUpperCase();
     const canUseExDividendDate = currency === 'KRW';
     if (!dividend.actualPaymentDate && !dividend.paymentDate && !canUseExDividendDate) return false;

@@ -2,6 +2,8 @@ import { useMemo } from 'react';
 import { getCategoryColor, getCategoryDetailColor } from '../constants.js';
 import { getDividendExDate, getDividendReportingDate } from '../utils/dividendDates.js';
 import { sortDividendRecordsNewestFirst } from '../utils/dividendRecords.js';
+import { resolveDividendIncomeRate } from '../utils/dividendIncome.js';
+import { formatKoreanDate } from '../utils/dates.js';
 import { calculateAnnualDividendYield } from '../utils/annualDividendYield.js';
 import {
   buildCanonicalTradeRows,
@@ -105,6 +107,7 @@ export const usePortfolioMetrics = ({
   exchangeRate,
   jpyKrwRate,
   currencyRates = {},
+  historicalDividendRates = {},
   selectedCategory,
   selectedDividendAsset,
   dividendFilter,
@@ -368,9 +371,14 @@ export const usePortfolioMetrics = ({
       const unrealizedKRW = assetRows.reduce((sum, asset) => sum + asset.profitKRW, 0);
       const realizedKRW = sellRows.reduce((sum, trade) => sum + getRecordKrwPnl(trade, getRecordRate), 0);
       // amount가 비어 있는 기록 한 건이면 이 종목의 배당·합계가 통째로 NaN이 된다.
-      const dividendKRW = dividendRows.reduce((sum, dividend) => (
-        sum + ((Number(dividend.amount) || 0) * getRecordKrwRate(dividend, getRecordRate))
-      ), 0);
+      const dividendKRW = dividendRows.reduce((sum, dividend) => {
+        const amount = Number(dividend.amount);
+        if (!Number.isFinite(amount) || amount <= 0) return sum;
+        const { rate: dividendRate } = resolveDividendIncomeRate(dividend, {
+          exchangeRate, jpyKrwRate, currencyRates, historicalRates: historicalDividendRates,
+        });
+        return sum + amount * dividendRate;
+      }, 0);
       const totalKRW = unrealizedKRW + realizedKRW + dividendKRW;
 
       const unrealizedNative = assetRows.reduce((sum, asset) => sum + asset.profitNative, 0);
@@ -433,7 +441,7 @@ export const usePortfolioMetrics = ({
       if (a.name !== b.name) return a.name.localeCompare(b.name);
       return b.round - a.round;
     });
-  }, [enhancedAssets, canonicalTradeRows, receivedDividends, exchangeRate, jpyKrwRate, currencyRates]);
+  }, [enhancedAssets, canonicalTradeRows, receivedDividends, exchangeRate, jpyKrwRate, currencyRates, historicalDividendRates]);
 
   // 5. 배당금 그룹화
   const dividendSummary = useMemo(() => {
@@ -594,34 +602,17 @@ export const usePortfolioMetrics = ({
     if (!selectedDividendAsset) return [];
     const summary = dividendSummary.find(s => s.name === selectedDividendAsset);
     if (!summary) return [];
-    const today = new Date();
-    const currentYear = today.getFullYear();
-    const currentMonth = today.getMonth();
+    const todayKey = formatKoreanDate();
 
-      const seen = new Set();
-      return sortDividendRecordsNewestFirst(summary.history.filter((d, index) => {
-        const divDate = new Date(`${getDividendReportingDate(d)}T00:00:00`);
-        const matchesFilter = dividendFilter === '이번 달'
-          ? divDate.getFullYear() === currentYear && divDate.getMonth() === currentMonth
-          : dividendFilter === '올해'
-            ? divDate.getFullYear() === currentYear
-            : true;
-        if (!matchesFilter) return false;
-        /**
-         * 배당락일이 없는 기록(지급일만 있는 수입 내역)은 예전에 키가
-         * "JEPI::undefined::USD"로 전부 같아져서, 서로 다른 달의 배당이
-         * 상세 표에서만 사라지고 합계에는 남는 불일치가 생겼다.
-         * 식별에 쓸 수 있는 날짜가 없으면 기록 자체를 키로 삼는다.
-         */
-        const dateKey = d.exDate || d.date || getDividendReportingDate(d);
-        const identity = d.id ?? d.sourceId ?? '';
-        const key = dateKey
-          ? [d.ticker || d.name, dateKey, d.currency].join('::')
-          : `id::${identity || index}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      }));
+    // Formula/manual reconciliation already chose the receipt ledger upstream.
+    // A date alone cannot identify a payment: separate accounts and receipts can
+    // legitimately share a date, and every row must remain visible in details.
+    return sortDividendRecordsNewestFirst(summary.history.filter((dividend) => {
+      const reportingDate = getDividendReportingDate(dividend);
+      if (dividendFilter === '이번 달') return reportingDate.slice(0, 7) === todayKey.slice(0, 7);
+      if (dividendFilter === '올해') return reportingDate.slice(0, 4) === todayKey.slice(0, 4);
+      return true;
+    }));
   }, [dividendSummary, selectedDividendAsset, dividendFilter]);
 
   // 자산 및 기록 삭제 로직 강화 

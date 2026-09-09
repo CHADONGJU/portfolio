@@ -10,6 +10,9 @@ import ModalOverlay from './components/ModalOverlay';
 import UserSettingsPanel from './components/UserSettingsPanel';
 import AnnualReturnGoalCard from './components/AnnualReturnGoalCard';
 import AnnualReturnHistory from './components/AnnualReturnHistory';
+import DividendIncomeSummary from './components/DividendIncomeSummary';
+import { resolveDividendIncomeRate, summarizeDividendIncome } from './utils/dividendIncome.js';
+import { calculateAnnualIncomeReturn } from './utils/annualIncomeReturn.js';
 import BrokerFeeFields from './components/BrokerFeeFields';
 import BuyLotsEditor from './components/BuyLotsEditor';
 import AnnualDividendTrend from './components/AnnualDividendTrend';
@@ -108,7 +111,6 @@ import {
 } from './utils/annualDividendTrend';
 import { buildStockSearchOptions } from './utils/stockSearchOptions';
 import {
-  calculateAnnualTradeReturn,
   getAnnualTradeYears,
 } from './utils/annualTradeReturn';
 import { calculateOverseasCapitalGainsTax } from './utils/overseasCapitalGainsTax';
@@ -1921,6 +1923,7 @@ const buyLotDraftSummary = useMemo(() => {
     tradeLedger,
     autoDividends: reportedDividends,
     receivedDividends,
+    historicalDividendRates: annualDividendFxRates,
     dividendAssetRegistry,
     exchangeRate,
     jpyKrwRate,
@@ -1965,17 +1968,22 @@ const buyLotDraftSummary = useMemo(() => {
   }), [annualDividendYear, dividendSummary, enhancedAssets]);
   const annualDividendFxLookupDates = useMemo(() => {
     const todayKey = formatKoreanDate();
-    return [...new Set(annualDividendEvents
+    const candidates = [...annualDividendEvents, ...receivedDividends.map((dividend) => ({
+      ...dividend,
+      fxDate: getDividendOfficialPaymentDate(dividend) || getDividendReportingDate(dividend),
+    }))];
+    return [...new Set(candidates
       .filter((event) => (
         !event.isEstimated
         && event.currency === 'USD'
+        && event.fxDate
         && event.fxDate < todayKey
         && !(Number(event.fxRate) > 0)
         && !(Number(annualDividendFxRates[event.fxDate]) > 0)
       ))
       .map((event) => event.fxDate))]
       .sort();
-  }, [annualDividendEvents, annualDividendFxRates]);
+  }, [annualDividendEvents, receivedDividends, annualDividendFxRates]);
   const annualDividendFxLookupKey = annualDividendFxLookupDates.join('|');
 
   useEffect(() => {
@@ -2011,18 +2019,10 @@ const buyLotDraftSummary = useMemo(() => {
 
   const annualDividendTrend = useMemo(() => summarizeAnnualDividendTrend({
     events: annualDividendEvents,
-    resolveKrwRate: (event) => {
-      if (event.currency === 'KRW') return 1;
-      if (Number(event.fxRate) > 0) return Number(event.fxRate);
-      if (event.currency === 'USD') {
-        if (!event.isEstimated && Number(annualDividendFxRates[event.fxDate]) > 0) {
-          return Number(annualDividendFxRates[event.fxDate]);
-        }
-        return exchangeRate || currencyRates.USD || 1350;
-      }
-      if (event.currency === 'JPY') return jpyKrwRate || currencyRates.JPY || 9.5;
-      return currencyRates[event.currency] || 1;
-    },
+    resolveKrwRate: (event) => resolveDividendIncomeRate(event, {
+      exchangeRate, jpyKrwRate, currencyRates,
+      historicalRates: event.isEstimated ? {} : annualDividendFxRates,
+    }).rate,
   }), [
     annualDividendEvents,
     annualDividendFxRates,
@@ -2076,6 +2076,11 @@ const buyLotDraftSummary = useMemo(() => {
 
     if (clickedItem) setSelectedCategory(clickedItem.name);
   };
+  const dividendIncome = useMemo(() => summarizeDividendIncome({
+    dividends: reportedDividends,
+    exchangeRate, jpyKrwRate, currencyRates, historicalRates: annualDividendFxRates,
+  }), [reportedDividends, exchangeRate, jpyKrwRate, currencyRates, annualDividendFxRates]);
+
   const dashboardSummary = useMemo(() => {
     // 현금은 매입원가 개념이 없는데 분모에 들어가면 수익률이 희석된다.
     // 개별 자산 수익률도 현금을 제외해 계산하므로 전체 수익률도 기준을 맞춘다.
@@ -2094,14 +2099,8 @@ const buyLotDraftSummary = useMemo(() => {
     const usdEvaluationProfit = investedAssets
       .filter((asset) => asset.currency === 'USD')
       .reduce((sum, asset) => sum + asset.profitNative, 0);
-    const dividendKRW = receivedDividends.reduce((sum, dividend) => (
-      sum + (Number(dividend.amount) || 0) * getCachedKrwRate(dividend.currency, currencyRates, exchangeRate || 1350, jpyKrwRate || 9.5)
-    ), 0);
-    const dividendByCurrency = receivedDividends.reduce((summary, dividend) => {
-      const currency = dividend.currency || 'KRW';
-      summary[currency] = (summary[currency] || 0) + (Number(dividend.amount) || 0);
-      return summary;
-    }, {});
+    const dividendKRW = dividendIncome.totalKRW;
+    const dividendByCurrency = Object.fromEntries(dividendIncome.totals.map(({ currency, amount }) => [currency, amount]));
     const totalReturnPercent = investedPurchaseKRW > 0 ? (investedProfitKRW / investedPurchaseKRW) * 100 : 0;
 
     return {
@@ -2115,43 +2114,28 @@ const buyLotDraftSummary = useMemo(() => {
       dividendKRW,
       dividendByCurrency,
     };
-  }, [enhancedAssets, receivedDividends, exchangeRate, jpyKrwRate, currencyRates]);
-  /**
-   * 연 수익률(TWR)은 배당을 그 구간의 수익으로 반영한다. 배당 레코드에 지급 시점
-   * 환율(fxRate)이 있으면 그 값을 쓰고, 없으면(과거 기록) 오늘 환율로 근사한다 —
-   * 지금 와서 그 날의 환율을 새로 만들어내지는 않는다.
-   */
-  const dividendKrwEvents = useMemo(() => receivedDividends
-    .map((dividend) => {
-      const amount = Number(dividend.amount) || 0;
-      const rate = Number(dividend.fxRate) > 0
-        ? Number(dividend.fxRate)
-        : getCachedKrwRate(dividend.currency, currencyRates, exchangeRate || 1350, jpyKrwRate || 9.5);
-      return { date: getDividendReportingDate(dividend), amountKRW: amount * rate };
-    })
-    .filter((event) => event.date && event.amountKRW > 0), [receivedDividends, currencyRates, exchangeRate, jpyKrwRate]);
-  /**
-   * 연도별 수익률(증권사 방식): 그 해 실현손익 ÷ 매도분 매수원가.
-   * 평가액 스냅샷이 아니라 매매 기록(canonicalTradeRows)만으로 계산한다.
-   * 배당은 수익률에 넣지 않고, 참고용 연도별 합계만 붙여 화면에 따로 보여준다.
-   */
+  }, [enhancedAssets, dividendIncome]);
+  const includeDividendsInReturn = targetPortfolio.includeDividendsInReturn === true;
+  // Receipt-only years must remain visible, including holdings bought in prior years.
   const annualPerformanceYears = useMemo(() => getAnnualTradeYears({
-    rows: canonicalTradeRows,
+    rows: [...canonicalTradeRows, ...dividendIncome.events],
     currentYear: new Date().getFullYear(),
-  }), [canonicalTradeRows]);
-  const annualDividendsByYear = useMemo(() => dividendKrwEvents.reduce((totals, event) => {
-    const eventYear = Number(String(event.date).slice(0, 4));
-    if (Number.isFinite(eventYear)) totals[eventYear] = (totals[eventYear] || 0) + event.amountKRW;
-    return totals;
-  }, {}), [dividendKrwEvents]);
-  const annualPerformances = useMemo(() => annualPerformanceYears.map((year) => ({
-    ...calculateAnnualTradeReturn({
-      rows: canonicalTradeRows, year, exchangeRate, jpyKrwRate, currencyRates,
-    }),
-    dividendsKRW: annualDividendsByYear[year] || 0,
-  })), [
-    annualPerformanceYears, canonicalTradeRows, annualDividendsByYear,
-    exchangeRate, jpyKrwRate, currencyRates,
+  }), [canonicalTradeRows, dividendIncome]);
+  const annualPerformances = useMemo(() => [...new Set([...annualPerformanceYears, annualReturnYear])].map((year) => {
+    const income = summarizeDividendIncome({
+      dividends: reportedDividends, year,
+      exchangeRate, jpyKrwRate, currencyRates, historicalRates: annualDividendFxRates,
+    });
+    return {
+      ...calculateAnnualIncomeReturn({
+        rows: canonicalTradeRows, assets, year, exchangeRate, jpyKrwRate, currencyRates,
+        dividendIncome: income, includeDividends: includeDividendsInReturn,
+      }),
+      dividendIncome: income,
+    };
+  }), [
+    annualPerformanceYears, annualReturnYear, canonicalTradeRows, assets, reportedDividends,
+    exchangeRate, jpyKrwRate, currencyRates, annualDividendFxRates, includeDividendsInReturn,
   ]);
   // 증권사 앱처럼 기록이 없는 지난해로도 돌아가 볼 수 있게 한다. 기록이 없는
   // 해는 "기록 없음" 카드로 보여주고, 기록이 그보다 오래됐으면 그 해까지 연다.
@@ -2160,18 +2144,7 @@ const buyLotDraftSummary = useMemo(() => {
     annualPerformanceYears.length > 0 ? Math.min(...annualPerformanceYears) : new Date().getFullYear(),
     new Date().getFullYear() - ANNUAL_NAV_LOOKBACK_YEARS,
   );
-  const selectedAnnualPerformance = useMemo(() => (
-    annualPerformances.find((performance) => performance.year === annualReturnYear)
-    || {
-      ...calculateAnnualTradeReturn({
-        rows: canonicalTradeRows, year: annualReturnYear, exchangeRate, jpyKrwRate, currencyRates,
-      }),
-      dividendsKRW: annualDividendsByYear[annualReturnYear] || 0,
-    }
-  ), [
-    annualPerformances, annualReturnYear, canonicalTradeRows, annualDividendsByYear,
-    exchangeRate, jpyKrwRate, currencyRates,
-  ]);
+  const selectedAnnualPerformance = annualPerformances.find((performance) => performance.year === annualReturnYear);
   /**
    * 해외주식 양도소득세(추정).
    * 연간 해외 종목 손익을 통산해 250만원 기본공제를 뺀 뒤 22%를 매긴다.
@@ -4865,6 +4838,14 @@ const buyLotDraftSummary = useMemo(() => {
             </div>
 
             <div className="bg-surface p-5 md:p-7 rounded-[20px]">
+              <div className="mb-6">
+                <DividendIncomeSummary
+                  year={annualReturnYear}
+                  summary={selectedAnnualPerformance.dividendIncome}
+                  earliestYear={earliestAnnualYear}
+                  onYearChange={setAnnualReturnYear}
+                />
+              </div>
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 md:mb-8 gap-3 md:gap-4">
                 <div className="flex items-center gap-2">
                   <h3 className="text-lg md:text-xl font-bold flex items-center gap-2 md:gap-3">
@@ -5270,6 +5251,11 @@ const buyLotDraftSummary = useMemo(() => {
               performance={selectedAnnualPerformance}
               performances={annualPerformances}
               onYearChange={setAnnualReturnYear}
+              includeDividends={includeDividendsInReturn}
+              onIncludeDividendsChange={(value) => setTargetPortfolio((previous) => ({
+                ...previous,
+                includeDividendsInReturn: value,
+              }))}
             />
             <div className="bg-surface rounded-[20px] overflow-hidden">
               <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-surface">

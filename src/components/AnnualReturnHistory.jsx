@@ -1,22 +1,19 @@
 import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatMoney } from '../utils/formatters.js';
+import DividendIncomeSummary from './DividendIncomeSummary.jsx';
+import { getAnnualReturnUnavailableMessage } from './annualReturnMessages.js';
 
 // 구간은 언제나 1월 1일부터다. 기록을 언제 시작했든 라벨은 그 해를 가리킨다.
 const getPeriodLabel = (year, currentYear) => (
   year === currentYear ? `${year}년 YTD` : `${year}년 연간`
 );
 
-const getInsufficientMessage = (performance) => {
-  if ((performance?.buyCount || 0) > 0 && (performance?.sellCount || 0) === 0) return '아직 매도한 기록이 없습니다. 매도가 생기면 그 해 매매 수익률을 자동 계산합니다.';
-  return '이 해의 매매 기록이 아직 없습니다. 매수·매도 기록을 넣으면 자동 계산합니다.';
-};
-
 // 수익률이 어떤 분모 위에 있는지 한 줄로. 환율을 몰라 오늘 환율로 근사한 옛 기록이
 // 섞여 있으면 그 사실도 감추지 않는다.
 const getBasisNote = (performance) => (
   performance?.approximate
-    ? '매도분 매수원가 대비 · 일부 옛 기록은 오늘 환율로 근사'
-    : '매도분 매수원가 대비'
+    ? '투입원가 대비 · 일부 환율은 근사치'
+    : '투입원가 대비 실현 수익률'
 );
 
 // 단순 비율(비가중) 수익률이라, 원금이 거의 없는 해에 입금과 출금이 거의 같은
@@ -26,7 +23,7 @@ const getBasisNote = (performance) => (
 const CHART_PERCENT_CAP = 300;
 const clampedAbsPercent = (value) => Math.min(Math.abs(value), CHART_PERCENT_CAP);
 
-const AnnualReturnHistory = ({ year, years, earliestYear, performance, performances, onYearChange }) => {
+const AnnualReturnHistory = ({ year, years, earliestYear, performance, performances, onYearChange, includeDividends, onIncludeDividendsChange }) => {
   // 기록이 없는 해를 보고 있어도 오른쪽 목록에서 그 해가 보이고 선택 표시가
   // 되도록, 기록이 있는 연도 목록에 지금 보고 있는 해를 합쳐서 그린다.
   const displayYears = years.includes(year) ? years : [...years, year].sort((left, right) => right - left);
@@ -37,13 +34,13 @@ const AnnualReturnHistory = ({ year, years, earliestYear, performance, performan
   const currentYear = new Date().getFullYear();
 
   return (
-    <section className="bg-surface rounded-[20px] overflow-hidden">
+    <section aria-label="연도별 수익률" className="bg-surface rounded-[20px] overflow-hidden">
       <div className="p-5 md:p-7 border-b border-line flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-2">
           <BarChart3 size={18} className="text-ink-soft" />
           <div>
             <h3 className="text-base md:text-lg font-bold text-ink">연도별 수익률</h3>
-            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">매도 실현손익(수수료·거래세 차감)을 매도분 매수원가로 나눈 매매 수익률입니다. 배당·평가손익은 수익률에 넣지 않습니다.</p>
+            <p className="text-[11px] md:text-xs font-semibold text-ink-mute mt-1">{includeDividends ? '(매매 실현손익 + 수령 배당)' : '매매 실현손익'} ÷ (연초 보유원가 + 연중 매수금액)</p>
           </div>
         </div>
         <div className="seg inline-flex self-start sm:self-auto items-center p-1 rounded-[14px]">
@@ -53,6 +50,15 @@ const AnnualReturnHistory = ({ year, years, earliestYear, performance, performan
         </div>
       </div>
 
+      <div className="px-5 md:px-7 pt-5">
+        <label className="inline-flex items-center gap-3 cursor-pointer text-sm font-bold text-ink">
+          <input type="checkbox" role="switch" checked={includeDividends} onChange={(event) => onIncludeDividendsChange(event.target.checked)} className="h-5 w-5 accent-brand" />
+          수익률에 확정 배당 포함
+        </label>
+        <p className="text-[11px] font-semibold text-ink-mute mt-2 leading-relaxed">목표 달성률과 모든 연도에 함께 적용되며 설정이 저장됩니다. 매매 수수료·거래세와 세후 배당을 반영하며, 평가손익·양도소득세는 제외합니다.</p>
+        <p className="text-[11px] font-semibold text-ink-mute mt-1 leading-relaxed">배당과 원금의 범위를 맞추기 위해 기존 매도원가 기준을 투입원가 기준으로 변경했습니다. 재투자 매수도 원가에 다시 더하므로 전체 자산의 총수익률·연환산 수익률과 다릅니다.</p>
+      </div>
+
       <div className="p-5 md:p-7 grid grid-cols-1 lg:grid-cols-[1fr_1.15fr] gap-5">
         <div className="bg-canvas rounded-2xl p-5">
           <p className="text-[11px] font-bold text-ink-mute">{getPeriodLabel(year, currentYear)}</p>
@@ -60,19 +66,22 @@ const AnnualReturnHistory = ({ year, years, earliestYear, performance, performan
             <>
               <p className={`figure text-3xl md:text-4xl font-bold mt-2 ${performance.returnPercent >= 0 ? 'text-up' : 'text-down'}`}>{performance.returnPercent >= 0 ? '+' : ''}{performance.returnPercent.toFixed(2)}%</p>
               <p className="text-xs font-semibold text-ink-mute mt-2">{getBasisNote(performance)}</p>
-              <div className="mt-5 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div><p className="text-[10px] font-bold text-ink-mute">실현손익</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.profitKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">총 매수금액</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.buyKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">총 매도금액</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.sellKRW, 'KRW')}</p></div>
-                <div><p className="text-[10px] font-bold text-ink-mute">배당 (수익률 미포함)</p><p className="text-xs md:text-sm font-bold text-ink mt-1">{formatMoney(performance.dividendsKRW || 0, 'KRW')}</p></div>
-              </div>
             </>
           ) : (
             <div className="py-8">
               <p className="text-xl font-bold text-ink">계산 기준이 더 필요합니다.</p>
-              <p className="text-xs font-semibold text-ink-mute mt-2 leading-relaxed">{getInsufficientMessage(performance)}</p>
+              <p className="text-xs font-semibold text-ink-mute mt-2 leading-relaxed">{getAnnualReturnUnavailableMessage(performance)}</p>
             </div>
           )}
+          <div className="mt-5 grid grid-cols-2 gap-4">
+            <div><p className="text-[10px] font-bold text-ink-mute">매매 실현손익</p><p className="text-sm font-bold text-ink mt-1">{formatMoney(performance.profitKRW, 'KRW')}</p></div>
+            <div><p className="text-[10px] font-bold text-ink-mute">수익률 반영 배당</p><p className="text-sm font-bold text-ink mt-1">{formatMoney(performance.includedDividendsKRW || 0, 'KRW')}</p></div>
+            <div><p className="text-[10px] font-bold text-ink-mute">연초 보유원가</p><p className="text-sm font-bold text-ink mt-1">{formatMoney(performance.openingCostKRW || 0, 'KRW')}</p></div>
+            <div><p className="text-[10px] font-bold text-ink-mute">연중 매수금액 (수수료 포함)</p><p className="text-sm font-bold text-ink mt-1">{formatMoney(performance.periodBuyCostKRW || 0, 'KRW')}</p></div>
+          </div>
+          <div className="mt-5 border-t border-line pt-4">
+            <DividendIncomeSummary year={year} summary={performance.dividendIncome} />
+          </div>
         </div>
 
         <div className="space-y-3">

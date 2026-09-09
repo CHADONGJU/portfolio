@@ -166,6 +166,68 @@ test('지급일만 있는 배당 기록이 상세 표에서 서로를 지우지 
   assert.equal(metrics.filteredHistory.length, 3);
 });
 
+test('같은 날 여러 계좌와 입금 기록이 상세 표 및 배당 합계에 모두 남는다', () => {
+  const records = [
+    { id: 'isa', accountType: 'ISA', amount: 1000 },
+    { id: 'general', accountType: '일반', amount: 846 },
+    { id: 'second-payment', accountType: '일반', amount: 500 },
+  ].map((record) => ({
+    ...record, name: '배당ETF', ticker: '123456', currency: 'KRW',
+    exDate: '2026-08-01', paymentDate: '2026-08-05', quantity: 10,
+  }));
+  const metrics = runHook({
+    ...baseOptions, autoDividends: records, receivedDividends: records, selectedDividendAsset: '배당ETF',
+  });
+
+  assert.equal(metrics.filteredHistory.length, 3);
+  assert.equal(metrics.filteredHistory.reduce((sum, record) => sum + record.amount, 0), 2346);
+  assert.equal(metrics.dividendSummary[0].totalAmount, 2346);
+});
+
+test('배당 상세의 이번 달과 올해는 한국시간 연도 경계로 필터링한다', (context) => {
+  context.mock.timers.enable({ apis: ['Date'], now: new Date('2025-12-31T15:30:00Z') });
+  const records = [
+    { id: 'official', paymentDate: '2025-12-31' },
+    { id: 'actual', actualPaymentDate: '2025-12-31' },
+    { id: 'last-month', paymentDate: '2025-11-30' },
+  ].map((record) => ({
+    ...record, name: 'JEPI', ticker: 'JEPI', currency: 'USD', amount: 10, quantity: 10,
+  }));
+  const options = {
+    ...baseOptions, autoDividends: records, receivedDividends: records, selectedDividendAsset: 'JEPI',
+  };
+
+  for (const dividendFilter of ['이번 달', '올해']) {
+    const metrics = runHook({ ...options, dividendFilter });
+    assert.deepEqual(metrics.filteredHistory.map((record) => record.id), ['official']);
+  }
+  assert.equal(runHook(options).filteredHistory.length, 3);
+});
+
+test('종목별 배당 원화 합계도 지급일 환율을 쓰며 매매손익 환산은 유지한다', () => {
+  const tradeLedger = [
+    { id: 'buy', name: 'JEPI', ticker: 'JEPI', currency: 'USD', side: 'buy', date: '2026-01-05', quantity: 10, price: 100, fxRate: 1300 },
+    { id: 'sell', name: 'JEPI', ticker: 'JEPI', currency: 'USD', side: 'sell', date: '2026-03-05', quantity: 10, price: 120, fxRate: 1450 },
+  ];
+  const options = { ...baseOptions, tradeLedger };
+  const original = runHook(options).stockPerformanceSummary[0];
+  const metrics = runHook({
+    ...options,
+    historicalDividendRates: { '2026-02-05': 1350, '2026-03-05': 1450 },
+    receivedDividends: [
+      { id: 'historical', name: 'JEPI', ticker: 'JEPI', currency: 'USD', paymentDate: '2026-02-05', amount: 10 },
+      { id: 'recorded', name: 'JEPI', ticker: 'JEPI', currency: 'USD', paymentDate: '2026-03-05', amount: 5, fxRate: 1400 },
+    ],
+  });
+  const summary = metrics.stockPerformanceSummary[0];
+
+  assert.equal(summary.dividendKRW, 20500);
+  assert.equal(summary.dividendNative, 15);
+  assert.equal(summary.realizedKRW, original.realizedKRW);
+  assert.equal(summary.unrealizedKRW, original.unrealizedKRW);
+  assert.equal(summary.totalKRW, original.totalKRW + 20500);
+});
+
 test('배당락일이 없는 기록이 "NaN월"을 만들지 않는다', () => {
   const receivedDividends = [{
     id: 'd1', name: 'JEPI', ticker: 'JEPI', currency: 'USD',

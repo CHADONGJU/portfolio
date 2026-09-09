@@ -7,8 +7,8 @@ import { createServer } from 'vite';
 // uses a fresh browser context and synthetic records; no real account is read.
 const fixture = {
   portfolioName: '점검용 포트폴리오',
-  assets: [{ id: 'fixture', name: '테스트 주식', ticker: 'TEST', category: '해외주식', currency: 'USD', originalCurrency: 'USD', quantity: 10, averagePrice: 100, currentPrice: 120, originalAveragePrice: 100, originalCurrentPrice: 120, buyDate: '2026-09-01' }],
-  tradeLedger: [{ id: 'buy-fixture', assetId: 'fixture', name: '테스트 주식', ticker: 'TEST', category: '해외주식', currency: 'USD', side: 'buy', quantity: 10, price: 100, date: '2026-09-01', fxRate: 1300, createdAt: '2026-09-01T01:00:00Z' }],
+  assets: [{ id: 'fixture', name: '테스트 주식', ticker: 'TEST', category: '해외주식', currency: 'USD', originalCurrency: 'USD', quantity: 10, averagePrice: 100, currentPrice: 120, originalAveragePrice: 100, originalCurrentPrice: 120, buyDate: '2026-06-01' }],
+  tradeLedger: [{ id: 'buy-fixture', assetId: 'fixture', name: '테스트 주식', ticker: 'TEST', category: '해외주식', currency: 'USD', side: 'buy', quantity: 10, price: 100, date: '2026-06-01', fxRate: 1300, createdAt: '2026-06-01T01:00:00Z' }],
   memos: [],
   // Real accounts can retain old trades that the editable ledger view excludes.
   trades: Array.from({ length: 10 }, (_, id) => ({ id: `legacy-${id}`, name: '과거 기록', sellDate: '2025-01-01', quantity: 1, sellPrice: 50 })),
@@ -97,6 +97,37 @@ try {
   await page.getByRole('heading', { name: '점검용 포트폴리오', exact: true }).waitFor();
   await page.getByRole('status').filter({ hasText: /^저장 완료$/ }).waitFor();
 
+  // A dividend-only year uses the actual invested cost in both modes. The same
+  // paid receipts appear in income and targets, while October is still future.
+  await page.getByRole('button', { name: '목표', exact: true }).click();
+  const annualReturn = page.getByRole('region', { name: '연도별 수익률', exact: true });
+  const goal = page.getByRole('region', { name: '목표 수익률', exact: true });
+  const dividendSwitch = annualReturn.getByRole('switch', { name: '수익률에 확정 배당 포함' });
+  assert.equal(await dividendSwitch.isChecked(), false);
+  await goal.getByText('+0.00%', { exact: true }).waitFor();
+  const paidIncome = page.getByRole('region', { name: '2026년 수령 배당 합계', exact: true });
+  await paidIncome.getByText('₩117,600', { exact: true }).waitFor();
+  await paidIncome.getByText('통화별 합계 · $84.00', { exact: true }).waitFor();
+  await goal.getByRole('textbox').fill('10');
+  await dividendSwitch.check();
+  await goal.getByText('+9.05%', { exact: true }).waitFor();
+  await goal.getByText('달성률 90.5%', { exact: true }).waitFor();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('review-server')).targetPortfolio?.includeDividendsInReturn === true);
+  await page.getByRole('button', { name: '수익·배당', exact: true }).click();
+  await paidIncome.getByText('₩117,600', { exact: true }).waitFor();
+  await paidIncome.getByRole('button', { name: '배당 이전 연도' }).click();
+  await page.getByRole('region', { name: '2025년 수령 배당 합계', exact: true }).getByText('₩0', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '목표', exact: true }).click();
+  await annualReturn.getByText('2025년 수령 배당 (확정)', { exact: true }).waitFor();
+  await annualReturn.getByRole('button', { name: '다음 연도', exact: true }).click();
+  await page.reload();
+  await page.getByRole('button', { name: '목표', exact: true }).click();
+  assert.equal(await dividendSwitch.isChecked(), true);
+  await goal.getByText('+9.05%', { exact: true }).waitFor();
+  await dividendSwitch.uncheck();
+  await goal.getByText('+0.00%', { exact: true }).waitFor();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('review-server')).targetPortfolio?.includeDividendsInReturn === false);
+
   // Both views use October payouts, including a declared event whose ex-date
   // is in September; selecting either view also selects the other one.
   await page.getByRole('button', { name: '캘린더', exact: true }).click();
@@ -136,11 +167,11 @@ try {
   // A date edit starts a new lookup and saves its rate rather than the old 1300.
   await page.getByTitle('매수 기록 관리').click();
   const lookup = page.waitForResponse((response) => response.url().includes('frankfurter'));
-  await page.getByLabel('1번째 매수 기록의 매수일').fill('2026-09-02');
+  await page.getByLabel('1번째 매수 기록의 매수일').fill('2026-06-02');
   await lookup;
   await page.getByRole('button', { name: '매수 기록 저장하기' }).click();
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
-  await page.waitForFunction(() => JSON.parse(localStorage.getItem('portfolio_trade_ledger_v1::fixture-user')).some((row) => row.date === '2026-09-02' && row.fxRate === 1400));
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('portfolio_trade_ledger_v1::fixture-user')).some((row) => row.date === '2026-06-02' && row.fxRate === 1400));
 
   // Offline edits survive a reload and are delivered after reconnecting.
   await page.evaluate(() => localStorage.setItem('review-offline', '1'));
@@ -171,6 +202,11 @@ try {
   assert.ok(await page.getByText('$120.00', { exact: true }).count() > 0);
   await mkdir('test-results', { recursive: true });
   await page.screenshot({ path: 'test-results/mobile-portfolio.png', fullPage: true });
+  await page.getByRole('button', { name: '목표', exact: true }).click();
+  await dividendSwitch.check();
+  await goal.getByText('+8.40%', { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await page.screenshot({ path: 'test-results/mobile-dividend-return.png', fullPage: true });
   await page.getByRole('button', { name: '캘린더', exact: true }).click();
   // The earlier offline reload resets the view to September 2026.
   await annualChart.getByRole('button', { name: /^10월 세후 배당/ }).click();
@@ -184,7 +220,7 @@ try {
   assert.equal(await page.getByText('테스트 주식', { exact: true }).count(), 0);
   assert.equal(await page.evaluate(() => Boolean(localStorage.getItem('portfolio_sync_journal_v1::fixture-user'))), true);
   assert.deepEqual(errors, []);
-  console.log('Browser checks passed: October calendar/chart payouts and navigation, desktop/mobile dialogs, FX date edit, offline reload/reconnect, JPY, archival data, account isolation.');
+  console.log('Browser checks passed: shared paid dividend totals, return toggle/goal/year selection/persistence, October calendar/chart, desktop/mobile dialogs, FX date edit, offline sync, JPY, archival data, account isolation.');
 } finally {
   await context.close();
   await browser.close();
