@@ -1,3 +1,5 @@
+import { isRemovedAssetCategory } from '../constants.js';
+
 /**
  * 종목 행 하나를 AI 프록시로 보낼 최소 payload로 줄인다.
  *
@@ -36,9 +38,9 @@ export const buildStockInsightPayload = (asset) => {
   };
 };
 
-/** 현금은 설명할 회사가 없다. 버튼 자체를 숨기는 판단에 쓴다. */
+/** 없앤 현금·원자재 분류의 옛 기록은 설명할 회사가 없다. 버튼 자체를 숨기는 판단에 쓴다. */
 export const canSummarizeAsset = (asset) => Boolean(
   asset
-  && asset.category !== '현금'
+  && !isRemovedAssetCategory(asset.category)
   && String(asset.name || '').trim(),
 );

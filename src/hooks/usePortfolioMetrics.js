@@ -18,8 +18,6 @@ const parseMetricNumber = (value) => parseFloat(String(value || '').replace(/,/g
 const getDividendCategoryOrder = (category = '') => {
   if (category?.includes('국내') && category?.includes('주식')) return 10;
   if (category?.includes('해외') && category?.includes('주식')) return 20;
-  if (category?.includes('원자재')) return 30;
-  if (category?.includes('현금')) return 50;
   return 90;
 };
 
@@ -194,8 +192,8 @@ export const usePortfolioMetrics = ({
       const profitNative = currentNative - purchaseNative;
       const profitKRW = currentKRW - purchaseKRW;
 
-      const returnPercent = (purchaseNative > 0 && a.category !== '현금') ? ((currentNative - purchaseNative) / purchaseNative) * 100 : 0;
-      const returnPercentKRW = (purchaseKRW > 0 && a.category !== '현금') ? (profitKRW / purchaseKRW) * 100 : 0;
+      const returnPercent = purchaseNative > 0 ? ((currentNative - purchaseNative) / purchaseNative) * 100 : 0;
+      const returnPercentKRW = purchaseKRW > 0 ? (profitKRW / purchaseKRW) * 100 : 0;
       // 원화 기준 평단가 = 실제 투입 원화 ÷ 보유 수량.
       const krwAveragePrice = quantity > 0 ? purchaseKRW / quantity : 0;
 

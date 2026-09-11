@@ -1,3 +1,4 @@
+import { isRemovedAssetCategory } from '../constants.js';
 import { formatKoreanDate } from './dates.js';
 import {
   compareTradeOrder,
@@ -164,7 +165,7 @@ export const calculateAnnualIncomeReturn = ({
     }
   });
   assets.forEach((asset) => {
-    if (!(finite(asset.quantity) > 0) || asset.category === '현금') return;
+    if (!(finite(asset.quantity) > 0) || isRemovedAssetCategory(asset.category)) return;
     const acquired = dateKey(asset.buyDate);
     const relevant = validDate(acquired) ? acquired <= end : numericYear === Number(todayKey.slice(0, 4));
     if (!relevant) return;
@@ -180,7 +181,7 @@ export const calculateAnnualIncomeReturn = ({
         .filter((position) => matchesHolding(position.record))
         .reduce((sum, position) => sum + position.quantity, 0);
       const heldQuantity = assets.filter((holding) => matchesHolding(holding)
-        && holding.category !== '현금' && finite(holding.quantity) > 0
+        && !isRemovedAssetCategory(holding.category) && finite(holding.quantity) > 0
         && (!validDate(holding.buyDate) || dateKey(holding.buyDate) <= end))
         .reduce((sum, holding) => sum + finite(holding.quantity), 0);
       if (recordedQuantity + EPSILON < heldQuantity) markUnavailable('missing-holding-cost');

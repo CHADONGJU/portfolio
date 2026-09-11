@@ -1,3 +1,5 @@
+import { isRemovedAssetCategory } from '../constants.js';
+
 const EPSILON = 0.000001;
 
 export const parseTradeNumber = (value) => {
@@ -511,7 +513,7 @@ export const recoverMissingAssetsFromTradeLedger = (assets = [], tradeLedger = [
     if (!position.hasBuyRows || position.quantity <= EPSILON) return;
 
     const firstBuyRow = position.rows.find((row) => row.side === 'buy');
-    if (!firstBuyRow || firstBuyRow.category === '현금') return;
+    if (!firstBuyRow || isRemovedAssetCategory(firstBuyRow.category)) return;
 
     const sameStockAsset = recoveredAssets.find((asset) => (
       getTradeAssetBaseKey(asset) === getTradeAssetBaseKey(firstBuyRow)

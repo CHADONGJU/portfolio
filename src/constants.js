@@ -31,16 +31,25 @@ export const ASSET_COLORS = [
 ];
 
 export const CATEGORY_COLORS = {
-  현금: '#d6a21d',
   국내주식: '#e05555',
   해외주식: '#4169e1',
-  원자재: '#273445',
 };
 
 export const PORTFOLIO_ASSET_CATEGORIES = ['국내주식', '해외주식'];
 
 export const isPortfolioAssetCategory = (category) => (
   PORTFOLIO_ASSET_CATEGORIES.includes(String(category || '').trim())
+);
+
+/**
+ * 현금·원자재 자산 기능은 없앴다. 예전에 저장된 기록은 지우지 않되(사용자 데이터 보존)
+ * 보유 자산·배당·연간 수익률 어디에도 다시 섞이지 않게 이 판별로 걸러낸다.
+ * 분류가 비어 있는 오래된 기록까지 걸러내지 않도록 목록에 있는 이름만 본다.
+ */
+const REMOVED_ASSET_CATEGORIES = ['현금', '원자재'];
+
+export const isRemovedAssetCategory = (category) => (
+  REMOVED_ASSET_CATEGORIES.includes(String(category || '').trim())
 );
 
 export const DETAIL_CHART_COLORS = [
@@ -80,25 +89,11 @@ export const CATEGORY_DETAIL_COLOR_SCALES = {
     '#60a5fa',
     '#93c5fd',
   ],
-  현금: [
-    '#a16207',
-    '#ca8a04',
-    '#eab308',
-    '#facc15',
-  ],
-  원자재: [
-    '#111827',
-    '#273445',
-    '#475569',
-    '#64748b',
-  ],
 };
 
 const CATEGORY_DETAIL_HSL = {
   국내주식: { hue: 0, saturation: 68, startLightness: 30, step: 3.7, range: 46 },
   해외주식: { hue: 220, saturation: 78, startLightness: 30, step: 3.5, range: 44 },
-  현금: { hue: 43, saturation: 76, startLightness: 38, step: 4.5, range: 36 },
-  원자재: { hue: 215, saturation: 22, startLightness: 18, step: 4, range: 38 },
 };
 
 export const getCategoryColor = (category) => CATEGORY_COLORS[String(category || '').trim()] || '#94a3b8';
