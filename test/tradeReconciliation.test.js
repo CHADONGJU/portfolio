@@ -18,6 +18,25 @@ test('원장이 비어 있으면 자산을 그대로 둔다', () => {
   assert.equal(reconcileAssetsWithTradeLedger(assets, null), assets);
 });
 
+test('국내주식은 재계산값보다 증권사의 확정 원화 손익을 우선한다', () => {
+  const rows = [
+    {
+      id: 'buy', name: 'SK하이닉스', ticker: '00660', currency: 'KRW',
+      side: 'buy', date: '2026-08-31', quantity: 3, price: 1650000,
+    },
+    {
+      id: 'sell', name: 'SK하이닉스', ticker: '00660', currency: 'KRW',
+      side: 'sell', date: '2026-09-01', quantity: 3, price: 1700000,
+      pnl: 139530, brokerFee: 137, sellTax: 10200,
+    },
+  ];
+
+  const sell = buildPositionFromTradeRows(rows, { resolveKrwRate: () => 1 }).rows[1];
+
+  assert.equal(sell.pnl, 139530);
+  assert.equal(sell.krwPnl, 139530);
+});
+
 test('원장 기준으로 수량과 평단을 바로잡는다', () => {
   const assets = [{
     id: 1, name: '삼성전자', ticker: '005930', quantity: 999, averagePrice: 1, buyDate: '2020-01-01',

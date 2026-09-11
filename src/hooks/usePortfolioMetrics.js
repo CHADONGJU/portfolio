@@ -65,6 +65,13 @@ const resolveRecordBuyKrwRate = (record) => {
 };
 
 const getRecordKrwPnl = (record = {}, rateByCurrency) => {
+  const recordedPnl = Number(record.pnl);
+  if ((record.currency || 'KRW') === 'KRW'
+    && record.pnl !== null
+    && record.pnl !== undefined
+    && Number.isFinite(recordedPnl)) {
+    return recordedPnl;
+  }
   const exactKrwPnl = Number(record.krwPnl);
   if (record.krwPnl !== null && record.krwPnl !== undefined && Number.isFinite(exactKrwPnl)) {
     return exactKrwPnl;
@@ -335,14 +342,18 @@ export const usePortfolioMetrics = ({
     };
     const ledgerRows = canonicalTradeRows;
 
-    // 종목명만이 아니라 "종목명 + 보유 회차"로 묶는다.
-    // 매도 후 재매수한 종목은 회차가 다르므로 평가/실현 손익이 서로 섞이지 않는다.
-    const groupKey = (record) => `${record.name}#${getTradeRound(record)}`;
+    // 이름과 회차만 같아도 티커가 다르면 별도 원장이다. 과거 오입력(00660/000660)처럼
+    // 각 티커에서 1회차가 따로 시작된 기록을 이름만으로 합치면 서로 다른 매매가 한 줄이 된다.
+    const groupKey = (record) => getTradeAssetKey(record);
     const groups = new Map();
     [...enhancedAssets, ...ledgerRows, ...receivedDividends].forEach((record) => {
       if (!record?.name) return;
       const key = groupKey(record);
-      if (!groups.has(key)) groups.set(key, { name: record.name, round: getTradeRound(record) });
+      if (!groups.has(key)) groups.set(key, {
+        key,
+        name: record.name,
+        round: getTradeRound(record),
+      });
     });
 
     // 회차 정보가 없는 과거 배당 기록은 그 종목의 마지막 회차에만 붙여 중복 합산을 막는다.
@@ -351,8 +362,8 @@ export const usePortfolioMetrics = ({
       latestRoundByName.set(name, Math.max(latestRoundByName.get(name) ?? 1, round));
     });
 
-    return [...groups.values()].map(({ name, round }) => {
-      const inGroup = (record) => record.name === name && getTradeRound(record) === round;
+    return [...groups.values()].map(({ key, name, round }) => {
+      const inGroup = (record) => getTradeAssetKey(record) === key;
       const assetRows = enhancedAssets.filter(inGroup);
       const tradeRows = ledgerRows.filter(inGroup);
       // 환율 해석기를 빼먹으면 이미 계산된 krwPnl이 null로 덮여, 종목 카드의 실현손익만
@@ -409,7 +420,7 @@ export const usePortfolioMetrics = ({
       return {
         name,
         round,
-        key: `${name}#${round}`,
+        key,
         // 같은 종목을 팔았다 다시 산 경우 이름만으로는 두 줄이 구분되지 않는다.
         // 회차 번호를 붙이는 대신 날짜로 갈라 보여준다.
         firstBuyDate,

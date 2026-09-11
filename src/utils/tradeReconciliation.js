@@ -262,9 +262,13 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
         ? proratedKrwBuyFee * (appliedBuyFee / proratedBuyFee)
         : appliedBuyFee * buyRate;
       const krwCharges = ((row.brokerFee + row.sellTax) * buyRate) + krwBuyFeeApplied;
-      const krwPnl = (tracksKrwCost && buyRate > 0 && matchedQuantity > EPSILON && unknownRateQuantity <= EPSILON)
-        ? (row.price * matchedQuantity * buyRate) - removedKrwCost - krwCharges
-        : null;
+      // 국내주식의 기록된 손익은 증권사가 수수료·제세금까지 반영해 확정한 원화 값이다.
+      // 원가로 다시 계산하면 과거 회차가 잘못 묶인 데이터에서 확정 손익까지 오염된다.
+      const krwPnl = row.currency === 'KRW' && row.hasRecordedPnl
+        ? resolvedPnl
+        : ((tracksKrwCost && buyRate > 0 && matchedQuantity > EPSILON && unknownRateQuantity <= EPSILON)
+          ? (row.price * matchedQuantity * buyRate) - removedKrwCost - krwCharges
+          : null);
 
       /**
        * 이동평균이므로 매도분에는 환율을 아는 물량과 모르는 물량이 같은 비율로 섞여 있다.

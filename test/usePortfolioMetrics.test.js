@@ -77,6 +77,39 @@ test('종목별 실현손익이 헤더 합계와 같은 환율을 쓴다', () =>
   assert.equal(Math.round(soxl.realizedKRW), 260000);
 });
 
+test('같은 이름과 회차여도 티커가 다른 과거 매매 사이클은 한 줄로 합치지 않는다', () => {
+  const tradeLedger = [
+    {
+      id: 'old-buy', name: 'SK하이닉스', ticker: '000660', currency: 'KRW', round: 1,
+      side: 'buy', date: '2026-05-11', quantity: 3, price: 1638000,
+    },
+    {
+      id: 'old-sell', name: 'SK하이닉스', ticker: '000660', currency: 'KRW', round: 1,
+      side: 'sell', date: '2026-08-21', quantity: 3, price: 1758000, pnl: 348714,
+    },
+    {
+      id: 'typo-buy', name: 'SK하이닉스', ticker: '00660', currency: 'KRW', round: 1,
+      side: 'buy', date: '2026-08-31', quantity: 3, price: 1650000,
+    },
+    {
+      id: 'typo-sell', name: 'SK하이닉스', ticker: '00660', currency: 'KRW', round: 1,
+      side: 'sell', date: '2026-09-01', quantity: 3, price: 1700000, pnl: 139530,
+    },
+  ];
+
+  const metrics = runHook({ ...baseOptions, tradeLedger });
+  const summaries = metrics.stockPerformanceSummary.filter((row) => row.name === 'SK하이닉스');
+  const september = summaries.find((row) => row.ticker === '00660');
+  const august = summaries.find((row) => row.ticker === '000660');
+
+  assert.equal(summaries.length, 2);
+  assert.equal(september.totalSellQuantity, 3);
+  assert.equal(september.realizedKRW, 139530);
+  assert.equal(august.totalSellQuantity, 3);
+  assert.equal(august.realizedKRW, 348714);
+  assert.equal(metrics.totalConvertedNetProfit, 488244);
+});
+
 test('해외 보유 평단은 달러 기준, 원화 평단은 매수일 환율 원금 기준이다', () => {
   const assets = [{
     id: 'soxl',

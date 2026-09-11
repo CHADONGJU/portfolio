@@ -30,6 +30,13 @@ const getRecordKrwRate = (record = {}, { exchangeRate, jpyKrwRate, currencyRates
  * "손익 × 환율"로 근사한다(usePortfolioMetrics의 getRecordKrwPnl과 같은 규칙).
  */
 const getRecordKrwPnl = (record = {}, rates) => {
+  const recordedPnl = Number(record.pnl);
+  if ((record.currency || 'KRW') === 'KRW'
+    && record.pnl !== null
+    && record.pnl !== undefined
+    && Number.isFinite(recordedPnl)) {
+    return { pnlKRW: recordedPnl, approximate: false };
+  }
   const exactKrwPnl = Number(record.krwPnl);
   if (record.krwPnl !== null && record.krwPnl !== undefined && Number.isFinite(exactKrwPnl)) {
     return { pnlKRW: exactKrwPnl, approximate: false };
