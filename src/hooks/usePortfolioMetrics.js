@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { getCategoryColor, getCategoryDetailColor } from '../constants.js';
+import { getCategoryColor, getCategoryDetailColor, isPortfolioAssetCategory } from '../constants.js';
 import { getDividendExDate, getDividendReportingDate } from '../utils/dividendDates.js';
 import { sortDividendRecordsNewestFirst } from '../utils/dividendRecords.js';
 import { resolveDividendIncomeRate } from '../utils/dividendIncome.js';
@@ -230,10 +230,14 @@ export const usePortfolioMetrics = ({
     return calculatedAssets;
   }, [assets, tradeLedger, exchangeRate, jpyKrwRate, currencyRates]);
 
-  const totalConvertedKRW = useMemo(() => enhancedAssets.reduce((acc, a) => acc + a.currentKRW, 0), [enhancedAssets]);
+  const portfolioAssets = useMemo(() => (
+    enhancedAssets.filter((asset) => isPortfolioAssetCategory(asset.category))
+  ), [enhancedAssets]);
+
+  const totalConvertedKRW = useMemo(() => portfolioAssets.reduce((acc, a) => acc + a.currentKRW, 0), [portfolioAssets]);
   
   const categoryData = useMemo(() => {
-    const grouped = enhancedAssets.reduce((acc, asset) => {
+    const grouped = portfolioAssets.reduce((acc, asset) => {
       if (!acc[asset.category]) acc[asset.category] = { id: asset.category, name: asset.category, value: 0, color: getCategoryColor(asset.category) };
       acc[asset.category].value += asset.currentKRW;
       return acc;
@@ -243,38 +247,38 @@ export const usePortfolioMetrics = ({
       totalConvertedKRW,
       (cat) => cat.value,
     );
-  }, [enhancedAssets, totalConvertedKRW]);
+  }, [portfolioAssets, totalConvertedKRW]);
 
   const subChartData = useMemo(() => {
     if (!selectedCategory) return [];
-    const filtered = enhancedAssets.filter(a => a.category === selectedCategory);
+    const filtered = portfolioAssets.filter(a => a.category === selectedCategory);
     const subTotalKRW = filtered.reduce((acc, curr) => acc + curr.currentKRW, 0);
     return withRunningPercent(
       filtered.sort((a, b) => b.currentKRW - a.currentKRW),
       subTotalKRW,
       (asset) => asset.currentKRW,
     ).map((asset) => ({ ...asset, subTotal: subTotalKRW }));
-  }, [enhancedAssets, selectedCategory]);
+  }, [portfolioAssets, selectedCategory]);
 
   const currentChartData = selectedCategory ? subChartData : categoryData;
-  const currentCategoryKRW = selectedCategory ? enhancedAssets.filter(a => a.category === selectedCategory && a.currency === 'KRW').reduce((acc, a) => acc + a.currentNative, 0) : enhancedAssets.filter(a => a.currency === 'KRW').reduce((acc, a) => acc + a.currentNative, 0);
-  const currentCategoryUSD = selectedCategory ? enhancedAssets.filter(a => a.category === selectedCategory && a.currency === 'USD').reduce((acc, a) => acc + a.currentNative, 0) : enhancedAssets.filter(a => a.currency === 'USD').reduce((acc, a) => acc + a.currentNative, 0);
+  const currentCategoryKRW = selectedCategory ? portfolioAssets.filter(a => a.category === selectedCategory && a.currency === 'KRW').reduce((acc, a) => acc + a.currentNative, 0) : portfolioAssets.filter(a => a.currency === 'KRW').reduce((acc, a) => acc + a.currentNative, 0);
+  const currentCategoryUSD = selectedCategory ? portfolioAssets.filter(a => a.category === selectedCategory && a.currency === 'USD').reduce((acc, a) => acc + a.currentNative, 0) : portfolioAssets.filter(a => a.currency === 'USD').reduce((acc, a) => acc + a.currentNative, 0);
   const currentCategoryTotalConverted = selectedCategory && subChartData.length > 0 ? subChartData[0].subTotal : totalConvertedKRW;
   const currentCategoryProfitKRW = selectedCategory
-    ? enhancedAssets.filter(a => a.category === selectedCategory).reduce((acc, a) => acc + a.profitKRW, 0)
-    : enhancedAssets.reduce((acc, a) => acc + a.profitKRW, 0);
+    ? portfolioAssets.filter(a => a.category === selectedCategory).reduce((acc, a) => acc + a.profitKRW, 0)
+    : portfolioAssets.reduce((acc, a) => acc + a.profitKRW, 0);
   const currentCategoryProfitUSD = selectedCategory
-    ? enhancedAssets.filter(a => a.category === selectedCategory && a.currency === 'USD').reduce((acc, a) => acc + a.profitNative, 0)
-    : enhancedAssets.filter(a => a.currency === 'USD').reduce((acc, a) => acc + a.profitNative, 0);
+    ? portfolioAssets.filter(a => a.category === selectedCategory && a.currency === 'USD').reduce((acc, a) => acc + a.profitNative, 0)
+    : portfolioAssets.filter(a => a.currency === 'USD').reduce((acc, a) => acc + a.profitNative, 0);
 
   // 4. 환차익 & 매매 기록 계산
   const { totalUsdPurchase, currentUsdValueForUsd } = useMemo(() => {
-    const usdAssets = enhancedAssets.filter(a => a.currency === 'USD');
+    const usdAssets = portfolioAssets.filter(a => a.currency === 'USD');
     return { 
       totalUsdPurchase: usdAssets.reduce((acc, a) => acc + a.purchaseNative, 0), 
       currentUsdValueForUsd: usdAssets.reduce((acc, a) => acc + a.currentNative, 0) 
     };
-  }, [enhancedAssets]);
+  }, [portfolioAssets]);
   const avgBuyExchangeRate = 0;
   const fxProfitPercent = totalUsdPurchase > 0 ? ((currentUsdValueForUsd - totalUsdPurchase) / totalUsdPurchase) * 100 : 0;
 
@@ -618,6 +622,7 @@ export const usePortfolioMetrics = ({
   // 자산 및 기록 삭제 로직 강화 
   return {
     enhancedAssets,
+    portfolioAssets,
     // 매수·매도가 이동평균으로 정리된 표준 거래 행. 세금 계산도 이 값을 쓴다.
     canonicalTradeRows,
     totalConvertedKRW,

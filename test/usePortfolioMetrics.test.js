@@ -122,6 +122,55 @@ test('해외 보유 평단은 달러 기준, 원화 평단은 매수일 환율 �
   assert.equal(soxl.profitKRW, 320 * 1200 - (100 * 1300 + 200 * 1400));
 });
 
+test('포트폴리오 합계와 비중은 국내·해외 주식만 기준으로 계산한다', () => {
+  const assets = [
+    {
+      id: 'stock',
+      name: '삼성전자',
+      ticker: '005930',
+      category: '국내주식',
+      currency: 'KRW',
+      quantity: 10,
+      averagePrice: 10000,
+      originalAveragePrice: 10000,
+      currentPrice: 12000,
+      originalCurrentPrice: 12000,
+    },
+    {
+      id: 'cash',
+      name: '예수금',
+      ticker: '',
+      category: '현금',
+      currency: 'KRW',
+      quantity: 1000000,
+      averagePrice: 1,
+      currentPrice: 1,
+    },
+    {
+      id: 'gold',
+      name: '금',
+      ticker: 'GC=F',
+      category: '원자재',
+      currency: 'USD',
+      quantity: 1,
+      averagePrice: 1000,
+      originalAveragePrice: 1000,
+      currentPrice: 3000000,
+      originalCurrentPrice: 2000,
+    },
+  ];
+
+  const metrics = runHook({ ...baseOptions, assets });
+
+  assert.equal(metrics.portfolioAssets.length, 1);
+  assert.equal(metrics.totalConvertedKRW, 120000);
+  assert.deepEqual(metrics.currentChartData.map((row) => row.name), ['국내주식']);
+  assert.equal(metrics.currentCategoryKRW, 120000);
+  assert.equal(metrics.currentCategoryUSD, 0);
+  assert.equal(metrics.currentCategoryProfitKRW, 20000);
+  assert.equal(metrics.totalUsdPurchase, 0);
+});
+
 test('배당 금액이 비어 있어도 합계가 NaN이 되지 않는다', () => {
   const receivedDividends = [
     {

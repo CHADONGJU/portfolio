@@ -43,8 +43,10 @@ import {
   getCategoryColor,
   LEGACY_PORTFOLIO_NAMES,
   getCategoryDetailColor,
+  isPortfolioAssetCategory,
   MARKET_CALENDAR_KEYWORDS_STORAGE_KEY,
   MEMOS_STORAGE_KEY,
+  PORTFOLIO_ASSET_CATEGORIES,
   PORTFOLIO_NAME_STORAGE_KEY,
   PORTFOLIO_SNAPSHOTS_STORAGE_KEY,
   PREFERRED_BROKER_STORAGE_KEY,
@@ -172,7 +174,7 @@ const ANNUAL_DIVIDEND_FX_RATES_STORAGE_KEY = 'portfolio.annualDividendFxRatesV1'
 const isDomesticStockCategory = (category) => category?.includes('국내') && category?.includes('주식');
 const isCommodityCategory = (category) => category?.includes('원자재');
 
-const ASSET_CATEGORIES = ['국내주식', '해외주식', '현금', '원자재'];
+const ASSET_CATEGORIES = PORTFOLIO_ASSET_CATEGORIES;
 
 const formatAssetQuantity = (quantity, category) => {
   const number = Number(quantity);
@@ -306,19 +308,16 @@ const sortTradeRecords = (records, sortMode) => [...records].sort((a, b) => {
 const DEFAULT_TARGET_PORTFOLIO = {
   budget: '',
   categories: [
-    { id: '국내주식', percent: 30 },
+    { id: '국내주식', percent: 50 },
     { id: '해외주식', percent: 50 },
-    { id: '현금', percent: 20 },
   ],
   items: {
     국내주식: [],
     해외주식: [],
-    현금: [],
   },
   groups: {
     국내주식: [],
     해외주식: [],
-    현금: [],
   },
 };
 
@@ -639,7 +638,8 @@ const isTradeLinkedToLedger = (trade, ledger = []) => ledger.some((entry) => (
 const pruneTargetPortfolio = (targetPortfolio) => {
   if (!targetPortfolio) return DEFAULT_TARGET_PORTFOLIO;
 
-  const categories = Array.isArray(targetPortfolio.categories) ? targetPortfolio.categories : [];
+  const categories = (Array.isArray(targetPortfolio.categories) ? targetPortfolio.categories : [])
+    .filter((category) => isPortfolioAssetCategory(category?.id));
   const validIds = new Set(categories.map((category) => category.id));
   const pickValid = (map = {}) => Object.fromEntries(
     Object.entries(map || {}).filter(([key]) => validIds.has(key)),
@@ -1220,7 +1220,7 @@ const App = () => {
   const [selectedTargetCategory, setSelectedTargetCategory] = useState(null);
   const [selectedTargetGroup, setSelectedTargetGroup] = useState(null);
   const [targetPriceSyncStatus, setTargetPriceSyncStatus] = useState('');
-  const [targetCategoryDraft, setTargetCategoryDraft] = useState('원자재');
+  const [targetCategoryDraft, setTargetCategoryDraft] = useState('국내주식');
   const [manualMemo, setManualMemo] = useState({
     stockName: '',
     ticker: '',
@@ -1902,6 +1902,7 @@ const buyLotDraftSummary = useMemo(() => {
 
   const {
     enhancedAssets,
+    portfolioAssets,
     totalConvertedKRW,
     currentChartData,
     subChartData,
@@ -2037,6 +2038,7 @@ const buyLotDraftSummary = useMemo(() => {
   const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-up-soft border-up-soft' : 'bg-down-soft border-down-soft';
   const visibleDetailAssets = useMemo(() => (
     [...(selectedCategory ? subChartData : enhancedAssets)]
+      .filter((asset) => isPortfolioAssetCategory(asset.category))
       .map((asset) => ({
         ...asset,
         displayBuyDate: asset.category === '현금' ? '' : getDividendStartDate(asset, tradeLedger),
@@ -2082,13 +2084,13 @@ const buyLotDraftSummary = useMemo(() => {
   }), [reportedDividends, exchangeRate, jpyKrwRate, currencyRates, annualDividendFxRates]);
 
   const dashboardSummary = useMemo(() => {
-    // 현금은 매입원가 개념이 없는데 분모에 들어가면 수익률이 희석된다.
-    // 개별 자산 수익률도 현금을 제외해 계산하므로 전체 수익률도 기준을 맞춘다.
-    const investedAssets = enhancedAssets.filter((asset) => asset.category !== '현금');
+    // 포트폴리오 화면은 국내/해외 주식만 기준으로 한다. 저장돼 있던 현금·원자재가
+    // 분모에 섞이면 실제 주식 수익률이 희석되거나 부풀어 보인다.
+    const investedAssets = portfolioAssets;
 
-    const purchaseKRW = enhancedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
+    const purchaseKRW = investedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
     const investedPurchaseKRW = investedAssets.reduce((sum, asset) => sum + asset.purchaseKRW, 0);
-    const evaluationProfitKRW = enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
+    const evaluationProfitKRW = investedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
     const investedProfitKRW = investedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
     // 실현손익(원화/달러 매매 순수익)처럼, 아직 안 판 종목의 평가손익도 국내(원화)·
     // 해외(달러)로 나눠 보고 싶을 때가 있다 — 합산 원화환산 값만으로는 어느 쪽이
@@ -2114,7 +2116,7 @@ const buyLotDraftSummary = useMemo(() => {
       dividendKRW,
       dividendByCurrency,
     };
-  }, [enhancedAssets, dividendIncome]);
+  }, [portfolioAssets, dividendIncome]);
   const includeDividendsInReturn = targetPortfolio.includeDividendsInReturn === true;
   // Receipt-only years must remain visible, including holdings bought in prior years.
   const annualPerformanceYears = useMemo(() => getAnnualTradeYears({
@@ -3115,7 +3117,7 @@ const buyLotDraftSummary = useMemo(() => {
   };
 
   const addTargetCategory = () => {
-    if (!targetCategoryDraft) return;
+    if (!isPortfolioAssetCategory(targetCategoryDraft)) return;
     setTargetPortfolio(prev => {
       if (prev.categories.some(category => category.id === targetCategoryDraft)) return prev;
       return {
@@ -4283,7 +4285,7 @@ const buyLotDraftSummary = useMemo(() => {
                     {formatMoney(dashboardSummary.evaluationProfitKRW, 'KRW')}
                   </span>
                   <span className="text-[13px] font-medium text-ink-mute">
-                    · 현금 제외 기준
+                    · 국내/해외 주식 기준
                   </span>
                 </div>
               </div>
@@ -4293,9 +4295,9 @@ const buyLotDraftSummary = useMemo(() => {
                 {[
                   {
                     label: '보유 자산',
-                    value: `${enhancedAssets.length.toLocaleString()}개`,
+                    value: `${portfolioAssets.length.toLocaleString()}개`,
                     tone: 'text-ink',
-                    helper: '등록된 종목 수',
+                    helper: '등록된 주식 수',
                   },
                   {
                     label: '실현손익',
@@ -4330,14 +4332,14 @@ const buyLotDraftSummary = useMemo(() => {
                   <button onClick={() => setSelectedCategory(null)} className="text-[11px] md:text-[12px] font-bold text-ink-soft bg-line-soft px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center gap-1 hover:bg-line"><ArrowLeft size={10} /> 메인으로</button>
                 )}
               </div>
-              {enhancedAssets.length === 0 ? (
+              {portfolioAssets.length === 0 ? (
                 <div className="w-full min-h-[18rem] md:min-h-80 flex flex-col items-center justify-center text-center px-3">
                   <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-line-soft text-ink-soft flex items-center justify-center mb-4 md:mb-5">
                     <Target size={24} className="md:w-7 md:h-7" />
                   </div>
                   <p className="text-base md:text-lg font-bold text-ink">첫 자산을 추가해보세요</p>
                   <p className="mt-2 text-xs md:text-sm font-medium text-ink-mute leading-relaxed max-w-xs">
-                    종목을 등록하면 비중, 수익률, 배당 기록이 이 화면에 바로 쌓입니다.
+                    국내주식이나 해외주식을 등록하면 비중, 수익률, 배당 기록이 이 화면에 바로 쌓입니다.
                   </p>
                   <button
                     onClick={() => {
@@ -4633,13 +4635,13 @@ const buyLotDraftSummary = useMemo(() => {
                       })}
                     </tbody>
                   </table>
-                  {enhancedAssets.length === 0 && (
+                  {visibleDetailAssets.length === 0 && (
                     <div className="p-6 md:p-12 text-center">
                       <div className="mx-auto w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-canvas text-ink-mute flex items-center justify-center mb-4">
                         <Wallet size={24} />
                       </div>
-                      <p className="text-ink font-bold text-sm md:text-base">아직 등록된 자산이 없습니다.</p>
-                      <p className="mt-2 text-ink-mute font-medium text-xs md:text-sm">주식, 원자재, 현금을 추가하면 상세 가치와 수익률이 표시됩니다.</p>
+                      <p className="text-ink font-bold text-sm md:text-base">아직 등록된 주식이 없습니다.</p>
+                      <p className="mt-2 text-ink-mute font-medium text-xs md:text-sm">국내주식이나 해외주식을 추가하면 상세 가치와 수익률이 표시됩니다.</p>
                     </div>
                   )}
                 </div>
@@ -6150,8 +6152,6 @@ const buyLotDraftSummary = useMemo(() => {
             >
               <option value="국내주식">국내주식</option>
               <option value="해외주식">해외주식</option>
-              <option value="원자재">원자재 (금, 은 등)</option>
-              <option value="현금">현금 (CASH)</option>
             </select>
           </div>
 

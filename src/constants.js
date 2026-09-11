@@ -37,6 +37,12 @@ export const CATEGORY_COLORS = {
   원자재: '#273445',
 };
 
+export const PORTFOLIO_ASSET_CATEGORIES = ['국내주식', '해외주식'];
+
+export const isPortfolioAssetCategory = (category) => (
+  PORTFOLIO_ASSET_CATEGORIES.includes(String(category || '').trim())
+);
+
 export const DETAIL_CHART_COLORS = [
   '#334155',
   '#475569',
