@@ -11,6 +11,7 @@ import {
   buildPositionFromTradeRows,
   getTradeAssetKey,
   getTradeRound,
+  normalizeTradeTicker,
 } from '../utils/tradeReconciliation.js';
 
 const parseMetricNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
@@ -342,26 +343,53 @@ export const usePortfolioMetrics = ({
 
     // 이름과 회차만 같아도 티커가 다르면 별도 원장이다. 과거 오입력(00660/000660)처럼
     // 각 티커에서 1회차가 따로 시작된 기록을 이름만으로 합치면 서로 다른 매매가 한 줄이 된다.
-    const groupKey = (record) => getTradeAssetKey(record);
+    // 다만 티커 없이 넣은 기록(누락 매매 기록 등)은 같은 이름·회차의 티커 있는 줄에 붙인다.
+    // 그러지 않으면 한 종목이 두 줄로 갈라진다.
+    const nameRoundKey = (record) => `${String(record.name || '').trim()}#${getTradeRound(record)}`;
+    const tickerKeyByNameRound = new Map();
+    [...enhancedAssets, ...ledgerRows].forEach((record) => {
+      if (!record?.name || !normalizeTradeTicker(record.ticker)) return;
+      const nameRound = nameRoundKey(record);
+      if (!tickerKeyByNameRound.has(nameRound)) tickerKeyByNameRound.set(nameRound, getTradeAssetKey(record));
+    });
+    const groupKey = (record) => (
+      normalizeTradeTicker(record.ticker)
+        ? getTradeAssetKey(record)
+        : (tickerKeyByNameRound.get(nameRoundKey(record)) || getTradeAssetKey(record))
+    );
     const groups = new Map();
-    [...enhancedAssets, ...ledgerRows, ...receivedDividends].forEach((record) => {
-      if (!record?.name) return;
+    const addGroup = (record) => {
       const key = groupKey(record);
-      if (!groups.has(key)) groups.set(key, {
-        key,
-        name: record.name,
-        round: getTradeRound(record),
-      });
+      if (!groups.has(key)) groups.set(key, { key, name: record.name, round: getTradeRound(record) });
+      return key;
+    };
+    [...enhancedAssets, ...ledgerRows].forEach((record) => {
+      if (record?.name) addGroup(record);
     });
 
-    // 회차 정보가 없는 과거 배당 기록은 그 종목의 마지막 회차에만 붙여 중복 합산을 막는다.
-    const latestRoundByName = new Map();
-    groups.forEach(({ name, round }) => {
-      latestRoundByName.set(name, Math.max(latestRoundByName.get(name) ?? 1, round));
+    /**
+     * 배당은 한 줄에만 붙인다. 이름으로 찾으면 같은 이름의 줄마다 같은 배당이 더해진다.
+     * 티커·회차가 맞는 줄이 있으면 거기에, 없으면 같은 이름 중 회차가 맞는 줄(회차가 없는
+     * 옛 기록은 마지막 회차)에 붙인다. 붙일 줄이 없으면 배당만 있는 줄을 따로 만든다.
+     */
+    const dividendsByGroup = new Map();
+    receivedDividends.forEach((dividend) => {
+      if (!dividend?.name) return;
+      let key = groupKey(dividend);
+      if (!groups.has(key)) {
+        const sameName = [...groups.values()].filter((group) => group.name === dividend.name);
+        const hasRound = dividend.round !== undefined && dividend.round !== null;
+        const targetRound = hasRound
+          ? getTradeRound(dividend)
+          : Math.max(0, ...sameName.map((group) => group.round));
+        key = sameName.find((group) => group.round === targetRound)?.key || addGroup(dividend);
+      }
+      if (!dividendsByGroup.has(key)) dividendsByGroup.set(key, []);
+      dividendsByGroup.get(key).push(dividend);
     });
 
     return [...groups.values()].map(({ key, name, round }) => {
-      const inGroup = (record) => getTradeAssetKey(record) === key;
+      const inGroup = (record) => groupKey(record) === key;
       const assetRows = enhancedAssets.filter(inGroup);
       const tradeRows = ledgerRows.filter(inGroup);
       // 환율 해석기를 빼먹으면 이미 계산된 krwPnl이 null로 덮여, 종목 카드의 실현손익만
@@ -371,11 +399,7 @@ export const usePortfolioMetrics = ({
       });
       const sellRows = position.rows.filter(record => record.side === 'sell');
       const buyRows = position.rows.filter(record => record.side === 'buy');
-      const dividendRows = receivedDividends.filter((dividend) => {
-        if (dividend.name !== name) return false;
-        if (dividend.round !== undefined && dividend.round !== null) return getTradeRound(dividend) === round;
-        return latestRoundByName.get(name) === round;
-      });
+      const dividendRows = dividendsByGroup.get(key) || [];
       const firstAsset = assetRows[0];
       const firstTrade = tradeRows[0];
       const firstDividend = dividendRows[0];

@@ -110,6 +110,60 @@ test('같은 이름과 회차여도 티커가 다른 과거 매매 사이클은 
   assert.equal(metrics.totalConvertedNetProfit, 488244);
 });
 
+test('티커 없이 넣은 매수 기록은 같은 종목 줄에 합치고 배당을 두 번 더하지 않는다', () => {
+  const stock = { name: '삼성전자', category: '국내주식', currency: 'KRW', round: 1 };
+  const metrics = runHook({
+    ...baseOptions,
+    // 앱은 로드 때 보유 종목을 원장 키 기준으로 맞추므로, 티커 없는 매수는 별도 보유분이 된다.
+    assets: [
+      {
+        id: 'a', ...stock, ticker: '005930', quantity: 10,
+        averagePrice: 70000, originalAveragePrice: 70000, currentPrice: 80000, originalCurrentPrice: 80000,
+        buyDate: '2026-01-02',
+      },
+      {
+        id: 'restored', ...stock, ticker: '', category: '', quantity: 5,
+        averagePrice: 70000, originalAveragePrice: 70000, currentPrice: 80000, originalCurrentPrice: 80000,
+        buyDate: '2026-02-02',
+      },
+    ],
+    tradeLedger: [
+      { id: 'b1', ...stock, ticker: '005930', side: 'buy', date: '2026-01-02', quantity: 10, price: 70000 },
+      { id: 'b2', ...stock, ticker: '', category: '', side: 'buy', date: '2026-02-02', quantity: 5, price: 70000 },
+    ],
+    receivedDividends: [{
+      id: 'd1', ...stock, ticker: '005930', amount: 3610,
+      date: '2026-04-20', paymentDate: '2026-04-20', exDate: '2026-03-31', quantity: 10,
+    }],
+  });
+
+  const rows = metrics.stockPerformanceSummary.filter((row) => row.name === '삼성전자');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].quantity, 15);
+  assert.equal(rows[0].dividendKRW, 3610);
+  assert.equal(rows[0].totalKRW, 150000 + 3610);
+});
+
+test('티커가 다른 같은 이름의 매매 사이클이 있어도 배당은 한 줄에만 붙는다', () => {
+  const tradeLedger = [
+    { id: 'old-buy', name: 'SK하이닉스', ticker: '000660', currency: 'KRW', round: 1, side: 'buy', date: '2026-05-11', quantity: 3, price: 1638000 },
+    { id: 'typo-buy', name: 'SK하이닉스', ticker: '00660', currency: 'KRW', round: 1, side: 'buy', date: '2026-08-31', quantity: 3, price: 1650000 },
+  ];
+  const receivedDividends = [
+    { id: 'd1', name: 'SK하이닉스', ticker: '000660', currency: 'KRW', amount: 1125, date: '2026-08-20', paymentDate: '2026-08-20', exDate: '2026-06-30', quantity: 3 },
+    // 티커 없는 옛 배당 기록도 한 줄(보유 중이거나 가장 최근 매매 사이클)에만 붙는다.
+    { id: 'd2', name: 'SK하이닉스', ticker: '', currency: 'KRW', amount: 500, date: '2026-05-20', paymentDate: '2026-05-20', exDate: '2026-03-31', quantity: 3 },
+  ];
+
+  const metrics = runHook({ ...baseOptions, tradeLedger, receivedDividends });
+  const rows = metrics.stockPerformanceSummary.filter((row) => row.name === 'SK하이닉스');
+
+  assert.equal(rows.length, 2);
+  assert.equal(rows.reduce((sum, row) => sum + row.dividendKRW, 0), 1625);
+  assert.equal(rows.find((row) => row.ticker === '000660').dividendKRW, 1125);
+  assert.equal(rows.find((row) => row.ticker === '00660').dividendKRW, 500);
+});
+
 test('해외 보유 평단은 달러 기준, 원화 평단은 매수일 환율 원금 기준이다', () => {
   const assets = [{
     id: 'soxl',
