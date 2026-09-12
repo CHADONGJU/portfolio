@@ -36,6 +36,8 @@ const HistoryTab = ({
   dashboardSummary,
   totalConvertedNetProfit,
   krwGrossProfit,
+  fxContribution,
+  annualizedReturnPercent,
   usdGrossProfit,
   overseasCapitalGainsTax,
   annualReturnYear,
@@ -98,6 +100,55 @@ const HistoryTab = ({
             <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${dashboardSummary.usdEvaluationProfit >= 0 ? 'text-up' : 'text-down'}`}>
               {dashboardSummary.usdEvaluationProfit > 0 ? '+' : ''}{formatMoney(dashboardSummary.usdEvaluationProfit, 'USD')}
             </p>
+          </div>
+        </div>
+
+        {/* 원화 손익에는 주가가 움직인 몫과 환율이 움직인 몫이 섞여 있다.
+            둘을 나눠야 "해외 종목이 잘한 것인지 환율 덕인지"를 알 수 있다.
+            연환산 수익률은 돈이 언제 들어왔는지까지 반영한다(단순 비율과 다르다). */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
+          <div className="bg-surface p-5 md:p-7 rounded-[20px]">
+            <div className="flex items-center gap-2 mb-3">
+              <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em]">해외 손익의 환율 기여</p>
+              <FeatureInfo text="해외 종목의 원화 손익을 주가가 움직인 몫과 환율이 움직인 몫으로 나눈 값입니다. 보유분과 매도분을 모두 더했으며, 국내 종목은 환율이 없으므로 빠져 있습니다." />
+            </div>
+            {fxContribution.totalKRW === 0 ? (
+              <p className="text-sm font-bold text-ink-mute">해외 종목 기록이 없습니다.</p>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="text-[13px] font-bold text-ink-mute">주가</span>
+                  <span className={`figure text-xl md:text-2xl font-bold tnum ${fxContribution.priceKRW >= 0 ? 'text-up' : 'text-down'}`}>
+                    {fxContribution.priceKRW > 0 ? '+' : ''}{formatMoney(fxContribution.priceKRW, 'KRW')}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <span className="text-[13px] font-bold text-ink-mute">환율</span>
+                  <span className={`figure text-xl md:text-2xl font-bold tnum ${fxContribution.fxKRW >= 0 ? 'text-up' : 'text-down'}`}>
+                    {fxContribution.fxKRW > 0 ? '+' : ''}{formatMoney(fxContribution.fxKRW, 'KRW')}
+                  </span>
+                </div>
+                <p className="mt-3 pt-3 border-t border-line-soft text-[12px] font-semibold text-ink-mute tnum">
+                  합계 {fxContribution.totalKRW > 0 ? '+' : ''}{formatMoney(fxContribution.totalKRW, 'KRW')}
+                </p>
+              </>
+            )}
+          </div>
+          <div className="bg-surface p-5 md:p-7 rounded-[20px]">
+            <div className="flex items-center gap-2 mb-3">
+              <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em]">연환산 수익률 (XIRR)</p>
+              <FeatureInfo text="매수·매도·배당이 실제로 오간 날짜를 모두 반영해 1년 기준으로 환산한 수익률입니다. 연도별 수익률은 '손익 ÷ 투입원가'라 12월에 넣은 돈과 1월에 넣은 돈을 같게 보지만, 이 값은 굴린 기간까지 계산에 넣습니다. 지금 보유분은 오늘 평가금액으로 회수한 것으로 봅니다." />
+            </div>
+            {annualizedReturnPercent === null ? (
+              <p className="text-sm font-bold text-ink-mute">매수·매도 기록이 더 쌓이면 계산합니다.</p>
+            ) : (
+              <>
+                <p className={`figure text-2xl md:text-3xl font-bold tracking-tighter tnum ${annualizedReturnPercent >= 0 ? 'text-up' : 'text-down'}`}>
+                  {annualizedReturnPercent > 0 ? '+' : ''}{annualizedReturnPercent.toFixed(2)}%
+                </p>
+                <p className="mt-2 text-[12px] font-semibold text-ink-mute">전체 기간 · 입출금 시점 반영</p>
+              </>
+            )}
           </div>
         </div>
 

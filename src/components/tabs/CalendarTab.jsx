@@ -2,7 +2,8 @@
 // 배당 캘린더(월별 달력 + 날짜별 배당 일정 + 선택한 일정 상세 + 연간 추이)와
 // 주요 증시 일정 캘린더를 토글로 전환해 보여준다. 계산은 하지 않고, App이
 // 넘겨준 일정·합계를 그리기만 한다.
-import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { useState } from 'react';
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, X } from 'lucide-react';
 import FeatureInfo from '../FeatureInfo.jsx';
 import MarketCalendar from '../MarketCalendar.jsx';
 import AnnualDividendTrend from '../AnnualDividendTrend.jsx';
@@ -32,7 +33,20 @@ const CalendarTab = ({
   marketCalendarKeywords,
   addMarketCalendarKeyword,
   removeMarketCalendarKeyword,
-}) => (
+}) => {
+  /**
+   * 배당 달력은 42칸 중 배당이 찍히는 날이 0~3일뿐이라, 배당이 없는 달에는
+   * 700px 가까운 빈 격자만 남는다. 그 달은 접은 채로 열고(아래 연간 배당 흐름이
+   * 훨씬 많은 것을 말해 준다), 사용자가 직접 편 경우에만 펼친다.
+   * 선택은 그 달에만 적용되므로 달을 옮기면 다시 자동 판단으로 돌아간다.
+   */
+  const [gridChoice, setGridChoice] = useState(null);
+  const monthHasDividends = dividendCalendarCells.some((cell) => (
+    (dividendCalendarEventsByDate[cell.dateKey] || []).length > 0
+  ));
+  const isGridOpen = gridChoice?.month === calendarMonth ? gridChoice.open : monthHasDividends;
+
+  return (
     <div className="space-y-6 anim-fade">
     <div className="bg-surface rounded-[20px] overflow-hidden">
       <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -96,7 +110,16 @@ const CalendarTab = ({
           </p>
         </div>
         <div className="flex flex-col items-start md:items-end gap-2">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setGridChoice({ month: calendarMonth, open: !isGridOpen })}
+              aria-expanded={isGridOpen}
+              className="inline-flex items-center gap-1 h-9 px-3 rounded-xl bg-surface border border-line-soft text-xs font-bold text-ink-soft hover:text-ink hover:border-line transition-colors"
+            >
+              {isGridOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+              달력 {isGridOpen ? '접기' : '펼치기'}
+            </button>
             {dividendCalendarMonthlySummary.totals.length > 0 ? (
               dividendCalendarMonthlySummary.totals.map(({ currency, amount }) => (
                 <span key={currency} className="figure px-3 py-2 rounded-xl bg-surface border border-line-soft text-sm md:text-base font-bold text-ink">
@@ -115,6 +138,7 @@ const CalendarTab = ({
         </div>
       </div>
 
+      {isGridOpen && (
       <div className="p-4 md:p-7">
         <div className="grid grid-cols-7 gap-1.5 md:gap-2 mb-2">
           {CALENDAR_WEEKDAYS.map((weekday, weekdayIndex) => (
@@ -241,6 +265,7 @@ const CalendarTab = ({
           )}
         </div>
       </div>
+      )}
       </>
       ) : (
         <MarketCalendar
@@ -264,6 +289,7 @@ const CalendarTab = ({
       />
     )}
     </div>
-);
+  );
+};
 
 export default CalendarTab;

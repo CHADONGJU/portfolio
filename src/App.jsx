@@ -1684,7 +1684,8 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
     krwGrossProfit,
     usdGrossProfit,
     totalConvertedNetProfit,
-    realizedCostKRW,
+    fxContribution,
+    annualizedReturnPercent,
     stockPerformanceSummary,
     dividendSummary,
     filteredHistory,
@@ -1842,22 +1843,7 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
     const dividendByCurrency = Object.fromEntries(dividendIncome.totals.map(({ currency, amount }) => [currency, amount]));
     const totalReturnPercent = investedPurchaseKRW > 0 ? (investedProfitKRW / investedPurchaseKRW) * 100 : 0;
 
-    /**
-     * "이 포트폴리오로 여태 얼마 벌었나"를 한 숫자로.
-     * 위의 totalReturnPercent는 아직 안 판 종목의 평가손익만 본다. 판 종목의
-     * 실현손익과 받은 배당은 각각 다른 카드에 흩어져 있어 합계가 어디에도 없었다.
-     * 분모도 같은 범위로 맞춘다 — 지금 보유분 원금 + 이미 판 물량의 취득원가.
-     */
-    const totalProfitKRW = evaluationProfitKRW + totalConvertedNetProfit + dividendKRW;
-    const totalInvestedKRW = investedPurchaseKRW + realizedCostKRW;
-    const overallReturnPercent = totalInvestedKRW > 0
-      ? (totalProfitKRW / totalInvestedKRW) * 100
-      : null;
-
     return {
-      totalProfitKRW,
-      totalInvestedKRW,
-      overallReturnPercent,
       purchaseKRW,
       investedPurchaseKRW,
       evaluationProfitKRW,
@@ -1868,7 +1854,7 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
       dividendKRW,
       dividendByCurrency,
     };
-  }, [portfolioAssets, dividendIncome, totalConvertedNetProfit, realizedCostKRW]);
+  }, [portfolioAssets, dividendIncome]);
   const includeDividendsInReturn = targetPortfolio.includeDividendsInReturn === true;
   // Receipt-only years must remain visible, including holdings bought in prior years.
   const annualPerformanceYears = useMemo(() => getAnnualTradeYears({
@@ -3159,6 +3145,8 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
             dashboardSummary={dashboardSummary}
             totalConvertedNetProfit={totalConvertedNetProfit}
             krwGrossProfit={krwGrossProfit}
+            fxContribution={fxContribution}
+            annualizedReturnPercent={annualizedReturnPercent}
             usdGrossProfit={usdGrossProfit}
             overseasCapitalGainsTax={overseasCapitalGainsTax}
             annualReturnYear={annualReturnYear}

@@ -10,6 +10,12 @@ const AnnualReturnGoalCard = ({ year, earliestYear, targetPercent, performance, 
   const currentYear = new Date().getFullYear();
   const actual = Number.isFinite(performance?.returnPercent) ? performance.returnPercent : null;
   const target = Number(targetPercent) || 0;
+  /**
+   * 막대는 "목표까지 얼마나 왔나"를 보여주는 것이므로 목표가 있어야 의미가 있다.
+   * 목표가 없을 때 실제값을 최대로 잡으면 막대가 항상 끝까지 차서, 아무것도
+   * 설정하지 않았는데 다 이룬 것처럼 보인다.
+   */
+  const hasTarget = target > 0;
   const min = Math.min(0, actual ?? 0);
   const max = Math.max(1, target, actual ?? 0);
   const range = max - min || 1;
@@ -72,7 +78,12 @@ const AnnualReturnGoalCard = ({ year, earliestYear, targetPercent, performance, 
           </div>
         )}
         <div className="relative h-5 rounded-full bg-line-soft overflow-hidden">
-          {actual !== null && <span className={`absolute top-0 h-full rounded-full ${actual >= 0 ? 'bg-up' : 'bg-down'}`} style={{ left: `${fillLeft}%`, width: `${Math.max(fillWidth, 0.8)}%` }} />}
+          {hasTarget && actual !== null && <span className={`absolute top-0 h-full rounded-full ${actual >= 0 ? 'bg-up' : 'bg-down'}`} style={{ left: `${fillLeft}%`, width: `${Math.max(fillWidth, 0.8)}%` }} />}
+          {!hasTarget && actual !== null && (
+            <span className="absolute inset-0 grid place-items-center text-[11px] font-bold text-ink-mute">
+              목표를 입력하면 달성도를 여기에 표시합니다
+            </span>
+          )}
         </div>
         <div className="mt-3 flex justify-between text-[11px] font-bold text-ink-mute"><span>{min.toFixed(1)}%</span><span>목표 {target > 0 ? `${target}%` : '미설정'}</span></div>
       </div>

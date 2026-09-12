@@ -114,30 +114,9 @@ const PortfolioTab = ({
                 {formatMoney(dashboardSummary.evaluationProfitKRW, 'KRW')}
               </span>
               <span className="text-[13px] font-medium text-ink-mute">
-                · 평가손익 · 국내/해외 주식 기준
+                · 국내/해외 주식 기준
               </span>
             </div>
-
-            {/* 평가손익만으로는 "여태 얼마 벌었나"를 알 수 없다.
-                판 종목의 실현손익과 받은 배당까지 더한 값을 한 줄로 보여준다. */}
-            {dashboardSummary.overallReturnPercent !== null && (
-              <div className="mt-4 pt-4 border-t border-line-soft">
-                <p className="text-[13px] font-semibold text-ink-mute">총 수익 (평가 + 실현 + 배당)</p>
-                <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                  <span className={`figure text-[20px] lg:text-[22px] font-bold tnum ${dashboardSummary.totalProfitKRW >= 0 ? 'text-up' : 'text-down'}`}>
-                    {dashboardSummary.totalProfitKRW > 0 ? '+' : ''}
-                    {formatMoney(dashboardSummary.totalProfitKRW, 'KRW')}
-                  </span>
-                  <span className={`text-[14px] font-bold tnum ${dashboardSummary.overallReturnPercent >= 0 ? 'text-up' : 'text-down'}`}>
-                    {dashboardSummary.overallReturnPercent > 0 ? '+' : ''}
-                    {dashboardSummary.overallReturnPercent.toFixed(2)}%
-                  </span>
-                  <span className="text-[12px] font-medium text-ink-mute">
-                    · 투입원가 {formatMoney(dashboardSummary.totalInvestedKRW, 'KRW')}
-                  </span>
-                </div>
-              </div>
-            )}
           </div>
 
           {/* 보조 지표 3개 — 390px에서 3칸으로 쪼개면 금액이 칸을 넘쳐
@@ -174,9 +153,11 @@ const PortfolioTab = ({
           </div>
         </section>
 
-        <div className="grid lg:grid-cols-[minmax(0,1fr)_30rem] xl:grid-cols-[minmax(0,1fr)_34rem] gap-4 lg:gap-5">
-        {/* SVG 드릴다운 차트 */}
-        <div className="order-2 lg:order-2 bg-surface p-6 lg:p-7 rounded-[20px] flex flex-col items-center h-full">
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_24rem] xl:grid-cols-[minmax(0,1fr)_28rem] gap-4 lg:gap-5">
+        {/* SVG 드릴다운 차트 — h-full로 두면 왼쪽 자산 표 높이만큼 늘어나
+            아래쪽 절반 이상이 빈 채로 남는다. 내용 높이만 차지하게 두고
+            데스크톱에서는 표를 스크롤하는 동안 계속 보이도록 붙여 둔다. */}
+        <div className="order-2 lg:order-2 bg-surface p-6 lg:p-7 rounded-[20px] flex flex-col items-center lg:sticky lg:top-4 lg:self-start">
           <div className="w-full flex justify-between items-center mb-5 lg:mb-5">
             <h2 className="text-base lg:text-[16px] font-bold text-ink flex items-center gap-2"><PieIcon className="text-ink-soft" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
             {selectedCategory && (
@@ -221,7 +202,9 @@ const PortfolioTab = ({
   	                    <span className="text-[11px] md:text-[12px] text-ink-mute font-bold tracking-[0.06em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
   	                    <div className="flex flex-col items-center gap-0.5">
   	                      {currentCategoryKRW > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-ink tracking-tight whitespace-nowrap">{formatMoney(currentCategoryKRW, 'KRW')}</span>}
-  	                      {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[11px] text-ink-mute font-bold">+</span>}
+  	                      {/* 원화분과 달러분은 서로 더할 수 없는 값이다. '+'로 이으면
+  	                          둘을 합친 수식처럼 읽히므로 구분선으로 나눈다. */}
+  	                      {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="w-8 border-t border-line-soft my-0.5" aria-hidden="true" />}
   	                      {currentCategoryUSD > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-ink tracking-tight whitespace-nowrap">{formatMoney(currentCategoryUSD, 'USD')}</span>}
   	                    </div>
                 {isDomesticStockChart ? (
@@ -341,7 +324,7 @@ const PortfolioTab = ({
                             <p className="text-xs md:text-[13px] text-ink-mute font-bold mt-2 md:mt-1.5 truncate">
                               {asset.ticker} • {formatAssetQuantity(asset.quantity, asset.category)}주
                             </p>
-                            <p className="text-[12px] md:text-[13px] text-ink-mute font-bold mt-1 truncate">
+                            <p className="text-[12px] md:text-[13px] text-ink-mute font-bold mt-1 whitespace-nowrap">
                               최초 매수일 {asset.displayBuyDate || asset.buyDate || '-'}
                             </p>
                           </div>
@@ -411,17 +394,20 @@ const PortfolioTab = ({
                         </div>
                       </td>
                       <td className="block md:table-cell px-0 py-0 md:px-3 md:py-4 text-right md:text-center whitespace-nowrap align-middle">
-                      <div className="flex flex-wrap md:flex-col items-center justify-end md:justify-center gap-2 md:gap-1">
+                      {/* 예전에는 데스크톱에서 라벨을 숨기고 아이콘만 세로로 쌓았다.
+                          무슨 버튼인지 알 수 없었고, 세로 스택이 행 높이를 240px까지
+                          밀어올려 표가 통째로 길어졌다. 모바일과 같은 라벨 버튼을 쓴다. */}
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
                             openAddBuyModal(asset);
                           }}
-                          className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-ink hover:bg-line-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
+                          className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-ink hover:bg-line-soft transition-colors px-2 py-1.5 rounded-lg text-[13px] md:text-[12px] font-bold"
                           title="추가 매수"
                         >
                           <Plus size={16} className="md:w-4.5 md:h-4.5" />
-                          <span className="md:hidden">추가 매수</span>
+                          <span>추가 매수</span>
                         </button>
 
                         <button
@@ -429,11 +415,11 @@ const PortfolioTab = ({
                             e.stopPropagation();
                             openSellModal(asset);
                           }}
-                          className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-warn hover:bg-warn-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
+                          className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-warn hover:bg-warn-soft transition-colors px-2 py-1.5 rounded-lg text-[13px] md:text-[12px] font-bold"
                           title="일부 매도"
                         >
                           <Minus size={16} className="md:w-4.5 md:h-4.5" />
-                          <span className="md:hidden">일부 매도</span>
+                          <span>일부 매도</span>
                         </button>
 
                         <button
@@ -441,11 +427,11 @@ const PortfolioTab = ({
                             e.stopPropagation();
                             openBuyLotsModal(asset);
                           }}
-                          className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-brand hover:bg-brand-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
+                          className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-brand hover:bg-brand-soft transition-colors px-2 py-1.5 rounded-lg text-[13px] md:text-[12px] font-bold"
                           title="매수 기록 관리"
                         >
                           <CalendarDays size={16} className="md:w-4.5 md:h-4.5" />
-                          <span className="md:hidden">매수 기록</span>
+                          <span>매수 기록</span>
                         </button>
 
                         {canSummarizeAsset(asset) && (
@@ -454,20 +440,21 @@ const PortfolioTab = ({
                               e.stopPropagation();
                               setInsightAsset(asset);
                             }}
-                            className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-brand hover:bg-brand-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
+                            className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-brand hover:bg-brand-soft transition-colors px-2 py-1.5 rounded-lg text-[13px] md:text-[12px] font-bold"
                             title="AI 요약"
                           >
                             <Sparkles size={16} className="md:w-4.5 md:h-4.5" />
-                            <span className="md:hidden">AI 요약</span>
+                            <span>AI 요약</span>
                           </button>
                         )}
 
                         <button
                           onClick={(e) => requestRemoveAsset(asset.id, e)}
-                          className="inline-flex items-center justify-center gap-1.5 text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
+                          className="inline-flex items-center justify-center gap-1.5 text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors px-2 py-1.5 rounded-lg text-[13px] md:text-[12px] font-bold"
                           title="자산 삭제"
                         >
                           <Trash2 size={16} className="md:w-4.5 md:h-4.5" />
+                          <span className="sr-only">자산 삭제</span>
                         </button>
                       </div>
                     </td>

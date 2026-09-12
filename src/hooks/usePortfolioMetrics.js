@@ -13,6 +13,7 @@ import { sortDividendRecordsNewestFirst } from '../utils/dividendRecords.js';
 import { resolveDividendIncomeRate } from '../utils/dividendIncome.js';
 import { formatKoreanDate } from '../utils/dates.js';
 import { calculateAnnualDividendYield } from '../utils/annualDividendYield.js';
+import { calculateXirr } from '../utils/xirr.js';
 import {
   buildCanonicalTradeRows,
   buildKrwCostBasisByAsset,
@@ -322,6 +323,77 @@ export const usePortfolioMetrics = ({
     if (!Number.isFinite(native) || native <= 0) return acc;
     return acc + (native * getRecordKrwRate(record, realizedKrwRate));
   }, 0);
+  /**
+   * 환율이 손익에 얼마나 기여했나.
+   *
+   * 원화 손익에는 주가가 움직인 몫과 환율이 움직인 몫이 함께 들어 있다.
+   * 둘을 나눠 보면 "해외 종목이 정말 잘한 것인지, 환율 덕을 본 것인지"가 보인다.
+   *
+   * 보유분: 손익 = 현재가치×오늘환율 − 원금(매수환율). 여기서 주가 몫은
+   *   (현재−매수)×매수환율이고, 나머지가 환율 몫이다.
+   * 매도분: 주가 몫은 현지 통화 손익을 매수 시점 환율로 환산한 값이고,
+   *   원화 실현손익과의 차이가 환율 몫이다.
+   */
+  const fxContribution = useMemo(() => {
+    let priceKRW = 0;
+    let totalKRW = 0;
+
+    enhancedAssets.forEach((asset) => {
+      if (!isPortfolioAssetCategory(asset.category) || asset.currency === 'KRW') return;
+      const buyRate = asset.purchaseNative > 0 ? asset.purchaseKRW / asset.purchaseNative : 0;
+      if (!(buyRate > 0)) return;
+      priceKRW += asset.profitNative * buyRate;
+      totalKRW += asset.profitKRW;
+    });
+
+    realizedRecords.forEach((record) => {
+      if ((record.currency || 'KRW') === 'KRW') return;
+      const krwPnl = Number(record.krwPnl);
+      const nativeCost = Number(record.nativeCostRemoved);
+      const krwCost = Number(record.krwCostRemoved);
+      if (!Number.isFinite(krwPnl) || !(nativeCost > 0) || !(krwCost > 0)) return;
+      priceKRW += (Number(record.pnl) || 0) * (krwCost / nativeCost);
+      totalKRW += krwPnl;
+    });
+
+    return { priceKRW, fxKRW: totalKRW - priceKRW, totalKRW };
+  }, [enhancedAssets, realizedRecords]);
+
+  /**
+   * 전체 기간 연환산 수익률(XIRR)에 넣을 현금흐름.
+   * 매수는 나간 돈(음수), 매도대금과 받은 배당은 들어온 돈(양수), 그리고 지금
+   * 들고 있는 평가금액을 오늘 날짜의 회수액으로 얹는다. 모두 그 거래 시점의
+   * 환율로 환산한 원화다.
+   */
+  const portfolioCashflows = useMemo(() => {
+    const flows = [];
+    canonicalTradeRows.forEach((row) => {
+      const amount = (Number(row.price) || 0) * (Number(row.quantity) || 0)
+        * getRecordKrwRate(row, realizedKrwRate);
+      if (!row.date || !(amount > 0)) return;
+      flows.push({ date: row.date, amount: row.side === 'sell' ? amount : -amount });
+    });
+    receivedDividends.forEach((dividend) => {
+      const amount = Number(dividend.amount);
+      const date = getDividendReportingDate(dividend);
+      if (!date || !Number.isFinite(amount) || amount <= 0) return;
+      const { rate } = resolveDividendIncomeRate(dividend, {
+        exchangeRate, jpyKrwRate, currencyRates, historicalRates: historicalDividendRates,
+      });
+      if (!(rate > 0)) return;
+      flows.push({ date, amount: amount * rate });
+    });
+    if (totalConvertedKRW > 0) flows.push({ date: formatKoreanDate(), amount: totalConvertedKRW });
+    return flows;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canonicalTradeRows, receivedDividends, totalConvertedKRW,
+    exchangeRate, jpyKrwRate, currencyRates, historicalDividendRates]);
+
+  const annualizedReturnPercent = useMemo(
+    () => calculateXirr(portfolioCashflows),
+    [portfolioCashflows],
+  );
+
   // 연 수익률이 "그 시점에 실현된 손익"으로 반영할 때 쓰는, 날짜가 붙은 실현손익
   // 목록. 헤더 합계(totalConvertedNetProfit)와 완전히 같은 계산(같은 환율 규칙)을
   // 재사용해야 두 화면의 숫자가 서로 어긋나지 않는다.
@@ -698,6 +770,8 @@ export const usePortfolioMetrics = ({
     usdGrossProfit,
     totalConvertedNetProfit,
     realizedCostKRW,
+    fxContribution,
+    annualizedReturnPercent,
     realizedGainKrwEvents,
     stockPerformanceSummary,
     dividendSummary,
