@@ -94,6 +94,12 @@ import {
 } from './utils/tradeRecordView';
 import CalendarTab from './components/tabs/CalendarTab.jsx';
 import PortfolioTab from './components/tabs/PortfolioTab.jsx';
+import RemoveAssetConfirmModal from './components/modals/RemoveAssetConfirmModal.jsx';
+import SellAssetModal from './components/modals/SellAssetModal.jsx';
+import PriceInputCurrencyToggle from './components/PriceInputCurrencyToggle.jsx';
+import AddAssetModal from './components/modals/AddAssetModal.jsx';
+import DividendEntryModal from './components/modals/DividendEntryModal.jsx';
+import AddBuyModal from './components/modals/AddBuyModal.jsx';
 import HistoryTab from './components/tabs/HistoryTab.jsx';
 import TargetTab from './components/tabs/TargetTab.jsx';
 import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
@@ -106,7 +112,6 @@ import {
   getBrokerPreset,
   getSellTaxRatePercent,
   deriveFeeRatePercent,
-  isDomesticEtfLikeAsset,
   resolveKnownFeeAmount,
   roundTradeCost,
 } from './utils/tradeCosts';
@@ -432,31 +437,7 @@ const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}#
  * 원화를 고르면 매수일 환율로 환산한 결과를 바로 아래에 보여줘서
  * "원화로 적었는데 달러로 들어갔다"는 사고를 눈으로 막는다.
  */
-const getCurrencySymbol = (currency) => ({ USD: '$', JPY: '¥', KRW: '₩' }[currency] || currency);
 
-const PriceInputCurrencyToggle = ({ nativeCurrency, value, onChange }) => (
-  <div className="seg inline-flex items-center p-0.5 rounded-[10px]" role="group" aria-label="입력 통화">
-    {[
-      { key: 'NATIVE', label: `${getCurrencySymbol(nativeCurrency)} ${nativeCurrency}` },
-      { key: 'KRW', label: '₩ 원화' },
-    ].map((option) => {
-      const active = (value === 'KRW' ? 'KRW' : 'NATIVE') === option.key;
-      return (
-        <button
-          key={option.key}
-          type="button"
-          onClick={() => onChange(option.key)}
-          aria-pressed={active}
-          className={`seg-item px-2.5 py-1 rounded-lg text-[11px] md:text-[12px] font-bold leading-none ${
-            active ? 'text-ink' : 'text-ink-mute hover:text-ink-soft'
-          }`}
-        >
-          {option.label}
-        </button>
-      );
-    })}
-  </div>
-);
 
 const getAssetUpdatedAtTime = (asset = {}) => {
   const timestamp = new Date(asset.updatedAt || asset.createdAt || 0).getTime();
@@ -4492,348 +4473,28 @@ const buyLotDraftSummary = useMemo(() => {
       )}
 
       {isAddingDividend && (
-        <ModalOverlay overlayClassName="z-[110]" labelledBy="dividend-entry-title" onClose={() => setIsAddingDividend(false)}>
-          <div className="bg-surface w-full max-w-110 max-h-[90vh] overflow-y-auto scroll-soft rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise">
-            <div className="flex justify-between items-center mb-6">
-              <div className="flex items-center gap-2">
-                <h3 id="dividend-entry-title" className="text-lg md:text-xl font-bold text-ink">실제 입금 배당 추가</h3>
-                <FeatureInfo text="증권사에 들어온 세후 금액을 그대로 입력합니다." align="right" />
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsAddingDividend(false)}
-                className="p-2 bg-canvas hover:bg-line-soft rounded-full transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="app-field-4" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">종목</label>
-                <select id="app-field-4"
-                  value={actualDividendForm.assetId}
-                  onChange={(event) => handleActualDividendAssetChange(event.target.value)}
-                  className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-                >
-                  <option value="">종목 선택</option>
-                  {dividendEntryAssets.map((asset) => (
-                    <option key={asset.id} value={String(asset.id)}>{asset.name} · {asset.ticker || asset.currency}</option>
-                  ))}
-                  <option value="__manual__">목록에 없는 종목 직접 입력</option>
-                </select>
-              </div>
-
-              {actualDividendForm.assetId === '__manual__' && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label htmlFor="app-field-5" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">종목명</label>
-                    <input id="app-field-5"
-                      value={actualDividendForm.name}
-                      onChange={(event) => setActualDividendForm((previous) => ({ ...previous, name: event.target.value }))}
-                      placeholder="예: QUALCOMM"
-                      className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="app-field-6" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">티커</label>
-                    <input id="app-field-6"
-                      value={actualDividendForm.ticker}
-                      onChange={(event) => setActualDividendForm((previous) => ({ ...previous, ticker: event.target.value.toUpperCase() }))}
-                      placeholder="예: QCOM"
-                      className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink uppercase"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="app-field-7" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">입금일</label>
-                  <input id="app-field-7"
-                    type="date"
-                    value={actualDividendForm.date}
-                    onChange={(event) => setActualDividendForm((previous) => ({ ...previous, date: event.target.value }))}
-                    className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="app-field-8" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">통화</label>
-                  <select id="app-field-8"
-                    value={actualDividendForm.currency}
-                    onChange={(event) => setActualDividendForm((previous) => ({
-                      ...previous,
-                      currency: event.target.value,
-                      category: previous.assetId === '__manual__'
-                        ? (event.target.value === 'KRW' ? '국내주식' : '해외주식')
-                        : previous.category,
-                    }))}
-                    className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-                  >
-                    {PORTFOLIO_CURRENCIES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="app-field-9" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">실제 입금액</label>
-                  <input id="app-field-9"
-                    inputMode="decimal"
-                    value={formatInputNumber(actualDividendForm.amount)}
-                    onChange={(event) => setActualDividendForm((previous) => ({ ...previous, amount: sanitizeNumericInput(event.target.value) }))}
-                    placeholder="0"
-                    className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="app-field-10" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">기준 수량</label>
-                  <input id="app-field-10"
-                    inputMode="decimal"
-                    value={formatInputNumber(actualDividendForm.quantity)}
-                    onChange={(event) => setActualDividendForm((previous) => ({ ...previous, quantity: sanitizeNumericInput(event.target.value) }))}
-                    placeholder="선택"
-                    className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAddingDividend(false)}
-                  className="h-13 bg-line-soft text-ink-soft rounded-2xl font-bold text-sm hover:bg-line transition-colors"
-                >
-                  취소
-                </button>
-                <button
-                  type="button"
-                  onClick={handleAddActualDividend}
-                  className="h-13 bg-brand text-white rounded-2xl font-bold text-sm hover:opacity-90 transition-opacity"
-                >
-                  실제 입금 반영
-                </button>
-              </div>
-            </div>
-          </div>
-        </ModalOverlay>
+        <DividendEntryModal
+          actualDividendForm={actualDividendForm}
+          setActualDividendForm={setActualDividendForm}
+          dividendEntryAssets={dividendEntryAssets}
+          onAssetChange={handleActualDividendAssetChange}
+          onAdd={handleAddActualDividend}
+          onClose={() => setIsAddingDividend(false)}
+        />
       )}
 
       {/* 자산 추가 모달 */}
-{isAdding && (
-  <ModalOverlay overlayClassName="z-[100]" labelledBy="add-asset-title" onClose={() => setIsAdding(false)}>
-    <div className="bg-surface w-full max-w-110 rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
-      <div className="flex justify-between items-center mb-6 md:mb-8 sticky top-0 bg-surface z-10 pt-2 pb-2">
-        <h3 id="add-asset-title" className="text-lg md:text-xl font-bold text-ink">새 자산 등록</h3>
-        <button
-          onClick={() => {
-            setIsAdding(false);
-          }}
-          className="p-2 bg-canvas hover:bg-line-soft rounded-full transition-colors"
-        >
-          <X size={18} />
-        </button>
-      </div>
-
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 md:gap-4">
-          <div>
-            <label htmlFor="app-field-11" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-              자산 구분
-            </label>
-            <select id="app-field-11"
-              className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm"
-              value={newAsset.category}
-              onChange={(e) => setNewAsset({ ...newAsset, category: e.target.value })}
-            >
-              <option value="국내주식">국내주식</option>
-              <option value="해외주식">해외주식</option>
-            </select>
-          </div>
-
-          <div>
-            <label htmlFor="app-field-12" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-              통화 (Currency)
-            </label>
-            <select id="app-field-12"
-              className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm"
-              value={newAsset.currency}
-              onChange={(e) => setNewAsset({ ...newAsset, currency: e.target.value })}
-            >
-              {PORTFOLIO_CURRENCIES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
-            </select>
-            {/* 해외주식은 티커를 보고 통화가 자동으로 정해진다.
-                여기서 원화를 골라도 달러로 저장되므로, 실제로 쓰일 통화를 분명히 알려준다. */}
-            {(() => {
-              const resolvedCurrency = getAssetInputCurrency(newAsset.category, newAsset.ticker, newAsset.currency);
-              if (resolvedCurrency === newAsset.currency) return null;
-              return (
-                <p className="mt-1.5 ml-1 text-[11px] font-bold text-ink-mute leading-relaxed">
-                  {newAsset.category}은 {getCurrencySymbol(resolvedCurrency)} {resolvedCurrency}로 저장됩니다.
-                  단가는 아래에서 원화로도 입력할 수 있어요.
-                </p>
-              );
-            })()}
-          </div>
-        </div>
-
-        <div className="relative">
-          <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            종목명
-          </label>
-          <div className="relative">
-            <Search size={18} className="absolute left-4 top-3.5 text-ink-mute" />
-            <input
-              type="text"
-              className="w-full pl-11 pr-4 py-2.5 md:py-3 bg-canvas rounded-xl md:rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm"
-              value={newAsset.name}
-              onChange={(e) => setNewAsset({ ...newAsset, name: e.target.value })}
-            />
-          </div>
-        </div>
-
-        <div>
-          <label htmlFor="app-field-13" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            티커 심볼
-          </label>
-          <input id="app-field-13"
-            type="text"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-            value={newAsset.ticker}
-            onChange={(e) => setNewAsset({ ...newAsset, ticker: e.target.value.toUpperCase() })}
-          />
-        </div>
-
-        <div>
-          <label htmlFor="app-field-14" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            보유 계좌
-          </label>
-          <select id="app-field-14"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-            value={newAsset.accountType}
-            onChange={(e) => setNewAsset({
-              ...newAsset,
-              accountType: normalizeAccountType(e.target.value),
-            })}
-          >
-            {ACCOUNT_TYPE_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-          <p className="mt-1.5 ml-1 text-[11px] font-bold text-ink-mute leading-relaxed">
-            배당은 같은 공식 분배금이라도 계좌 유형에 따라 즉시 원천징수 여부가 달라집니다.
-          </p>
-        </div>
-
-        {(() => {
-          // 실제로 저장될 통화. 해외주식은 사용자가 통화 칸에서 무엇을 골랐든 달러(또는 엔)로 잡힌다.
-          const nativeCurrency = getAssetInputCurrency(newAsset.category, newAsset.ticker, newAsset.currency);
-          const isForeign = nativeCurrency !== 'KRW';
-          const isKrwInput = isForeign && newAsset.priceInputCurrency === 'KRW';
-          const inputCurrency = isKrwInput ? 'KRW' : nativeCurrency;
-
-          return (
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-1.5 ml-1">
-                <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute">
-                  평균 단가 ({getCurrencySymbol(inputCurrency)})
-                </label>
-                {isForeign && (
-                  <PriceInputCurrencyToggle
-                    nativeCurrency={nativeCurrency}
-                    value={newAsset.priceInputCurrency}
-                    onChange={(next) => setNewAsset({ ...newAsset, priceInputCurrency: next })}
-                  />
-                )}
-              </div>
-              <input
-                type="text"
-                inputMode="decimal"
-                className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-                value={formatInputNumber(newAsset.averagePrice)}
-                onChange={(e) =>
-                  setNewAsset({
-                    ...newAsset,
-                    averagePrice: sanitizeNumericInput(e.target.value)
-                  })
-                }
-              />
-            </div>
-          );
-        })()}
-
-        <div>
-          <label htmlFor="app-field-15" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            매수 수량
-          </label>
-          <input id="app-field-15"
-            type="text"
-            inputMode="decimal"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-            value={formatInputNumber(newAsset.quantity)}
-            onChange={(e) =>
-              setNewAsset({
-                ...newAsset,
-                quantity: sanitizeNumericInput(e.target.value)
-              })
-            }
-          />
-        </div>
-
-        <div className="border-t border-line pt-4 mt-2">
-          <div>
-            <label htmlFor="app-field-16" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-              매수일
-            </label>
-            <input id="app-field-16"
-              type="date"
-              className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-              value={newAsset.buyDate}
-              onChange={(e) => setNewAsset({ ...newAsset, buyDate: e.target.value })}
-            />
-          </div>
-
-          <div className="mt-4">
-            <BrokerFeeFields
-              idPrefix="add-asset"
-              label="매수 수수료"
-              amountOnly
-              category={newAsset.category}
-              currency={newAssetFeeCurrency}
-              brokerId={newAsset.brokerId}
-              feeRatePercent={newAsset.brokerFeeRate}
-              feeAmount={newAsset.brokerFeeAmount}
-              feeMode={newAsset.feeMode}
-              estimatedFee={newAssetBuyFeePreview}
-              onChange={(next) => setNewAsset((prev) => ({ ...prev, ...next }))}
-            />
-          </div>
-
-        </div>
-
-
-        {/* 위 입력 묶음(space-y-4) 바깥이라 간격이 없었다. 같은 1rem을 직접 준다. */}
-        <div className="mt-4">
-          <label htmlFor="app-field-17" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            매수 메모
-          </label>
-          <textarea id="app-field-17"
-            rows="3"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
-            value={newAsset.memo}
-            onChange={(e) => setNewAsset({ ...newAsset, memo: e.target.value })}
-          />
-        </div>
-        <button
-          onClick={handleAddAsset}
-          className="w-full mt-7 h-13.5 bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
-        >
-          포트폴리오에 반영하기
-        </button>
-      </div>
-    </div>
-  </ModalOverlay>
-)}
+      {isAdding && (
+        <AddAssetModal
+          newAsset={newAsset}
+          setNewAsset={setNewAsset}
+          newAssetBuyFeePreview={newAssetBuyFeePreview}
+          newAssetFeeCurrency={newAssetFeeCurrency}
+          resolvedCurrency={getAssetInputCurrency(newAsset.category, newAsset.ticker, newAsset.currency)}
+          onAddAsset={handleAddAsset}
+          onClose={() => setIsAdding(false)}
+        />
+      )}
 
 {/* 매수 기록 관리 모달 */}
 {selectedAssetToManageBuys && (
@@ -4848,366 +4509,36 @@ const buyLotDraftSummary = useMemo(() => {
 )}
 
 {/* 추가 매수 모달 */}
-{isUpdatingAsset && selectedAssetToUpdate && (
-  <ModalOverlay overlayClassName="z-[110]" labelledBy="update-asset-title" onClose={() => { setIsUpdatingAsset(false); setSelectedAssetToUpdate(null); }}>
-    <div className="bg-surface w-full max-w-110 rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
-      <div className="flex justify-between items-center mb-6 md:mb-8">
-        <h3 id="update-asset-title" className="text-lg md:text-xl font-bold text-ink">
-          {selectedAssetToUpdate.name} 추가 매수
-        </h3>
-        <button
-          onClick={() => {
-            setIsUpdatingAsset(false);
-            setSelectedAssetToUpdate(null);
-          }}
-          className="p-2 bg-canvas hover:bg-line-soft rounded-full transition-colors"
-        >
-          <X size={18} />
-        </button>
-      </div>
-
-      <div className="space-y-4">
-        {(() => {
-          const nativeCurrency = selectedAssetToUpdate.currency || 'KRW';
-          const isForeign = nativeCurrency !== 'KRW';
-          const isKrwInput = isForeign && addBuyForm.priceInputCurrency === 'KRW';
-          const inputCurrency = isKrwInput ? 'KRW' : nativeCurrency;
-
-          return (
-            <div>
-              <div className="flex items-center justify-between gap-2 mb-1.5 ml-1">
-                <label className="block text-[11px] md:text-[12px] font-bold text-ink-mute">
-                  추가 매수 단가 ({getCurrencySymbol(inputCurrency)})
-                </label>
-                {isForeign && (
-                  <PriceInputCurrencyToggle
-                    nativeCurrency={nativeCurrency}
-                    value={addBuyForm.priceInputCurrency}
-                    onChange={(next) => setAddBuyForm((prev) => ({ ...prev, priceInputCurrency: next }))}
-                  />
-                )}
-              </div>
-              <input
-                type="text"
-                inputMode="decimal"
-                className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-                value={formatInputNumber(addBuyForm.averagePrice)}
-                onChange={(e) =>
-                  setAddBuyForm((prev) => ({
-                    ...prev,
-                    averagePrice: sanitizeNumericInput(e.target.value)
-                  }))
-                }
-              />
-            </div>
-          );
-        })()}
-
-        <div>
-          <label htmlFor="app-field-18" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            추가 매수 수량
-          </label>
-          <input id="app-field-18"
-            type="text"
-            inputMode="decimal"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-            value={formatInputNumber(addBuyForm.quantity)}
-            onChange={(e) =>
-              setAddBuyForm((prev) => ({
-                ...prev,
-                quantity: sanitizeNumericInput(e.target.value)
-              }))
-            }
-          />
-        </div>
-
-        <div className="border-t border-line pt-4 mt-2">
-          <label htmlFor="app-field-19" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            추가 매수일
-          </label>
-          <input id="app-field-19"
-            type="date"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-            value={addBuyForm.buyDate}
-            onChange={(e) =>
-              setAddBuyForm((prev) => ({
-                ...prev,
-                buyDate: e.target.value
-              }))
-            }
-          />
-
-          <div className="mt-4">
-            <BrokerFeeFields
-              idPrefix="add-buy"
-              label="매수 수수료"
-              amountOnly
-              category={selectedAssetToUpdate.category}
-              currency={addBuyFeeCurrency}
-              brokerId={addBuyForm.brokerId}
-              feeRatePercent={addBuyForm.brokerFeeRate}
-              feeAmount={addBuyForm.brokerFeeAmount}
-              feeMode={addBuyForm.feeMode}
-              estimatedFee={addBuyFeePreview}
-              onChange={(next) => setAddBuyForm((prev) => ({ ...prev, ...next }))}
-            />
-          </div>
-        </div>
-      </div>
-
-
-        {/* 위 입력 묶음(space-y-4) 바깥이라 간격이 없었다. 같은 1rem을 직접 준다. */}
-        <div className="mt-4">
-          <label htmlFor="app-field-20" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            매수 메모
-          </label>
-          <textarea id="app-field-20"
-            rows="3"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
-            value={addBuyForm.memo}
-            onChange={(e) =>
-              setAddBuyForm((prev) => ({
-                ...prev,
-                memo: e.target.value
-              }))
-            }
-          />
-        </div>
-      <button
-        onClick={handleAddBuyToAsset}
-        className="w-full mt-7 h-13.5 bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
-      >
-        추가 매수 반영하기
-      </button>
-    </div>
-  </ModalOverlay>
-)}
+      {isUpdatingAsset && (
+        <AddBuyModal
+          asset={selectedAssetToUpdate}
+          addBuyForm={addBuyForm}
+          setAddBuyForm={setAddBuyForm}
+          addBuyFeePreview={addBuyFeePreview}
+          addBuyFeeCurrency={addBuyFeeCurrency}
+          onAddBuy={handleAddBuyToAsset}
+          onClose={() => { setIsUpdatingAsset(false); setSelectedAssetToUpdate(null); }}
+        />
+      )}
 
 {/* 매도 모달 */}
-{isSellingAsset && selectedAssetToSell && (
-  <ModalOverlay overlayClassName="z-[120]" labelledBy="sell-asset-title" onClose={() => { setIsSellingAsset(false); setSelectedAssetToSell(null); }}>
-    <div className="bg-surface w-full max-w-110 rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
-      <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
-        <h3 id="sell-asset-title" className="text-lg md:text-xl font-bold text-ink whitespace-nowrap">
-          {selectedAssetToSell.name} 매도
-        </h3>
-        <button
-          onClick={() => {
-            setIsSellingAsset(false);
-            setSelectedAssetToSell(null);
-          }}
-          className="p-2 bg-canvas hover:bg-line-soft rounded-full transition-colors shrink-0"
-        >
-          <X size={18} />
-        </button>
-      </div>
-
-      <div className="space-y-4">
-        <div>
-          <label htmlFor="app-field-21" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            매도 단가 ({getCurrencySymbol(selectedAssetToSell.currency)})
-          </label>
-          <input id="app-field-21"
-            type="text"
-            inputMode="decimal"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-            value={formatInputNumber(sellForm.sellPrice)}
-            onChange={(e) =>
-              setSellForm((prev) => ({
-                ...prev,
-                sellPrice: sanitizeNumericInput(e.target.value)
-              }))
-            }
-          />
-        </div>
-
-        <div>
-          <label htmlFor="app-field-22" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            매도 수량
-          </label>
-          <input id="app-field-22"
-            type="text"
-            inputMode="decimal"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
-            value={formatInputNumber(sellForm.quantity)}
-            onChange={(e) =>
-              setSellForm((prev) => ({
-                ...prev,
-                quantity: sanitizeNumericInput(e.target.value)
-              }))
-            }
-          />
-        </div>
-
-        <BrokerFeeFields
-          idPrefix="sell"
-          label="매도 수수료"
-          amountOnly
-          category={selectedAssetToSell.category}
-          currency={selectedAssetToSell.currency}
-          brokerId={sellForm.brokerId}
-          feeRatePercent={sellForm.brokerFeeRate}
-          feeAmount={sellForm.brokerFeeAmount}
-          feeMode={sellForm.feeMode}
-          estimatedFee={sellFeePreview?.brokerFee || 0}
-          onChange={(next) => setSellForm((prev) => ({ ...prev, ...next }))}
+      {isSellingAsset && (
+        <SellAssetModal
+          asset={selectedAssetToSell}
+          sellForm={sellForm}
+          setSellForm={setSellForm}
+          sellFeePreview={sellFeePreview}
+          sellBuyFeeShare={sellBuyFeeShare}
+          onSell={handleSellAsset}
+          onClose={() => { setIsSellingAsset(false); setSelectedAssetToSell(null); }}
         />
-
-        {sellFeePreview && (sellFeePreview.grossSellAmount > 0 || sellFeePreview.grossPnl !== 0) && (
-          <div className="receipt rounded-2xl px-4 py-4 md:px-5">
-            <p className="eyebrow mb-3">차감 내역</p>
-
-            <div className="space-y-2.5">
-              <div className="receipt-row text-xs md:text-sm">
-                <span className="font-semibold text-ink-mute">예상 수수료</span>
-                <span className="font-bold text-ink-soft">
-                  −{formatMoney(sellFeePreview.brokerFee, selectedAssetToSell.currency)}
-                </span>
-              </div>
-              <div className="receipt-row text-xs md:text-sm">
-                <span className="font-semibold text-ink-mute">
-                  예상 제세금
-                  {isDomesticEtfLikeAsset(selectedAssetToSell) ? ' · ETF 면제' : ''}
-                </span>
-                <span className="font-bold text-ink-soft">
-                  −{formatMoney(sellFeePreview.sellTax, selectedAssetToSell.currency)}
-                </span>
-              </div>
-              {sellBuyFeeShare > 0 && (
-                <div className="receipt-row text-xs md:text-sm">
-                  <span className="font-semibold text-ink-mute">매수 수수료(이번 매도분)</span>
-                  <span className="font-bold text-ink-soft">
-                    −{formatMoney(sellBuyFeeShare, selectedAssetToSell.currency)}
-                  </span>
-                </div>
-              )}
-              <div className="receipt-row text-xs md:text-sm">
-                <span className="font-semibold text-ink-mute">총 차감액</span>
-                <span className="font-bold text-ink">
-                  −{formatMoney(sellFeePreview.totalCost + sellBuyFeeShare, selectedAssetToSell.currency)}
-                </span>
-              </div>
-            </div>
-
-            <div className="receipt-row receipt-total">
-              <span className="text-xs md:text-sm font-bold text-ink">차감 후 손익</span>
-              <span className={`figure text-lg md:text-xl font-bold ${sellFeePreview.netPnl - sellBuyFeeShare >= 0 ? 'text-up' : 'text-down'}`}>
-                {sellFeePreview.netPnl - sellBuyFeeShare >= 0 ? '+' : ''}
-                {formatMoney(sellFeePreview.netPnl - sellBuyFeeShare, selectedAssetToSell.currency)}
-              </span>
-            </div>
-
-            <p className="mt-3 text-[11px] font-medium text-ink-mute leading-relaxed">
-              제세금은 매도일 기준 증권거래세율로 자동 계산합니다. 국내 상장 ETF·ETN과 해외 종목은 면제라 0원으로 잡힙니다.
-            </p>
-          </div>
-        )}
-
-        <div className="border-t border-line pt-4 mt-2">
-          <label htmlFor="app-field-26" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            매도일
-          </label>
-          <input id="app-field-26"
-            type="date"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-            value={sellForm.sellDate}
-            onChange={(e) =>
-              setSellForm((prev) => ({
-                ...prev,
-                sellDate: e.target.value,
-                sellTaxRate: formatFeeRateInput(getSellTaxRatePercent(selectedAssetToSell, e.target.value)),
-              }))
-            }
-          />
-        </div>
-      </div>
-
-
-        {/* 위 입력 묶음(space-y-4) 바깥이라 간격이 없었다. 같은 1rem을 직접 준다. */}
-        <div className="mt-4">
-          <label htmlFor="app-field-27" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-            매도 메모
-          </label>
-          <textarea id="app-field-27"
-            rows="3"
-            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
-            value={sellForm.memo}
-            onChange={(e) =>
-              setSellForm((prev) => ({
-                ...prev,
-                memo: e.target.value
-              }))
-            }
-          />
-        </div>
-      <button
-        onClick={handleSellAsset}
-        className="w-full mt-7 h-13.5 bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
-      >
-        매도 반영하기
-      </button>
-    </div>
-  </ModalOverlay>
       )}
 
-      {assetPendingRemoval && (
-        <div
-          className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-[2px] flex items-center justify-center p-4 anim-fade"
-          onClick={() => setAssetPendingRemoval(null)}
-        >
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="remove-asset-title"
-            className="w-full max-w-105 bg-surface rounded-3xl p-7 shadow-modal anim-rise"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="w-11 h-11 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mb-4">
-              <Trash2 size={20} aria-hidden="true" />
-            </div>
-            <h2 id="remove-asset-title" className="text-base md:text-lg font-bold text-ink">
-              [{assetPendingRemoval.asset.name}] 자산을 삭제할까요?
-            </h2>
-            <p className="mt-2 text-xs md:text-sm font-medium text-ink-soft leading-relaxed">
-              아래 기록이 함께 삭제되며 되돌릴 수 없습니다.
-            </p>
-
-            <ul className="mt-4 space-y-1.5 bg-canvas rounded-2xl p-4">
-              {[
-                { label: '매매 기록', count: assetPendingRemoval.tradeCount },
-                { label: '메모', count: assetPendingRemoval.memoCount },
-                { label: '매매 원장', count: assetPendingRemoval.ledgerCount },
-              ].map(({ label, count }) => (
-                <li key={label} className="flex items-center justify-between text-xs md:text-sm">
-                  <span className="font-bold text-ink-soft">{label}</span>
-                  <span className="font-bold text-ink">{count.toLocaleString()}건</span>
-                </li>
-              ))}
-            </ul>
-
-            {assetPendingRemoval.dividendCount > 0 && (
-              <p className="mt-3 text-[13px] md:text-xs font-bold text-ink-mute">
-                배당 내역 {assetPendingRemoval.dividendCount.toLocaleString()}건은 통계를 위해 유지됩니다.
-              </p>
-            )}
-
-            <div className="mt-6 flex gap-2.5">
-              <button
-                onClick={() => setAssetPendingRemoval(null)}
-                className="flex-1 px-5 py-3 min-h-11 bg-line-soft text-ink-soft rounded-xl md:rounded-2xl font-bold text-xs md:text-sm hover:bg-line transition-colors"
-              >
-                취소
-              </button>
-              <button
-                onClick={confirmRemoveAsset}
-                className="flex-1 px-5 py-3 min-h-11 bg-danger text-surface rounded-xl md:rounded-2xl font-bold text-xs md:text-sm hover:bg-danger transition-colors"
-              >
-                삭제하기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <RemoveAssetConfirmModal
+        pendingRemoval={assetPendingRemoval}
+        onCancel={() => setAssetPendingRemoval(null)}
+        onConfirm={confirmRemoveAsset}
+      />
     </div>
   );
 };

@@ -1,3 +1,5 @@
+// 화면 표시용 숫자·통화 포맷터.
+// 저장되는 값은 건드리지 않고, 사람이 읽는 문자열로만 바꾼다.
 export const formatMoney = (val, currency) => {
   if (val === undefined || val === null || Number.isNaN(Number(val))) return '0';
 
@@ -33,3 +35,5 @@ export const formatInputNumber = (value) => {
 
 export const sanitizeNumericInput = (value) =>
   value.replace(/,/g, '').replace(/[^\d.]/g, '');
+
+export const getCurrencySymbol = (currency) => ({ USD: '$', JPY: '¥', KRW: '₩' }[currency] || currency);
