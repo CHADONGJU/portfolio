@@ -184,7 +184,9 @@ const HistoryTab = ({
               />
             </div>
           </div>
-          <div className="max-h-120 overflow-auto scroll-soft">
+          {/* 페이지가 이미 세로로 스크롤되는데 카드 안에 또 스크롤을 두면,
+              더 있다는 표시도 없이 종목이 잘려 보인다(7종목 중 4종목만 노출됐다). */}
+          <div className="overflow-x-auto">
             <table className="w-full text-left table-auto">
               <thead className="sticky top-0 z-10 bg-canvas text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.06em]">
                 <tr>
@@ -193,6 +195,7 @@ const HistoryTab = ({
                   <th className="px-4 py-4 md:px-8 md:py-5 text-right">평가 손익</th>
                   <th className="px-4 py-4 md:px-8 md:py-5 text-right">실현 손익</th>
                   <th className="px-4 py-4 md:px-8 md:py-5 text-right">세후 배당</th>
+                  <th className="px-4 py-4 md:px-8 md:py-5 text-right">수익률</th>
                   <th className="px-4 py-4 md:px-8 md:py-5 text-right">총 손익</th>
                 </tr>
               </thead>
@@ -237,6 +240,22 @@ const HistoryTab = ({
                       </td>
                       <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
                         {dividendDisplay > 0 ? '+' : ''}{formatMoney(dividendDisplay, displayCurrency)}
+                      </td>
+                      <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
+                        {/* 투입원가(보유분 원금 + 매도분 취득원가) 대비 총 손익.
+                            금액만으로는 원금이 다른 종목끼리 비교가 되지 않는다. */}
+                        {summary.returnPercentKRW === null ? (
+                          <span className="text-xs md:text-sm font-bold text-ink-mute" title="투입원가를 확인할 수 없습니다">—</span>
+                        ) : (
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span className={`text-xs md:text-sm font-bold tnum ${summary.returnPercentKRW >= 0 ? 'text-up' : 'text-down'}`}>
+                              {summary.returnPercentKRW > 0 ? '+' : ''}{summary.returnPercentKRW.toFixed(2)}%
+                            </span>
+                            <span className="text-[11px] md:text-[12px] font-bold text-ink-mute tnum">
+                              원금 {formatMoney(summary.investedKRW, 'KRW')}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
                         <div className="flex flex-col items-end gap-1">
@@ -328,7 +347,7 @@ const HistoryTab = ({
           </div>
 
           {!selectedDividendAsset ? (
-            <div className="max-h-155 overflow-y-auto pr-1 md:pr-2">
+            <div className="pr-1 md:pr-2">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               {currentDividendSummaryGroups.length > 0 && (
                 <DividendSummaryGrid

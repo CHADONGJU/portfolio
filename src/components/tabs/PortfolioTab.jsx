@@ -94,7 +94,7 @@ const PortfolioTab = ({
           {/* 히어로 — 총 평가금액 */}
           <div className="bg-surface rounded-[20px] p-6 lg:p-7 flex flex-col justify-center">
             <p className="text-[14px] font-semibold text-ink-mute">총 평가금액</p>
-            <p className="mt-2 figure text-[32px] lg:text-[38px] font-bold text-ink leading-none wrap-break-word">
+            <p className="mt-2 figure text-[32px] lg:text-[38px] font-bold text-ink leading-none tnum">
               {formatMoney(totalConvertedKRW, 'KRW')}
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -114,13 +114,35 @@ const PortfolioTab = ({
                 {formatMoney(dashboardSummary.evaluationProfitKRW, 'KRW')}
               </span>
               <span className="text-[13px] font-medium text-ink-mute">
-                · 국내/해외 주식 기준
+                · 평가손익 · 국내/해외 주식 기준
               </span>
             </div>
+
+            {/* 평가손익만으로는 "여태 얼마 벌었나"를 알 수 없다.
+                판 종목의 실현손익과 받은 배당까지 더한 값을 한 줄로 보여준다. */}
+            {dashboardSummary.overallReturnPercent !== null && (
+              <div className="mt-4 pt-4 border-t border-line-soft">
+                <p className="text-[13px] font-semibold text-ink-mute">총 수익 (평가 + 실현 + 배당)</p>
+                <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                  <span className={`figure text-[20px] lg:text-[22px] font-bold tnum ${dashboardSummary.totalProfitKRW >= 0 ? 'text-up' : 'text-down'}`}>
+                    {dashboardSummary.totalProfitKRW > 0 ? '+' : ''}
+                    {formatMoney(dashboardSummary.totalProfitKRW, 'KRW')}
+                  </span>
+                  <span className={`text-[14px] font-bold tnum ${dashboardSummary.overallReturnPercent >= 0 ? 'text-up' : 'text-down'}`}>
+                    {dashboardSummary.overallReturnPercent > 0 ? '+' : ''}
+                    {dashboardSummary.overallReturnPercent.toFixed(2)}%
+                  </span>
+                  <span className="text-[12px] font-medium text-ink-mute">
+                    · 투입원가 {formatMoney(dashboardSummary.totalInvestedKRW, 'KRW')}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* 보조 지표 3개 */}
-          <div className="grid grid-cols-3 gap-3">
+          {/* 보조 지표 3개 — 390px에서 3칸으로 쪼개면 금액이 칸을 넘쳐
+              숫자 중간에서 줄바꿈된다(₩1,912,0 / 89). 좁을 땐 한 칸씩 쌓는다. */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
               {
                 label: '보유 자산',
@@ -143,7 +165,7 @@ const PortfolioTab = ({
             ].map((item) => (
               <div key={item.label} className="bg-surface rounded-[20px] p-4 lg:p-5 flex flex-col justify-center">
                 <p className="text-[13px] font-semibold text-ink-mute">{item.label}</p>
-                <p className={`mt-1.5 figure text-[17px] lg:text-[20px] font-bold leading-tight wrap-break-word ${item.tone}`}>
+                <p className={`mt-1.5 figure text-[17px] lg:text-[20px] font-bold leading-tight tnum ${item.tone}`}>
                   {item.value}
                 </p>
                 <p className="mt-1.5 text-[12px] font-medium text-ink-mute">{item.helper}</p>

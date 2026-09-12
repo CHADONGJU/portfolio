@@ -536,3 +536,69 @@ test('환율만 오른 종목은 매도해도 손익이 튀지 않는다(평가�
   });
   assert.equal(sold.totalConvertedNetProfit, unrealized);
 });
+
+test('종목별 수익률은 보유분 원금과 매도분 취득원가를 모두 분모에 넣는다', () => {
+  // 10주를 $100(환율 1300)에 사서 4주를 $150(환율 1400)에 팔았다.
+  // 남은 6주의 원금 780,000원 + 판 4주의 취득원가 520,000원 = 1,300,000원.
+  const tradeLedger = [
+    {
+      id: 'b1', name: 'SOXL', ticker: 'SOXL', category: '해외주식', currency: 'USD',
+      side: 'buy', date: '2026-01-05', quantity: 10, price: 100, fxRate: 1300,
+    },
+    {
+      id: 's1', name: 'SOXL', ticker: 'SOXL', category: '해외주식', currency: 'USD',
+      side: 'sell', date: '2026-03-05', quantity: 4, price: 150, fxRate: 1400,
+    },
+  ];
+  const metrics = runHook({
+    ...baseOptions,
+    tradeLedger,
+    assets: [{
+      id: 1, name: 'SOXL', ticker: 'SOXL', category: '해외주식', currency: 'USD',
+      quantity: 6, averagePrice: 100, originalAveragePrice: 100,
+      originalCurrentPrice: 100, buyDate: '2026-01-05',
+    }],
+  });
+  const soxl = metrics.stockPerformanceSummary.find((row) => row.name === 'SOXL');
+
+  assert.equal(soxl.investedKRW, (6 * 100 * 1300) + (4 * 100 * 1300));
+  assert.equal(soxl.investedKRW, 1300000);
+  // 판 물량의 취득원가를 빼먹으면 분모가 780,000으로 작아져 수익률이 부풀려진다.
+  assert.notEqual(soxl.investedKRW, 6 * 100 * 1300);
+  assert.equal(
+    Math.round(soxl.returnPercentKRW * 100) / 100,
+    Math.round((soxl.totalKRW / 1300000) * 10000) / 100,
+  );
+});
+
+test('원금을 모르는 종목은 수익률을 0%로 위장하지 않는다', () => {
+  const metrics = runHook({
+    ...baseOptions,
+    tradeLedger: [{
+      id: 's1', name: '옛기록', ticker: 'OLD', category: '해외주식', currency: 'USD',
+      side: 'sell', date: '2026-03-05', quantity: 4, price: 150, pnl: 100,
+    }],
+  });
+  const row = metrics.stockPerformanceSummary.find((item) => item.name === '옛기록');
+
+  assert.equal(row.investedKRW, 0);
+  assert.equal(row.returnPercentKRW, null);
+});
+
+test('실현된 물량의 취득원가도 합계로 내보낸다', () => {
+  const metrics = runHook({
+    ...baseOptions,
+    tradeLedger: [
+      {
+        id: 'b1', name: 'SOXL', ticker: 'SOXL', category: '해외주식', currency: 'USD',
+        side: 'buy', date: '2026-01-05', quantity: 10, price: 100, fxRate: 1300,
+      },
+      {
+        id: 's1', name: 'SOXL', ticker: 'SOXL', category: '해외주식', currency: 'USD',
+        side: 'sell', date: '2026-03-05', quantity: 10, price: 120, fxRate: 1450,
+      },
+    ],
+  });
+
+  assert.equal(metrics.realizedCostKRW, 10 * 100 * 1300);
+});

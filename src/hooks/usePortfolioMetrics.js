@@ -310,6 +310,18 @@ export const usePortfolioMetrics = ({
   const totalConvertedNetProfit = realizedRecords.reduce((acc, t) => (
     acc + getRecordKrwPnl(t, realizedKrwRate)
   ), 0);
+  /**
+   * 이미 판 물량의 취득원가(매수 시점 환율). 지금 보유분의 원금과 더하면
+   * "이 포트폴리오에 여태 넣은 돈"이 되고, 그것이 총수익률의 분모다.
+   * 이 값이 없으면 판 종목의 성과가 분모에서 빠져 수익률이 부풀려진다.
+   */
+  const realizedCostKRW = realizedRecords.reduce((acc, record) => {
+    const exact = Number(record.krwCostRemoved);
+    if (Number.isFinite(exact) && exact > 0) return acc + exact;
+    const native = Number(record.nativeCostRemoved);
+    if (!Number.isFinite(native) || native <= 0) return acc;
+    return acc + (native * getRecordKrwRate(record, realizedKrwRate));
+  }, 0);
   // 연 수익률이 "그 시점에 실현된 손익"으로 반영할 때 쓰는, 날짜가 붙은 실현손익
   // 목록. 헤더 합계(totalConvertedNetProfit)와 완전히 같은 계산(같은 환율 규칙)을
   // 재사용해야 두 화면의 숫자가 서로 어긋나지 않는다.
@@ -409,6 +421,23 @@ export const usePortfolioMetrics = ({
       }, 0);
       const totalKRW = unrealizedKRW + realizedKRW + dividendKRW;
 
+      /**
+       * 이 종목에 실제로 넣은 원화. 지금 보유분의 원금과, 이미 판 물량의 취득원가를
+       * 더한 값이다(둘 다 매수 시점 환율 기준). 금액만으로는 어느 종목이 잘했는지
+       * 알 수 없다 — 같은 +100만원이라도 원금 500만원과 5,000만원은 전혀 다르다.
+       */
+      const soldCostKRW = sellRows.reduce((sum, record) => {
+        const exact = Number(record.krwCostRemoved);
+        if (Number.isFinite(exact) && exact > 0) return sum + exact;
+        // 매수 시점 환율을 모르는 옛 기록은 현지 통화 취득원가를 그 거래의 환율로 근사한다.
+        const native = Number(record.nativeCostRemoved);
+        if (!Number.isFinite(native) || native <= 0) return sum;
+        return sum + (native * getRecordKrwRate(record, getRecordRate));
+      }, 0);
+      const investedKRW = assetRows.reduce((sum, asset) => sum + asset.purchaseKRW, 0) + soldCostKRW;
+      // 원금을 모르면 0%로 위장하지 않고 null을 돌려 화면이 "—"로 비워 두게 한다.
+      const returnPercentKRW = investedKRW > 0 ? (totalKRW / investedKRW) * 100 : null;
+
       const unrealizedNative = assetRows.reduce((sum, asset) => sum + asset.profitNative, 0);
       const realizedNative = sellRows
         .filter(trade => trade.currency === currency)
@@ -453,6 +482,8 @@ export const usePortfolioMetrics = ({
         realizedKRW,
         dividendKRW,
         totalKRW,
+        investedKRW,
+        returnPercentKRW,
         unrealizedNative,
         realizedNative,
         dividendNative,
@@ -666,6 +697,7 @@ export const usePortfolioMetrics = ({
     krwGrossProfit,
     usdGrossProfit,
     totalConvertedNetProfit,
+    realizedCostKRW,
     realizedGainKrwEvents,
     stockPerformanceSummary,
     dividendSummary,
