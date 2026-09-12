@@ -1,3 +1,4 @@
+import { getTradeRound } from './tradeReconciliation.js';
 import { getDividendReportingDate } from './dividendDates.js';
 import { normalizeAccountType } from './accountTypes.js';
 
@@ -357,4 +358,30 @@ export const selectReportedDividendRecords = (
   return [...activeConfirmedDividends, ...remainingAutomatic].sort((left, right) => (
     getDividendReportingDate(right).localeCompare(getDividendReportingDate(left))
   ));
+};
+
+/**
+ * 같은 배당이 두 번 들어오는 것을 막는다(가져오기 중복, 동기화 충돌 등).
+ * id뿐 아니라 종목·회차·날짜·금액까지 묶어 키를 만든다. 옛 기록에는 id가
+ * 없을 수 있고, 같은 날 여러 계좌로 들어온 배당은 서로 다른 건이기 때문이다.
+ */
+export const mergeUniqueDividends = (primary = [], secondary = []) => {
+  const seen = new Set();
+  return [...primary, ...secondary].filter((dividend) => {
+    const key = [
+      dividend.id || '',
+      dividend.name || '',
+      dividend.ticker || '',
+      getTradeRound(dividend),
+      dividend.date || '',
+      dividend.currency || '',
+      dividend.quantity || '',
+      dividend.perShareGrossAmount || '',
+      dividend.grossAmount || '',
+      dividend.amount || '',
+    ].join('::');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 };

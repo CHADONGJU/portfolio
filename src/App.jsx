@@ -175,6 +175,7 @@ import {
   getAutomaticDividendEventKey,
   mergeAutomaticDividendRecords,
   mergeDividendRecords,
+  mergeUniqueDividends,
   normalizeDividendValidationRecords,
   selectFormulaDividendRecords,
   selectReportedDividendRecords,
@@ -183,6 +184,7 @@ import {
 } from './utils/dividendRecords';
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { useTargetPortfolio } from './hooks/useTargetPortfolio';
+import { useDividendEntry } from './hooks/useDividendEntry';
 import { db } from './firebase';
 
 // 과거 거래의 환율을 거래일 기준으로 한 번 고쳐 받았는지 표시하는 플래그.
@@ -468,27 +470,6 @@ const mergeUniqueRecords = (primary = [], secondary = []) => {
       record.date || record.buyDate || record.sellDate || '',
       record.quantity || '',
       record.price || record.buyPrice || record.sellPrice || '',
-    ].join('::');
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-};
-
-const mergeUniqueDividends = (primary = [], secondary = []) => {
-  const seen = new Set();
-  return [...primary, ...secondary].filter((dividend) => {
-    const key = [
-      dividend.id || '',
-      dividend.name || '',
-      dividend.ticker || '',
-      getTradeRound(dividend),
-      dividend.date || '',
-      dividend.currency || '',
-      dividend.quantity || '',
-      dividend.perShareGrossAmount || '',
-      dividend.grossAmount || '',
-      dividend.amount || '',
     ].join('::');
     if (seen.has(key)) return false;
     seen.add(key);
@@ -1081,18 +1062,6 @@ const App = () => {
 
   const [isAdding, setIsAdding] = useState(false);
   const defaultBuyDate = formatKoreanDate();
-  const [isAddingDividend, setIsAddingDividend] = useState(false);
-  const dividendImportInputRef = useRef(null);
-  const [actualDividendForm, setActualDividendForm] = useState({
-    assetId: '',
-    name: '',
-    ticker: '',
-    category: '국내주식',
-    date: defaultBuyDate,
-    amount: '',
-    quantity: '',
-    currency: 'KRW',
-  });
   const [tradeSortMode, setTradeSortMode] = useState('newest');
   const [tradeStockFilter, setTradeStockFilter] = useState('all');
   const [tradeSideFilter, setTradeSideFilter] = useState('all');
@@ -1332,6 +1301,21 @@ const buyLotDraftSummary = useMemo(() => {
 
   const [autoDividends, setAutoDividends] = useState(() => initialPortfolio.autoDividends);
   const [confirmedDividends, setConfirmedDividends] = useState(() => initialPortfolio.confirmedDividends);
+
+  // 실제 입금 배당 입력·가져오기는 훅에 모여 있다.
+  const {
+    isAddingDividend, setIsAddingDividend,
+    actualDividendForm, setActualDividendForm,
+    dividendImportInputRef, dividendEntryAssets,
+    openActualDividendForm, handleActualDividendAssetChange,
+    handleAddActualDividend, handleConfirmedDividendImport, removeConfirmedDividend,
+  } = useDividendEntry({
+    assets,
+    tradeLedger,
+    setConfirmedDividends,
+    defaultBuyDate,
+    addLog,
+  });
   const initialLedgerMigrationDoneRef = useRef(false);
 
   const portfolioSnapshot = useMemo(() => ({
@@ -1761,12 +1745,6 @@ const buyLotDraftSummary = useMemo(() => {
       if (interval) clearInterval(interval);
     };
   }, [refreshTrigger, isCloudPortfolioLoaded]);
-
-  const dividendEntryAssets = useMemo(() => (
-    buildDividendCalculationAssets(assets, tradeLedger)
-      .filter((asset) => !isRemovedAssetCategory(asset.category))
-      .sort((left, right) => String(left.name || '').localeCompare(String(right.name || '')))
-  ), [assets, tradeLedger]);
 
   // Photo/imported receipts remain validation-only. Only a receipt explicitly
   // entered by the user can replace its matching formula row in displayed cash.
@@ -3441,118 +3419,6 @@ const buyLotDraftSummary = useMemo(() => {
   setSellForm(initialSellFormState);
 
 };
-
-  const openActualDividendForm = () => {
-    const firstAsset = dividendEntryAssets[0];
-    setActualDividendForm({
-      assetId: firstAsset ? String(firstAsset.id) : '',
-      name: firstAsset?.name || '',
-      ticker: firstAsset?.ticker || '',
-      category: firstAsset?.category || '국내주식',
-      date: defaultBuyDate,
-      amount: '',
-      quantity: firstAsset?.quantity || '',
-      currency: firstAsset?.currency || 'KRW',
-    });
-    setIsAddingDividend(true);
-  };
-
-  const handleActualDividendAssetChange = (assetId) => {
-    const asset = dividendEntryAssets.find((candidate) => String(candidate.id) === String(assetId));
-    setActualDividendForm((previous) => ({
-      ...previous,
-      assetId,
-      name: assetId === '__manual__' ? '' : asset?.name || previous.name,
-      ticker: assetId === '__manual__' ? '' : asset?.ticker || previous.ticker,
-      category: assetId === '__manual__'
-        ? (previous.currency === 'KRW' ? '국내주식' : '해외주식')
-        : asset?.category || previous.category,
-      quantity: asset?.quantity || '',
-      currency: asset?.currency || previous.currency,
-    }));
-  };
-
-  const handleAddActualDividend = () => {
-    const selectedAsset = dividendEntryAssets.find((candidate) => (
-      String(candidate.id) === String(actualDividendForm.assetId)
-    ));
-    const manualName = String(actualDividendForm.name || actualDividendForm.ticker || '').trim();
-    const asset = selectedAsset || (actualDividendForm.assetId === '__manual__' && manualName ? {
-      id: `manual-dividend-${String(actualDividendForm.ticker || manualName).trim().toUpperCase()}`,
-      name: manualName,
-      ticker: String(actualDividendForm.ticker || '').trim().toUpperCase(),
-      category: actualDividendForm.category || (actualDividendForm.currency === 'KRW' ? '국내주식' : '해외주식'),
-      currency: actualDividendForm.currency || 'KRW',
-    } : null);
-    const amount = parseNumber(actualDividendForm.amount);
-    const quantity = parseNumber(actualDividendForm.quantity);
-    if (!asset || !actualDividendForm.date || amount <= 0) {
-      addLog('종목·입금일·실제 입금액을 확인해주세요.', 'error');
-      return;
-    }
-
-    const dividend = {
-      id: `actual-${Date.now()}`,
-      assetId: asset.id,
-      name: asset.name,
-      ticker: asset.ticker || '',
-      category: asset.category || '',
-      currency: actualDividendForm.currency || asset.currency || 'KRW',
-      quantity: quantity > 0 ? quantity : undefined,
-      perShareNetAmount: quantity > 0 ? amount / quantity : undefined,
-      amount,
-      date: actualDividendForm.date,
-      actualPaymentDate: actualDividendForm.date,
-      period: actualDividendForm.date.slice(0, 7),
-      dateBasis: 'payment',
-      status: 'actual',
-      recordType: 'actual',
-      confirmationSource: 'user-entry',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    setConfirmedDividends((previous) => mergeUniqueDividends([dividend], previous));
-    setIsAddingDividend(false);
-    addLog(`'${asset.name}' 실제 입금 배당을 반영했습니다.`, 'success');
-  };
-
-  const handleConfirmedDividendImport = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
-
-    try {
-      const parsed = JSON.parse(await file.text());
-      const sourceRows = parsed?.data?.confirmedDividends || parsed?.confirmedDividends;
-      if (!Array.isArray(sourceRows)) throw new Error('confirmedDividends array not found');
-
-      const validRows = sourceRows.filter((row) => (
-        row
-        && row.name
-        && row.currency
-        && Number(row.amount) >= 0
-        && (row.actualPaymentDate || row.paymentDate || row.date || row.period)
-      ));
-      if (validRows.length === 0) throw new Error('no valid dividend records');
-
-      setConfirmedDividends((previous) => mergeDividendRecords(validRows, previous));
-      addLog(`실제 입금 배당 ${validRows.length.toLocaleString()}건을 복구 파일에서 불러왔습니다.`, 'success');
-    } catch (error) {
-      console.error('Confirmed dividend import failed:', error);
-      addLog('실제 배당 복구 파일을 읽지 못했습니다.', 'error');
-    }
-  };
-
-  const removeConfirmedDividend = (dividendId) => {
-    const deletedAt = new Date().toISOString();
-    setConfirmedDividends((previous) => previous.map((dividend) => (
-      dividend.id === dividendId
-        ? { ...dividend, status: 'deleted', deletedAt, updatedAt: deletedAt }
-        : dividend
-    )));
-    addLog('실제 입금 배당 기록을 삭제했습니다.', 'success');
-  };
 
   // 자산 추가 처리
   /**
