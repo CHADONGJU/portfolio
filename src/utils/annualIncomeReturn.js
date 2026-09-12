@@ -205,3 +205,16 @@ export const calculateAnnualIncomeReturn = ({
     basisUnavailableReason, approximate,
   };
 };
+
+/**
+ * 연도 선택기가 보여줄 연도 목록(최신순).
+ * 기록이 있는 해에 올해를 늘 합쳐, 아직 거래가 없는 해도 열어 볼 수 있게 한다.
+ */
+export const getAnnualTradeYears = ({ rows = [], currentYear } = {}) => {
+  const years = new Set([Number(currentYear) || new Date().getFullYear()]);
+  rows.forEach((record) => {
+    const year = Number(dateKey(record?.date).slice(0, 4));
+    if (Number.isFinite(year) && year > 1900) years.add(year);
+  });
+  return [...years].sort((left, right) => right - left);
+};

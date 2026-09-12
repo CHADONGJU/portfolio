@@ -12,7 +12,7 @@ import AnnualReturnGoalCard from './components/AnnualReturnGoalCard';
 import AnnualReturnHistory from './components/AnnualReturnHistory';
 import DividendIncomeSummary from './components/DividendIncomeSummary';
 import { resolveDividendIncomeRate, summarizeDividendIncome } from './utils/dividendIncome.js';
-import { calculateAnnualIncomeReturn } from './utils/annualIncomeReturn.js';
+import { calculateAnnualIncomeReturn, getAnnualTradeYears } from './utils/annualIncomeReturn.js';
 import BrokerFeeFields from './components/BrokerFeeFields';
 import BuyLotsEditor from './components/BuyLotsEditor';
 import AnnualDividendTrend from './components/AnnualDividendTrend';
@@ -114,9 +114,6 @@ import {
   summarizeAnnualDividendTrend,
 } from './utils/annualDividendTrend';
 import { buildStockSearchOptions } from './utils/stockSearchOptions';
-import {
-  getAnnualTradeYears,
-} from './utils/annualTradeReturn';
 import { calculateOverseasCapitalGainsTax } from './utils/overseasCapitalGainsTax';
 import { combineTradesWithMemos } from './utils/tradeMemos';
 import {

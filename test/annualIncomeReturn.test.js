@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { calculateAnnualIncomeReturn } from '../src/utils/annualIncomeReturn.js';
+import { calculateAnnualIncomeReturn, getAnnualTradeYears } from '../src/utils/annualIncomeReturn.js';
 import { buildCanonicalTradeRows } from '../src/utils/tradeReconciliation.js';
 
 const today = '2026-09-08';
@@ -184,4 +184,17 @@ test('historical returns never compare a current holding quantity to past invent
     assets: [trade({ quantity: 10, round: 2, buyDate: '2025-01-01' })] });
   assert.equal(result.status, 'ready');
   assert.equal(result.investedCostKRW, 100000);
+});
+
+test('연도 목록은 매매 기록의 연도와 올해를 내림차순으로 합친다', () => {
+  const years = getAnnualTradeYears({
+    rows: [
+      { date: '2024-03-01' },
+      { date: '2026-01-05' },
+      { date: '' },
+    ],
+    currentYear: 2026,
+  });
+
+  assert.deepEqual(years, [2026, 2024]);
 });
