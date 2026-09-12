@@ -37,3 +37,7 @@ export const sanitizeNumericInput = (value) =>
   value.replace(/,/g, '').replace(/[^\d.]/g, '');
 
 export const getCurrencySymbol = (currency) => ({ USD: '$', JPY: '¥', KRW: '₩' }[currency] || currency);
+
+// 화면 입력값은 "1,234.5" 같은 문자열로 들어온다. 콤마를 떼고 숫자로 읽되,
+// 읽을 수 없으면 NaN 대신 0을 돌려 계산이 통째로 NaN이 되지 않게 한다.
+export const parseNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
