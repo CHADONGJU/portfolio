@@ -126,10 +126,12 @@ test('foreign purchase cost stays at acquisition FX even if sale FX differs', ()
     trade({ date: '2026-03-01', currency: 'USD', price: 110, fxRate: 1400, side: 'sell' }),
   ]);
   const result = calculate({ rows, exchangeRate: 9999 });
+  // 분모(투입원가)는 오늘 환율(9999)이 아니라 매수일 환율에 고정된다.
   assert.equal(result.investedCostKRW, 1300000);
   assert.equal(result.soldCostKRW, 1300000);
-  assert.equal(result.profitKRW, 130000);
-  assert.equal(result.returnPercent, 10);
+  // 분자는 증권사 원화 실현손익과 같은 기준이라 환차익이 함께 들어간다.
+  assert.equal(result.profitKRW, 240000);
+  assert.equal(Math.round(result.returnPercent * 100) / 100, 18.46);
 });
 
 test('future periods and incomplete acquisition prices cannot produce a return', () => {

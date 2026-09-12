@@ -85,6 +85,7 @@ import {
   reconcileAssetsAfterTradeDeletion,
   reconcileAssetsWithTradeLedger,
   resolveNextTradeRound,
+  resolveTradeRowKrwRate,
   scaleManualPurchaseKRW,
 } from './utils/tradeReconciliation';
 import {
@@ -240,6 +241,8 @@ const TRADE_SORT_OPTIONS = [
   { value: 'profit-asc', label: '실현 손익(손해 큰 순)' },
 ];
 const TRADE_PAGE_SIZE = 10;
+// 소수점 주식 수량 비교용 허용 오차(원장 계산의 EPSILON과 같은 값).
+const QUANTITY_EPSILON = 0.000001;
 const AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000;
 const CALENDAR_WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
@@ -2706,7 +2709,11 @@ const buyLotDraftSummary = useMemo(() => {
   }, [targetTickerSnapshotKey, enhancedAssets, exchangeRate, jpyKrwRate, currencyRates, refreshTrigger]);
 
   const tradeRecords = useMemo(() => {
-    const canonicalRows = buildCanonicalTradeRows({ tradeLedger, trades });
+    // 해석기를 빼먹으면 이 목록의 krwPnl이 통째로 null이 되어, 매매 기록 탭의
+    // 실현손익만 "손익 × 오늘 환율"로 근사돼 포트폴리오 탭 카드와 어긋난다.
+    const canonicalRows = buildCanonicalTradeRows({
+      tradeLedger, trades, resolveKrwRate: resolveTradeRowKrwRate,
+    });
     return canonicalRows.map((entry) => ({
       ...entry,
       sourceType: tradeLedger.length > 0 ? 'ledger' : 'trade',
@@ -3958,7 +3965,11 @@ const buyLotDraftSummary = useMemo(() => {
     buyFeeApplied: buyFeeAppliedNative,
   };
 
-  const remainingQty = currentQty - sellQty;
+  // 소수점 주식은 0.1 + 0.2처럼 저장된 수량을 전량 매도해도 5e-17이 남는다.
+  // === 0으로 보면 그 종목이 지워지지 않고 먼지 같은 수량으로 계속 남는다.
+  const remainingQty = Math.abs(currentQty - sellQty) <= QUANTITY_EPSILON
+    ? 0
+    : currentQty - sellQty;
 
   setTrades(prev => [trade, ...prev]);
 
@@ -4356,12 +4367,12 @@ const buyLotDraftSummary = useMemo(() => {
 
 
   return (
-    <div className="min-h-[100dvh] bg-canvas px-4 pt-5 pb-[calc(4rem+env(safe-area-inset-bottom))] md:px-8 md:pt-8 md:pb-16 text-ink relative">
+    <div className="min-h-dvh bg-canvas px-4 pt-5 pb-[calc(4rem+env(safe-area-inset-bottom))] md:px-8 md:pt-8 md:pb-16 text-ink relative">
       
       {/* 동기화 라이브 피드백 */}
       <SyncStatusToast syncStatus={syncStatus} />
 
-      <div className="max-w-[1320px] mx-auto space-y-5 md:space-y-6">
+      <div className="max-w-330 mx-auto space-y-5 md:space-y-6">
         
         {/* Header */}
         <DashboardHeader
@@ -4426,7 +4437,7 @@ const buyLotDraftSummary = useMemo(() => {
                     label: '실현손익',
                     value: `${totalConvertedNetProfit > 0 ? '+' : ''}${formatMoney(totalConvertedNetProfit, 'KRW')}`,
                     tone: totalConvertedNetProfit >= 0 ? 'text-up' : 'text-down',
-                    helper: '매도 시점 환율 기준',
+                    helper: '매수·매도 시점 환율 기준',
                   },
                   {
                     label: '배당 수익',
@@ -4456,7 +4467,7 @@ const buyLotDraftSummary = useMemo(() => {
                 )}
               </div>
               {portfolioAssets.length === 0 ? (
-                <div className="w-full min-h-[18rem] md:min-h-80 flex flex-col items-center justify-center text-center px-3">
+                <div className="w-full min-h-72 md:min-h-80 flex flex-col items-center justify-center text-center px-3">
                   <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-line-soft text-ink-soft flex items-center justify-center mb-4 md:mb-5">
                     <Target size={24} className="md:w-7 md:h-7" />
                   </div>
@@ -4868,7 +4879,7 @@ const buyLotDraftSummary = useMemo(() => {
                   />
                 </div>
               </div>
-              <div className="max-h-[480px] overflow-auto scroll-soft">
+              <div className="max-h-120 overflow-auto scroll-soft">
                 <table className="w-full text-left table-auto">
                   <thead className="sticky top-0 z-10 bg-canvas text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.06em]">
                     <tr>
@@ -5012,7 +5023,7 @@ const buyLotDraftSummary = useMemo(() => {
               </div>
 
               {!selectedDividendAsset ? (
-                <div className="max-h-[620px] overflow-y-auto pr-1 md:pr-2">
+                <div className="max-h-155 overflow-y-auto pr-1 md:pr-2">
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
                   {currentDividendSummaryGroups.length > 0 && (
                     <DividendSummaryGrid
@@ -5152,7 +5163,7 @@ const buyLotDraftSummary = useMemo(() => {
                     value={tradeSideFilter}
                     onChange={(e) => setTradeSideFilter(e.target.value)}
                     aria-label="매수 또는 매도 필터"
-                    className="px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
+                    className="px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
                   >
                     <option value="all">전체 거래</option>
                     <option value="buy">매수</option>
@@ -5161,7 +5172,7 @@ const buyLotDraftSummary = useMemo(() => {
                   <select
                     value={tradeSortMode}
                     onChange={(e) => setTradeSortMode(e.target.value)}
-                    className="px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
+                    className="px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
                   >
                     {TRADE_SORT_OPTIONS.map((option) => (
                       <option key={option.value} value={option.value}>{option.label}</option>
@@ -5396,7 +5407,7 @@ const buyLotDraftSummary = useMemo(() => {
                     value={formatInputNumber(targetPortfolio.budget)}
                     onChange={(e) => setTargetPortfolio(prev => ({ ...prev, budget: sanitizeNumericInput(e.target.value) }))}
                     placeholder={`현재 총자산 ${formatMoney(totalConvertedKRW, 'KRW')}`}
-                    className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand text-sm font-bold text-ink"
+                    className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand text-sm font-bold text-ink"
                   />
                 </div>
               </div>
@@ -5410,7 +5421,7 @@ const buyLotDraftSummary = useMemo(() => {
                     <select id="app-field-2"
                       value={targetCategoryDraft}
                       onChange={(e) => setTargetCategoryDraft(e.target.value)}
-                      className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
+                      className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
                     >
                       {ASSET_CATEGORIES.map(category => (
                         <option key={category} value={category}>{category}</option>
@@ -5644,7 +5655,7 @@ const buyLotDraftSummary = useMemo(() => {
                           inputMode="decimal"
                           value={category.percent}
                           onChange={(e) => updateTargetCategoryPercent(category.id, e.target.value)}
-                          className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand text-sm font-bold text-ink"
+                          className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand text-sm font-bold text-ink"
                         />
                       </div>
                       <button
@@ -6120,7 +6131,7 @@ const buyLotDraftSummary = useMemo(() => {
 
       {isAddingDividend && (
         <ModalOverlay overlayClassName="z-[110]" labelledBy="dividend-entry-title" onClose={() => setIsAddingDividend(false)}>
-          <div className="bg-surface w-full max-w-[440px] max-h-[90vh] overflow-y-auto scroll-soft rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise">
+          <div className="bg-surface w-full max-w-110 max-h-[90vh] overflow-y-auto scroll-soft rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise">
             <div className="flex justify-between items-center mb-6">
               <div className="flex items-center gap-2">
                 <h3 id="dividend-entry-title" className="text-lg md:text-xl font-bold text-ink">실제 입금 배당 추가</h3>
@@ -6141,7 +6152,7 @@ const buyLotDraftSummary = useMemo(() => {
                 <select id="app-field-4"
                   value={actualDividendForm.assetId}
                   onChange={(event) => handleActualDividendAssetChange(event.target.value)}
-                  className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                  className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
                 >
                   <option value="">종목 선택</option>
                   {dividendEntryAssets.map((asset) => (
@@ -6159,7 +6170,7 @@ const buyLotDraftSummary = useMemo(() => {
                       value={actualDividendForm.name}
                       onChange={(event) => setActualDividendForm((previous) => ({ ...previous, name: event.target.value }))}
                       placeholder="예: QUALCOMM"
-                      className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                      className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
                     />
                   </div>
                   <div>
@@ -6168,7 +6179,7 @@ const buyLotDraftSummary = useMemo(() => {
                       value={actualDividendForm.ticker}
                       onChange={(event) => setActualDividendForm((previous) => ({ ...previous, ticker: event.target.value.toUpperCase() }))}
                       placeholder="예: QCOM"
-                      className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink uppercase"
+                      className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink uppercase"
                     />
                   </div>
                 </div>
@@ -6181,7 +6192,7 @@ const buyLotDraftSummary = useMemo(() => {
                     type="date"
                     value={actualDividendForm.date}
                     onChange={(event) => setActualDividendForm((previous) => ({ ...previous, date: event.target.value }))}
-                    className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                    className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
                   />
                 </div>
                 <div>
@@ -6195,7 +6206,7 @@ const buyLotDraftSummary = useMemo(() => {
                         ? (event.target.value === 'KRW' ? '국내주식' : '해외주식')
                         : previous.category,
                     }))}
-                    className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                    className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
                   >
                     {PORTFOLIO_CURRENCIES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
                   </select>
@@ -6210,7 +6221,7 @@ const buyLotDraftSummary = useMemo(() => {
                     value={formatInputNumber(actualDividendForm.amount)}
                     onChange={(event) => setActualDividendForm((previous) => ({ ...previous, amount: sanitizeNumericInput(event.target.value) }))}
                     placeholder="0"
-                    className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                    className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
                   />
                 </div>
                 <div>
@@ -6220,7 +6231,7 @@ const buyLotDraftSummary = useMemo(() => {
                     value={formatInputNumber(actualDividendForm.quantity)}
                     onChange={(event) => setActualDividendForm((previous) => ({ ...previous, quantity: sanitizeNumericInput(event.target.value) }))}
                     placeholder="선택"
-                    className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                    className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
                   />
                 </div>
               </div>
@@ -6229,14 +6240,14 @@ const buyLotDraftSummary = useMemo(() => {
                 <button
                   type="button"
                   onClick={() => setIsAddingDividend(false)}
-                  className="h-[52px] bg-line-soft text-ink-soft rounded-2xl font-bold text-sm hover:bg-line transition-colors"
+                  className="h-13 bg-line-soft text-ink-soft rounded-2xl font-bold text-sm hover:bg-line transition-colors"
                 >
                   취소
                 </button>
                 <button
                   type="button"
                   onClick={handleAddActualDividend}
-                  className="h-[52px] bg-brand text-white rounded-2xl font-bold text-sm hover:opacity-90 transition-opacity"
+                  className="h-13 bg-brand text-white rounded-2xl font-bold text-sm hover:opacity-90 transition-opacity"
                 >
                   실제 입금 반영
                 </button>
@@ -6249,7 +6260,7 @@ const buyLotDraftSummary = useMemo(() => {
       {/* 자산 추가 모달 */}
 {isAdding && (
   <ModalOverlay overlayClassName="z-[100]" labelledBy="add-asset-title" onClose={() => setIsAdding(false)}>
-    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
+    <div className="bg-surface w-full max-w-110 rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
       <div className="flex justify-between items-center mb-6 md:mb-8 sticky top-0 bg-surface z-10 pt-2 pb-2">
         <h3 id="add-asset-title" className="text-lg md:text-xl font-bold text-ink">새 자산 등록</h3>
         <button
@@ -6269,7 +6280,7 @@ const buyLotDraftSummary = useMemo(() => {
               자산 구분
             </label>
             <select id="app-field-11"
-              className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm"
+              className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm"
               value={newAsset.category}
               onChange={(e) => setNewAsset({ ...newAsset, category: e.target.value })}
             >
@@ -6283,7 +6294,7 @@ const buyLotDraftSummary = useMemo(() => {
               통화 (Currency)
             </label>
             <select id="app-field-12"
-              className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm"
+              className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm"
               value={newAsset.currency}
               onChange={(e) => setNewAsset({ ...newAsset, currency: e.target.value })}
             >
@@ -6325,7 +6336,7 @@ const buyLotDraftSummary = useMemo(() => {
           </label>
           <input id="app-field-13"
             type="text"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
             value={newAsset.ticker}
             onChange={(e) => setNewAsset({ ...newAsset, ticker: e.target.value.toUpperCase() })}
           />
@@ -6336,7 +6347,7 @@ const buyLotDraftSummary = useMemo(() => {
             보유 계좌
           </label>
           <select id="app-field-14"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
             value={newAsset.accountType}
             onChange={(e) => setNewAsset({
               ...newAsset,
@@ -6376,7 +6387,7 @@ const buyLotDraftSummary = useMemo(() => {
               <input
                 type="text"
                 inputMode="decimal"
-                className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+                className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
                 value={formatInputNumber(newAsset.averagePrice)}
                 onChange={(e) =>
                   setNewAsset({
@@ -6396,7 +6407,7 @@ const buyLotDraftSummary = useMemo(() => {
           <input id="app-field-15"
             type="text"
             inputMode="decimal"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
             value={formatInputNumber(newAsset.quantity)}
             onChange={(e) =>
               setNewAsset({
@@ -6414,7 +6425,7 @@ const buyLotDraftSummary = useMemo(() => {
             </label>
             <input id="app-field-16"
               type="date"
-              className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+              className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
               value={newAsset.buyDate}
               onChange={(e) => setNewAsset({ ...newAsset, buyDate: e.target.value })}
             />
@@ -6446,14 +6457,14 @@ const buyLotDraftSummary = useMemo(() => {
           </label>
           <textarea id="app-field-17"
             rows="3"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
             value={newAsset.memo}
             onChange={(e) => setNewAsset({ ...newAsset, memo: e.target.value })}
           />
         </div>
         <button
           onClick={handleAddAsset}
-          className="w-full mt-7 h-[54px] bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
+          className="w-full mt-7 h-13.5 bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
         >
           포트폴리오에 반영하기
         </button>
@@ -6477,7 +6488,7 @@ const buyLotDraftSummary = useMemo(() => {
 {/* 추가 매수 모달 */}
 {isUpdatingAsset && selectedAssetToUpdate && (
   <ModalOverlay overlayClassName="z-[110]" labelledBy="update-asset-title" onClose={() => { setIsUpdatingAsset(false); setSelectedAssetToUpdate(null); }}>
-    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
+    <div className="bg-surface w-full max-w-110 rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
       <div className="flex justify-between items-center mb-6 md:mb-8">
         <h3 id="update-asset-title" className="text-lg md:text-xl font-bold text-ink">
           {selectedAssetToUpdate.name} 추가 매수
@@ -6517,7 +6528,7 @@ const buyLotDraftSummary = useMemo(() => {
               <input
                 type="text"
                 inputMode="decimal"
-                className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+                className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
                 value={formatInputNumber(addBuyForm.averagePrice)}
                 onChange={(e) =>
                   setAddBuyForm((prev) => ({
@@ -6537,7 +6548,7 @@ const buyLotDraftSummary = useMemo(() => {
           <input id="app-field-18"
             type="text"
             inputMode="decimal"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
             value={formatInputNumber(addBuyForm.quantity)}
             onChange={(e) =>
               setAddBuyForm((prev) => ({
@@ -6554,7 +6565,7 @@ const buyLotDraftSummary = useMemo(() => {
           </label>
           <input id="app-field-19"
             type="date"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
             value={addBuyForm.buyDate}
             onChange={(e) =>
               setAddBuyForm((prev) => ({
@@ -6590,7 +6601,7 @@ const buyLotDraftSummary = useMemo(() => {
           </label>
           <textarea id="app-field-20"
             rows="3"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
             value={addBuyForm.memo}
             onChange={(e) =>
               setAddBuyForm((prev) => ({
@@ -6602,7 +6613,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
       <button
         onClick={handleAddBuyToAsset}
-        className="w-full mt-7 h-[54px] bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
+        className="w-full mt-7 h-13.5 bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
       >
         추가 매수 반영하기
       </button>
@@ -6613,7 +6624,7 @@ const buyLotDraftSummary = useMemo(() => {
 {/* 매도 모달 */}
 {isSellingAsset && selectedAssetToSell && (
   <ModalOverlay overlayClassName="z-[120]" labelledBy="sell-asset-title" onClose={() => { setIsSellingAsset(false); setSelectedAssetToSell(null); }}>
-    <div className="bg-surface w-full max-w-[440px] rounded-t-[24px] md:rounded-[24px] p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
+    <div className="bg-surface w-full max-w-110 rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
       <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
         <h3 id="sell-asset-title" className="text-lg md:text-xl font-bold text-ink whitespace-nowrap">
           {selectedAssetToSell.name} 매도
@@ -6637,7 +6648,7 @@ const buyLotDraftSummary = useMemo(() => {
           <input id="app-field-21"
             type="text"
             inputMode="decimal"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
             value={formatInputNumber(sellForm.sellPrice)}
             onChange={(e) =>
               setSellForm((prev) => ({
@@ -6655,7 +6666,7 @@ const buyLotDraftSummary = useMemo(() => {
           <input id="app-field-22"
             type="text"
             inputMode="decimal"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
             value={formatInputNumber(sellForm.quantity)}
             onChange={(e) =>
               setSellForm((prev) => ({
@@ -6736,7 +6747,7 @@ const buyLotDraftSummary = useMemo(() => {
           </label>
           <input id="app-field-26"
             type="date"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
             value={sellForm.sellDate}
             onChange={(e) =>
               setSellForm((prev) => ({
@@ -6757,7 +6768,7 @@ const buyLotDraftSummary = useMemo(() => {
           </label>
           <textarea id="app-field-27"
             rows="3"
-            className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
+            className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm resize-none"
             value={sellForm.memo}
             onChange={(e) =>
               setSellForm((prev) => ({
@@ -6769,7 +6780,7 @@ const buyLotDraftSummary = useMemo(() => {
         </div>
       <button
         onClick={handleSellAsset}
-        className="w-full mt-7 h-[54px] bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
+        className="w-full mt-7 h-13.5 bg-brand text-surface rounded-2xl font-bold text-[15px] hover:bg-brand-strong active:scale-[0.99] transition-all"
       >
         매도 반영하기
       </button>
@@ -6786,7 +6797,7 @@ const buyLotDraftSummary = useMemo(() => {
             role="alertdialog"
             aria-modal="true"
             aria-labelledby="remove-asset-title"
-            className="w-full max-w-[420px] bg-surface rounded-[24px] p-7 shadow-modal anim-rise"
+            className="w-full max-w-105 bg-surface rounded-3xl p-7 shadow-modal anim-rise"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="w-11 h-11 rounded-2xl bg-danger-soft text-danger flex items-center justify-center mb-4">

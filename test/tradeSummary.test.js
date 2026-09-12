@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCanonicalTradeRows } from '../src/utils/tradeReconciliation.js';
+import { buildCanonicalTradeRows, resolveTradeRowKrwRate } from '../src/utils/tradeReconciliation.js';
 import { buildTradeSummary } from '../src/utils/tradeSummary.js';
 
 test('매도 3건의 누락 손익을 매수 원가로 계산하고 매도대금을 모두 합산한다', () => {
@@ -99,4 +99,40 @@ test('매도 3건의 누락 손익을 매수 원가로 계산하고 매도대금
     summary.totalProfit
       - ((90.56 * 1400) + (20.6361 * 1380) - 119570),
   ) < 0.000001);
+});
+
+test('매매 기록 탭 실현손익이 포트폴리오 탭 카드와 같은 환율 규칙을 쓴다', () => {
+  const tradeLedger = [
+    {
+      id: 'b1', name: 'SOXL', ticker: 'SOXL', currency: 'USD',
+      side: 'buy', date: '2026-01-05', quantity: 10, price: 100, fxRate: 1300,
+    },
+    {
+      id: 's1', name: 'SOXL', ticker: 'SOXL', currency: 'USD',
+      side: 'sell', date: '2026-03-05', quantity: 10, price: 120, fxRate: 1450,
+    },
+  ];
+  const rows = buildCanonicalTradeRows({ tradeLedger, resolveKrwRate: resolveTradeRowKrwRate });
+  // 오늘 환율(9999)이 아니라 기록된 krwPnl을 그대로 써야 한다.
+  const summary = buildTradeSummary(rows, 9999, 1, {});
+
+  const sell = rows.find((row) => row.side === 'sell');
+  assert.equal(summary.totalProfit, sell.krwPnl);
+  assert.equal(summary.totalProfit, (120 * 10 * 1450) - (100 * 10 * 1300));
+  assert.notEqual(summary.totalProfit, 200 * 9999);
+});
+
+test('매수 행은 실현손익 합계를 건드리지 않는다', () => {
+  const rows = buildCanonicalTradeRows({
+    tradeLedger: [{
+      id: 'b1', name: 'SOXL', ticker: 'SOXL', currency: 'USD',
+      side: 'buy', date: '2026-01-05', quantity: 10, price: 100, fxRate: 1300,
+    }],
+    resolveKrwRate: resolveTradeRowKrwRate,
+  });
+
+  const summary = buildTradeSummary(rows, 1400, 1, {});
+  assert.equal(summary.totalBuyQuantity, 10);
+  assert.equal(summary.totalProfit, 0);
+  assert.equal(summary.totalSellAmount, 0);
 });

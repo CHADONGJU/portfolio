@@ -22,6 +22,9 @@ export const isOverseasCapitalGainsAsset = (record = {}) => {
   const category = String(record.category || '');
   if (isDomesticStockCategory(category)) return false;
   if (category.includes('현금')) return false;
+  // 해외 상장 종목은 원화로 체결되지 않는다. 분류가 비어 있는 옛 기록이
+  // 국내주식인데도 통산에 섞여 들어가 세금을 만들어내지 않도록 통화로도 막는다.
+  if (String(record.currency || 'KRW').toUpperCase() === 'KRW') return false;
   return true;
 };
 
@@ -31,7 +34,8 @@ export const isOverseasCapitalGainsAsset = (record = {}) => {
  * - 같은 해의 모든 해외 종목 손익을 통산한다(이익과 손실을 서로 상계).
  * - 기본공제 250만원을 뺀 뒤 22%(양도소득세 20% + 지방소득세 2%)를 매긴다.
  * - 양도가액은 "매도일 환율", 취득가액은 "매수일 환율"로 각각 환산한다.
- *   앱 화면의 실현손익은 환차손익을 빼고 보여주지만, 세법은 환차익도 과세한다.
+ *   화면의 원화 실현손익(krwPnl)도 같은 규칙이라 두 숫자가 서로 어긋나지 않는다.
+ *   다만 여기서는 기본공제·세율을 얹고, 국내주식은 통산에서 뺀다.
  * - 매도수수료·제세금은 필요경비로 빼준다.
  *
  * 환율을 모르는 옛 기록이 섞이면 estimated=true로 표시하고 현재 환율로 근사한다.

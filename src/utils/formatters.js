@@ -8,11 +8,15 @@ export const formatMoney = (val, currency) => {
     })}`;
   }
 
+  // Math.round(-0.4)는 -0이고, (-0).toLocaleString()은 "-0"이다.
+  // 0.5원짜리 손실이 화면에 "₩-0"으로 찍히지 않도록 부호 없는 0으로 눌러 준다.
+  const round = (value) => Math.round(Number(value)) || 0;
+
   if (currency === 'JPY') {
-    return `¥${Math.round(Number(val)).toLocaleString()}`;
+    return `¥${round(val).toLocaleString()}`;
   }
 
-  return `₩${Math.round(Number(val)).toLocaleString()}`;
+  return `₩${round(val).toLocaleString()}`;
 };
 
 export const formatInputNumber = (value) => {

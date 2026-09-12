@@ -50,7 +50,7 @@ test('빈 포트폴리오에서도 터지지 않고 0을 돌려준다', () => {
 });
 
 test('종목별 실현손익이 헤더 합계와 같은 환율을 쓴다', () => {
-  // 매수 1300, 매도 1450, 오늘 1500. 손익은 매수 시점 환율로 고정돼야 하고,
+  // 매수 1300, 매도 1450, 오늘 1500. 손익은 매수·매도 시점 환율로 고정돼야 하고,
   // 종목 카드와 헤더 합계가 같은 값을 보여야 한다.
   const tradeLedger = [
     {
@@ -74,7 +74,8 @@ test('종목별 실현손익이 헤더 합계와 같은 환율을 쓴다', () =>
   assert.equal(soxl.realizedKRW, metrics.totalConvertedNetProfit);
   // 오늘 환율(1500)로 근사하면 300,000이 나온다. 그게 아니어야 한다.
   assert.notEqual(soxl.realizedKRW, 200 * 1500);
-  assert.equal(Math.round(soxl.realizedKRW), 260000);
+  // 양도대금 120×10×1450 − 취득원가 100×10×1300 = 440,000 (환차익 포함)
+  assert.equal(Math.round(soxl.realizedKRW), 440000);
 });
 
 test('같은 이름과 회차여도 티커가 다른 과거 매매 사이클은 한 줄로 합치지 않는다', () => {
@@ -500,4 +501,38 @@ test('전량 매도해 0주가 된 종목이 목록에 남아도 매입원가를
   // 남아 있는 종목의 평가손익만 잡힌다(2주 × 1만 원).
   const investedProfit = metrics.enhancedAssets.reduce((sum, asset) => sum + asset.profitKRW, 0);
   assert.equal(investedProfit, 20_000);
+});
+
+test('환율만 오른 종목은 매도해도 손익이 튀지 않는다(평가손익 = 실현손익)', () => {
+  // 매수 1300, 오늘 1500. 주가는 $100 그대로라 달러 손익은 0이지만
+  // 원화로는 환차익 200,000원이 나 있다.
+  const buy = {
+    id: 'b1', name: 'SOXL', ticker: 'SOXL', currency: 'USD',
+    side: 'buy', date: '2026-01-05', quantity: 10, price: 100, fxRate: 1300,
+  };
+  const held = runHook({
+    ...baseOptions,
+    tradeLedger: [buy],
+    assets: [{
+      id: 1, name: 'SOXL', ticker: 'SOXL', category: '해외주식', currency: 'USD',
+      quantity: 10, averagePrice: 100, originalAveragePrice: 100,
+      originalCurrentPrice: 100, buyDate: '2026-01-05',
+    }],
+  });
+  const unrealized = held.portfolioAssets[0].profitKRW;
+  assert.equal(unrealized, (100 * 10 * 1500) - (100 * 10 * 1300));
+  assert.equal(unrealized, 200000);
+
+  // 같은 날 오늘 환율로 전량 매도하면, 평가손익이 그대로 실현손익이 되어야 한다.
+  const sold = runHook({
+    ...baseOptions,
+    tradeLedger: [
+      buy,
+      {
+        id: 's1', name: 'SOXL', ticker: 'SOXL', currency: 'USD',
+        side: 'sell', date: '2026-06-05', quantity: 10, price: 100, fxRate: 1500,
+      },
+    ],
+  });
+  assert.equal(sold.totalConvertedNetProfit, unrealized);
 });

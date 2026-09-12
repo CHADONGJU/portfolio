@@ -181,6 +181,19 @@ export const normalizeTradeRow = (record = {}) => {
 };
 
 /**
+ * 그 거래 행에 각인된 '거래 시점 환율'.
+ * 매수 행이면 매수일, 매도 행이면 매도일 환율이다. 원화 원가·원화 실현손익이
+ * 모두 이 한 가지 규칙 위에 서도록 화면과 계산이 같은 함수를 공유한다.
+ * 외화인데 환율을 아직 못 채운 기록은 0을 돌려, 원화 금액을 "안다"고 말하지 않게 한다.
+ */
+export const resolveTradeRowKrwRate = (record = {}) => {
+  const currency = record?.currency || 'KRW';
+  if (!currency || currency === 'KRW') return 1;
+  const storedRate = Number(record?.fxRate);
+  return Number.isFinite(storedRate) && storedRate > 0 ? storedRate : 0;
+};
+
+/**
  * 매수 시점 환율로 "실제로 낸 원화"를 함께 따라간다.
  *
  * 증권사(토스 등)가 보여주는 투자 원금은 매수 당시 환율로 낸 원화이지 오늘 환율로
@@ -248,14 +261,17 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
       const resolvedPnl = row.hasRecordedPnl ? row.pnl : computedPnl;
 
       /**
-       * 원화 실현손익도 매수 시점 환율 하나로만 계산한다.
-       * 매도일 환율을 쓰면 주가가 아니라 환율이 손익을 만들어내는데,
-       * 이 앱은 환차손익을 손익으로 치지 않는다(총 보유자산이 환율로 흔들리지 않게).
+       * 원화 실현손익은 증권사 원화 화면·양도소득세와 같은 기준으로 계산한다.
+       * 양도대금은 매도일 환율, 취득원가는 매수일 환율이라 환차손익이 함께 들어간다.
+       * (평가손익도 같은 규칙이라 매도하는 순간 손익이 튀지 않는다.)
+       * 두 환율 모두 이미 확정된 과거 값이므로 오늘 환율이 움직여도 이 값은 흔들리지 않는다.
        */
       const buyRate = averageCost > EPSILON ? averageKrwCost / averageCost : 0;
+      const sellRate = rateOf(row);
       const removedKrwCost = averageKrwCost * matchedQuantity;
       /**
        * 원화 환산은 '수수료를 낸 시점의 환율'로 해야 한다.
+       * 매도 수수료·거래세는 매도일, 매수 수수료는 매수일 환율이다.
        * buyRate는 매수금액 기준 가중평균이라, 수수료가 특정 매수 건에 몰려 있으면
        * (최소 수수료, 무료 이벤트, 증권사 변경 등) 실제와 어긋난다.
        * 그래서 비례 배분값의 환율 구성을 유지한 채 금액만 기록값에 맞춰 늘리고 줄인다.
@@ -263,13 +279,15 @@ export const buildPositionFromTradeRows = (rows = [], { resolveKrwRate } = {}) =
       const krwBuyFeeApplied = proratedBuyFee > EPSILON
         ? proratedKrwBuyFee * (appliedBuyFee / proratedBuyFee)
         : appliedBuyFee * buyRate;
-      const krwCharges = ((row.brokerFee + row.sellTax) * buyRate) + krwBuyFeeApplied;
+      const krwCharges = ((row.brokerFee + row.sellTax) * sellRate) + krwBuyFeeApplied;
       // 국내주식의 기록된 손익은 증권사가 수수료·제세금까지 반영해 확정한 원화 값이다.
       // 원가로 다시 계산하면 과거 회차가 잘못 묶인 데이터에서 확정 손익까지 오염된다.
       const krwPnl = row.currency === 'KRW' && row.hasRecordedPnl
         ? resolvedPnl
-        : ((tracksKrwCost && buyRate > 0 && matchedQuantity > EPSILON && unknownRateQuantity <= EPSILON)
-          ? (row.price * matchedQuantity * buyRate) - removedKrwCost - krwCharges
+        // 매도일 환율을 모르면 원화 결과를 알 수 없다. 근사는 호출한 쪽에 맡긴다.
+        : ((tracksKrwCost && buyRate > 0 && sellRate > 0
+            && matchedQuantity > EPSILON && unknownRateQuantity <= EPSILON)
+          ? (row.price * matchedQuantity * sellRate) - removedKrwCost - krwCharges
           : null);
 
       /**

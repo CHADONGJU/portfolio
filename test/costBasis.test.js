@@ -40,7 +40,7 @@ test('부분 매도하면 원금이 수량에 비례해 줄어든다', () => {
   assert.equal(position.krwCost, 60 * 20 * 1400); // 1,680,000
 });
 
-test('원화 실현손익에 환차손익이 섞이지 않는다', () => {
+test('원화 실현손익은 증권사 원화 화면처럼 환차손익을 함께 반영한다', () => {
   const rows = [
     usd({ id: 'a', side: 'buy', date: '2025-02-10', quantity: 100, price: 20, fxRate: 1400 }),
     usd({ id: 'b', side: 'sell', date: '2025-06-10', quantity: 100, price: 25, fxRate: 1300 }),
@@ -49,11 +49,15 @@ test('원화 실현손익에 환차손익이 섞이지 않는다', () => {
   const sell = position.rows.find((row) => row.side === 'sell');
 
   assert.equal(sell.pnl, 500); // 달러 기준 +$500
-  // 매도일 환율(1300)이 아니라 매수 시점 환율(1400)로만 환산한다.
-  assert.equal(sell.krwPnl, 500 * 1400);
+  // 양도대금은 매도일 환율(1300), 취득원가는 매수일 환율(1400).
+  // 달러로는 벌었지만 환율이 내려 원화로는 그만큼 덜 남는다.
+  assert.equal(sell.krwPnl, (25 * 100 * 1300) - (20 * 100 * 1400));
+  assert.equal(sell.krwPnl, 450000);
+  // 환차손익을 뺀 옛 방식(손익 × 매수환율)이 아니다.
+  assert.notEqual(sell.krwPnl, 500 * 1400);
 });
 
-test('매도일 환율이 어떻든 원화 실현손익은 그대로다', () => {
+test('매도일 환율이 달라진 만큼 원화 실현손익도 달라진다', () => {
   const build = (sellFxRate) => {
     const rows = [
       usd({ id: 'a', side: 'buy', date: '2025-02-10', quantity: 100, price: 20, fxRate: 1400 }),
@@ -63,7 +67,22 @@ test('매도일 환율이 어떻든 원화 실현손익은 그대로다', () => 
       .rows.find((row) => row.side === 'sell').krwPnl;
   };
 
-  assert.equal(build(1200), build(1500));
+  // 차이는 정확히 양도대금에 붙은 환차익뿐이다. 취득원가는 매수일 환율에 고정된다.
+  assert.equal(build(1500) - build(1200), 25 * 100 * (1500 - 1200));
+});
+
+test('매도일 환율을 모르면 원화 실현손익을 지어내지 않는다', () => {
+  const rows = [
+    usd({ id: 'a', side: 'buy', date: '2025-02-10', quantity: 100, price: 20, fxRate: 1400 }),
+    usd({ id: 'b', side: 'sell', date: '2025-06-10', quantity: 100, price: 25 }),
+  ];
+  const sell = buildPositionFromTradeRows(rows, { resolveKrwRate: rateOf })
+    .rows.find((row) => row.side === 'sell');
+
+  assert.equal(sell.pnl, 500);
+  assert.equal(sell.krwPnl, null);
+  // 취득원가는 여전히 아는 값이라 양도소득세 계산에는 그대로 넘긴다.
+  assert.equal(sell.krwCostRemoved, 20 * 100 * 1400);
 });
 
 test('매수 시점 환율을 모르면 원금을 정확하다고 하지 않는다', () => {
@@ -133,7 +152,8 @@ test('원장 전체에서 매도 행의 krwPnl이 유지된다', () => {
   ];
   const canonical = buildCanonicalTradeRows({ tradeLedger: ledger, resolveKrwRate: rateOf });
   const sell = canonical.find((row) => row.side === 'sell');
-  assert.equal(sell.krwPnl, 50 * (30 - 20) * 1400);
+  assert.equal(sell.krwPnl, (30 * 50 * 1350) - (20 * 50 * 1400));
+  assert.equal(sell.krwPnl, 625000);
 });
 
 test('보유 중인 원금과 원화 평단은 오늘 환율이 아무리 움직여도 그대로다', () => {
@@ -260,8 +280,13 @@ test('매수 수수료는 평단가를 건드리지 않고 판 수량만큼만 �
   assert.equal(sell.pnl, 197.5);
   assert.equal(sell.buyFeeRemoved, 1);
   assert.equal(sell.krwBuyFeeRemoved, 1300);
-  // 원화 실현손익도 매수일 환율 기준: (150×4 - 100×4 - 1.5)×1300 - 1300
-  assert.equal(Math.round(sell.krwPnl), Math.round((200 - 1.5) * 1300 - 1300));
+  // 원화 실현손익: 양도대금(매도일 1400) - 취득원가(매수일 1300)
+  //              - 매도수수료(매도일 1400) - 배분된 매수수수료(매수일 1300)
+  assert.equal(
+    Math.round(sell.krwPnl),
+    Math.round((150 * 4 * 1400) - (100 * 4 * 1300) - (1.5 * 1400) - 1300),
+  );
+  assert.equal(Math.round(sell.krwPnl), 316600);
 });
 
 test('전량 매도하면 매수 수수료가 남지 않는다', () => {

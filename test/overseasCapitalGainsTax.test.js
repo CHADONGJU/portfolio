@@ -176,3 +176,22 @@ test('매수 수수료도 취득 부대비용이라 필요경비로 뺀다', () 
   });
   assert.equal(withNativeFee.netGainKRW, 5600000 - (10 * 1400));
 });
+
+test('분류가 비어 있는 원화 매도는 해외 통산에 섞이지 않는다', () => {
+  // 옛 기록은 category가 빈 문자열일 수 있다. 통화까지 보지 않으면
+  // 국내주식 매도가 해외 양도소득세를 만들어낸다.
+  const result = calculateOverseasCapitalGainsTax({
+    rows: [
+      {
+        side: 'sell', category: '', currency: 'KRW', date: '2026-04-01',
+        price: 1000000, quantity: 10, matchedQuantity: 10, krwCostRemoved: 1000000,
+      },
+    ],
+    year: 2026,
+  });
+
+  assert.equal(result.tradeCount, 0);
+  assert.equal(result.netGainKRW, 0);
+  assert.equal(result.taxKRW, 0);
+  assert.equal(result.unresolvedCount, 0);
+});

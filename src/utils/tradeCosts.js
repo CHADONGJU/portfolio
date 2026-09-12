@@ -1,3 +1,5 @@
+import { formatKoreanDate } from './dates.js';
+
 const isDomesticStockCategory = (category = '') => (
   String(category || '').includes('국내') && String(category || '').includes('주식')
 );
@@ -122,7 +124,8 @@ export const roundTradeCost = (amount, currency = 'KRW') => {
 export const getDomesticStockSellTaxRatePercent = (sellDate = '') => {
   const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(String(sellDate || '').slice(0, 10))
     ? String(sellDate).slice(0, 10)
-    : new Date().toISOString().slice(0, 10);
+    // toISOString()은 UTC라 오전 9시 이전에는 어제로 잡혀 세율 경계일이 어긋난다.
+    : formatKoreanDate();
   const matched = DOMESTIC_STOCK_SELL_TAX_RATES.find(({ from }) => dateKey >= from);
   // 표에 없는 과거 날짜를 최신 세율로 계산하면 실제보다 세금이 적게 잡힌다.
   return matched?.ratePercent ?? LEGACY_DOMESTIC_STOCK_SELL_TAX_RATE_PERCENT;

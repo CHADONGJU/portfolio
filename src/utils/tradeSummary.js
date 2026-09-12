@@ -21,6 +21,26 @@ const getKrwRate = (record, rates, usdRate, yenRate) => {
   return parseNumber(rates[currency]) || 1;
 };
 
+/**
+ * 매도 한 건의 원화 실현손익.
+ * usePortfolioMetrics의 getRecordKrwPnl과 같은 규칙이어야 포트폴리오 탭의
+ * 실현손익 카드와 매매 기록 탭의 실현 손익이 같은 숫자를 보여준다.
+ */
+const getRecordKrwPnl = (record, rate) => {
+  const recordedPnl = Number(record.pnl);
+  if ((record.currency || 'KRW') === 'KRW'
+    && record.pnl !== null
+    && record.pnl !== undefined
+    && Number.isFinite(recordedPnl)) {
+    return recordedPnl;
+  }
+  const exactKrwPnl = Number(record.krwPnl);
+  if (record.krwPnl !== null && record.krwPnl !== undefined && Number.isFinite(exactKrwPnl)) {
+    return exactKrwPnl;
+  }
+  return parseNumber(record.pnl ?? record.realizedPnl) * rate;
+};
+
 export const buildTradeSummary = (
   records = [],
   exchangeRate = 1,
@@ -29,20 +49,19 @@ export const buildTradeSummary = (
 ) => records.reduce((summary, record) => {
   const quantity = parseNumber(record.quantity);
   const price = parseNumber(record.price ?? record.sellPrice ?? record.buyPrice);
-  const pnl = parseNumber(record.pnl ?? record.realizedPnl);
   const rate = getKrwRate(record, rates, exchangeRate, yenRate);
   const side = getSide(record);
 
   if (side === 'buy') {
     summary.totalBuyQuantity += quantity;
     summary.totalBuyCount += 1;
-  } else {
-    summary.totalSellQuantity += quantity;
-    summary.totalSellCount += 1;
-    summary.totalSellAmount += price * quantity * rate;
+    return summary;
   }
 
-  summary.totalProfit += pnl * rate;
+  summary.totalSellQuantity += quantity;
+  summary.totalSellCount += 1;
+  summary.totalSellAmount += price * quantity * rate;
+  summary.totalProfit += getRecordKrwPnl(record, rate);
   return summary;
 }, {
   totalBuyQuantity: 0,

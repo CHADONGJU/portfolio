@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { formatKoreanDate } from '../src/utils/dates.js';
 import {
   calculateSellCosts,
   deriveFeeRatePercent,
@@ -226,4 +227,12 @@ test('역산 요율은 기록된 수수료 금액을 설명할 수 있어야 한
 
   assert.equal(deriveFeeRatePercent(0, 5_274_000), 0);
   assert.equal(deriveFeeRatePercent(142, 0), 0);
+});
+
+test('매도일이 비어 있으면 UTC가 아니라 한국 날짜로 세율을 고른다', () => {
+  const koreanToday = formatKoreanDate();
+  assert.equal(
+    getDomesticStockSellTaxRatePercent(''),
+    getDomesticStockSellTaxRatePercent(koreanToday),
+  );
 });

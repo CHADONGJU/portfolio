@@ -76,10 +76,10 @@ test('외화 매매는 시점 환율(fxRate)로 환산하고 krwPnl을 그대로
   // 매수: 10×100×1300, 매도: 10×110×1400 — 오늘 환율(9999)이 아니라 기록된 환율.
   assert.equal(result.buyKRW, 1300000);
   assert.equal(result.sellKRW, 1540000);
-  // krwPnl은 매수 시점 환율 기준(환차손익 미포함 정책): (110-100)×10×1300 = 130,000
-  assert.equal(result.profitKRW, 130000);
-  // 매도분 매수원가 = 1,540,000 − 130,000 = 1,410,000
-  assert.equal(result.soldCostKRW, 1410000);
+  // krwPnl은 환차손익 포함: 10×110×1400 − 10×100×1300 = 240,000
+  assert.equal(result.profitKRW, 240000);
+  // 양도대금과 실현손익이 같은 규칙 위에 있으므로, 빼고 나면 실제 취득원가만 남는다.
+  assert.equal(result.soldCostKRW, 1300000);
   assert.equal(result.approximate, false);
 });
 

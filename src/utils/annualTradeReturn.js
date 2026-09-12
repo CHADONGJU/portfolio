@@ -25,9 +25,9 @@ const getRecordKrwRate = (record = {}, { exchangeRate, jpyKrwRate, currencyRates
 
 /**
  * 매도 한 건의 원화 실현손익.
- * 표준 거래 행(buildCanonicalTradeRows)이 매수 시점 환율로 계산해 둔
- * krwPnl(환차손익 포함)을 그대로 쓰고, 환율을 모르는 옛 기록만
- * "손익 × 환율"로 근사한다(usePortfolioMetrics의 getRecordKrwPnl과 같은 규칙).
+ * 표준 거래 행(buildCanonicalTradeRows)이 취득원가는 매수일 환율, 양도대금은
+ * 매도일 환율로 계산해 둔 krwPnl(환차손익 포함)을 그대로 쓰고, 환율을 모르는
+ * 옛 기록만 "손익 × 환율"로 근사한다(usePortfolioMetrics의 getRecordKrwPnl과 같은 규칙).
  */
 const getRecordKrwPnl = (record = {}, rates) => {
   const recordedPnl = Number(record.pnl);
@@ -109,8 +109,9 @@ export const calculateAnnualTradeReturn = ({
     };
   }
 
-  // 분모: 매도분 매수원가(매도금액 − 실현손익). 매도가 없는 해는 확정된 것이
-  // 없으므로 수익률을 만들지 않는다(0%가 아니라 "아직 없음").
+  // 분모: 매도분 매수원가(매도금액 − 실현손익). 둘 다 매도일 환율로 환산한
+  // 양도대금을 기준으로 삼으므로, 빼고 나면 매수일 환율 취득원가 + 비용만 남는다.
+  // 매도가 없는 해는 확정된 것이 없으므로 수익률을 만들지 않는다(0%가 아니라 "아직 없음").
   const soldCostKRW = sellKRW - profitKRW;
   const returnPercent = soldCostKRW > 0 ? (profitKRW / soldCostKRW) * 100 : null;
 

@@ -12,6 +12,7 @@ import {
   getTradeAssetKey,
   getTradeRound,
   normalizeTradeTicker,
+  resolveTradeRowKrwRate,
 } from '../utils/tradeReconciliation.js';
 
 const parseMetricNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
@@ -50,19 +51,8 @@ const getRecordKrwRate = (record = {}, rateByCurrency) => {
 /**
  * 매도 한 건의 원화 실현손익.
  * 매수일·매도일 환율을 모두 아는 기록은 krwPnl(환차손익 포함)을 그대로 쓰고,
- * 환율을 다 모르는 옛 기록만 "손익 × 매도일 환율"로 근사한다.
+ * 환율을 다 모르는 옛 기록만 "손익 × 환율"로 근사한다.
  */
-/**
- * 매수 시점 환율(기록에 저장된 fxRate). 원화 원가·실현손익 계산의 기준이며,
- * 헤더 합계와 종목별 카드가 같은 값을 쓰도록 반드시 공유해야 한다.
- */
-const resolveRecordBuyKrwRate = (record) => {
-  const currency = record?.currency || 'KRW';
-  if (currency === 'KRW') return 1;
-  const storedRate = Number(record?.fxRate);
-  return Number.isFinite(storedRate) && storedRate > 0 ? storedRate : 0;
-};
-
 const getRecordKrwPnl = (record = {}, rateByCurrency) => {
   const recordedPnl = Number(record.pnl);
   if ((record.currency || 'KRW') === 'KRW'
@@ -127,16 +117,8 @@ export const usePortfolioMetrics = ({
       return 1;
     };
 
-    // 매수 기록에 남은 "그날의 환율"로 원가를 쌓는다.
-    // 환율이 없는 원화 거래는 1, 외화인데 환율을 아직 못 채운 기록은 0을 돌려
-    // 원금을 정확하다고 표시하지 않게 한다.
-    const resolveRecordKrwRate = (record = {}) => {
-      const currency = record.currency || 'KRW';
-      if (!currency || currency === 'KRW') return 1;
-      const storedRate = Number(record.fxRate);
-      return Number.isFinite(storedRate) && storedRate > 0 ? storedRate : 0;
-    };
-    const krwCostBasisByAsset = buildKrwCostBasisByAsset(tradeLedger, resolveRecordKrwRate);
+    // 매수 기록에 남은 "그날의 환율"로 원가를 쌓는다(원장·헤더·종목 카드가 같은 규칙).
+    const krwCostBasisByAsset = buildKrwCostBasisByAsset(tradeLedger, resolveTradeRowKrwRate);
 
     const calculatedAssets = assets.map((a) => {
       const krwRate = toKrwRate(a.currency);
@@ -289,11 +271,12 @@ export const usePortfolioMetrics = ({
   const fxProfitPercent = totalUsdPurchase > 0 ? ((currentUsdValueForUsd - totalUsdPurchase) / totalUsdPurchase) * 100 : 0;
 
   const canonicalTradeRows = useMemo(() => (
-    // 매수·매도 시점 환율을 함께 넘겨야 원화 실현손익에 환차손익이 제대로 들어간다.
+    // 행마다 각인된 거래 시점 환율을 넘겨야 원화 원가(매수일)와 양도대금(매도일)이
+    // 각각 제 환율로 환산되고, 원화 실현손익에 환차손익이 제대로 들어간다.
     buildCanonicalTradeRows({
       tradeLedger,
       trades,
-      resolveKrwRate: resolveRecordBuyKrwRate,
+      resolveKrwRate: resolveTradeRowKrwRate,
     })
   ), [tradeLedger, trades]);
   const realizedRecords = useMemo(() => canonicalTradeRows.filter(record => record.side === 'sell'), [canonicalTradeRows]);
@@ -395,7 +378,7 @@ export const usePortfolioMetrics = ({
       // 환율 해석기를 빼먹으면 이미 계산된 krwPnl이 null로 덮여, 종목 카드의 실현손익만
       // "손익 × 오늘 환율"로 근사돼 헤더 합계와 어긋나고 매일 값이 흔들린다.
       const position = buildPositionFromTradeRows(tradeRows, {
-        resolveKrwRate: resolveRecordBuyKrwRate,
+        resolveKrwRate: resolveTradeRowKrwRate,
       });
       const sellRows = position.rows.filter(record => record.side === 'sell');
       const buyRows = position.rows.filter(record => record.side === 'buy');
