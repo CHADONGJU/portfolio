@@ -4,7 +4,7 @@
 // 끝내서 넘겨주고, 여기서는 표시용 파생값(색 톤, 차트 그라디언트)만 만든다.
 import { useMemo } from 'react';
 import {
-  ArrowLeft, CalendarDays, List, Minus, PieChart as PieIcon, Plus, Sparkles, Target,
+  ArrowLeft, CalendarDays, Minus, PieChart as PieIcon, Plus, Sparkles, Target,
   Trash2, TrendingDown, TrendingUp, Wallet,
 } from 'lucide-react';
 import { formatMoney } from '../../utils/formatters.js';

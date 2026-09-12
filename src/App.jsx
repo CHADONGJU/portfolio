@@ -8,40 +8,23 @@
 //
 // 화면은 components/tabs 의 탭 네 개와 components/modals 의 모달들이 그린다.
 // 금액 계산은 hooks/usePortfolioMetrics 와 utils 의 순수 함수들이 맡는다.
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import {
-  Plus, Minus, TrendingUp, TrendingDown, Trash2,
-  PieChart as PieIcon,
-  Receipt, Wallet, ArrowLeft, X, Banknote, DollarSign, ArrowRightLeft, Search, Folder, Target, CalendarDays,
-  ChevronLeft, ChevronRight, NotebookPen, Pencil, PlusCircle, Sparkles
-} from 'lucide-react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import DashboardHeader from './components/DashboardHeader';
 import ModalOverlay from './components/ModalOverlay';
 import UserSettingsPanel from './components/UserSettingsPanel';
-import AnnualReturnGoalCard from './components/AnnualReturnGoalCard';
-import AnnualReturnHistory from './components/AnnualReturnHistory';
-import DividendIncomeSummary from './components/DividendIncomeSummary';
 import { resolveDividendIncomeRate, summarizeDividendIncome } from './utils/dividendIncome.js';
 import { calculateAnnualIncomeReturn, getAnnualTradeYears } from './utils/annualIncomeReturn.js';
-import BrokerFeeFields from './components/BrokerFeeFields';
 import BuyLotsEditor from './components/BuyLotsEditor';
-import AnnualDividendTrend from './components/AnnualDividendTrend';
-import DividendSummaryGrid from './components/DividendSummaryGrid';
-import FeatureInfo from './components/FeatureInfo';
-import ManualTradeEntryForm from './components/ManualTradeEntryForm';
-import MarketCalendar from './components/MarketCalendar';
-import StockFilterCombobox from './components/StockFilterCombobox';
 import StockInsightPanel from './components/StockInsightPanel';
 import SyncStatusToast from './components/SyncStatusToast';
 import TabNav from './components/TabNav';
-import TradeRecordEditor from './components/TradeRecordEditor';
 import { useAuth } from './context/useAuth';
 import useTheme from './hooks/useTheme';
 import usePortfolioCloudSync from './hooks/usePortfolioCloudSync';
 import PortfolioSaveStatus from './components/PortfolioSaveStatus';
 import { readPortfolioJournal } from './utils/portfolioSyncJournal';
 import { formatKoreanDate, getDateTimestampSeconds } from './utils/dates';
-import { PORTFOLIO_CURRENCIES, getAssetInputCurrency, getTargetItemCurrency, normalizeInputTicker, resolveManualTradeAsset } from './utils/currencies';
+import { getAssetInputCurrency, getTargetItemCurrency, normalizeInputTicker, resolveManualTradeAsset } from './utils/currencies';
 import {
   DEFAULT_TARGET_PORTFOLIO,
   getTargetGroups,
@@ -60,7 +43,6 @@ import {
   isRemovedAssetCategory,
   MARKET_CALENDAR_KEYWORDS_STORAGE_KEY,
   MEMOS_STORAGE_KEY,
-  PORTFOLIO_ASSET_CATEGORIES,
   PORTFOLIO_NAME_STORAGE_KEY,
   PORTFOLIO_SNAPSHOTS_STORAGE_KEY,
   PREFERRED_BROKER_STORAGE_KEY,
@@ -107,7 +89,6 @@ import CalendarTab from './components/tabs/CalendarTab.jsx';
 import PortfolioTab from './components/tabs/PortfolioTab.jsx';
 import RemoveAssetConfirmModal from './components/modals/RemoveAssetConfirmModal.jsx';
 import SellAssetModal from './components/modals/SellAssetModal.jsx';
-import PriceInputCurrencyToggle from './components/PriceInputCurrencyToggle.jsx';
 import AddAssetModal from './components/modals/AddAssetModal.jsx';
 import DividendEntryModal from './components/modals/DividendEntryModal.jsx';
 import AddBuyModal from './components/modals/AddBuyModal.jsx';
@@ -156,7 +137,6 @@ import {
 } from './utils/dividendCalculation';
 import {
   ACCOUNT_TYPE_GENERAL,
-  ACCOUNT_TYPE_OPTIONS,
   isDividendTaxDeferredAccount,
   migrateUserConfirmedAccountTypes,
   normalizeAccountType,
