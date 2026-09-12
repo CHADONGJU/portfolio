@@ -1,3 +1,5 @@
+// AI 종목 요약 패널.
+// 보유 종목의 수량·평단·현재가를 넘겨 짧은 요약을 받아오고, 추가 질문도 받는다.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw, Sparkles, X } from 'lucide-react';
 import { AiInsightError, fetchStockInsight, isAiInsightConfigured } from '../services/aiInsight';

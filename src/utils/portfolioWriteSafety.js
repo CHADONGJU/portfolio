@@ -1,3 +1,6 @@
+// 클라우드에 덮어쓰기 전 마지막 검사.
+// 기록이 통째로 비거나 급격히 줄어드는 쓰기를 막는다. 동기화 사고 한 번으로
+// 몇 년치 매매 기록이 지워지는 것을 방지하기 위한 장치다.
 import { isSameAutomaticDividendEvent } from './dividendRecords.js';
 
 const GUARDED_FIELDS = [

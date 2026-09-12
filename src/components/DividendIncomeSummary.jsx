@@ -1,3 +1,5 @@
+// 그 해 수령 배당 요약(통화별 합계와 원화 환산).
+// 알 수 없는 통화는 원화로 억지 환산하지 않고 현지 통화 그대로 남긴다.
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatMoney } from '../utils/formatters.js';
 

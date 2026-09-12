@@ -1,3 +1,6 @@
+// 연도별 수익률 막대 그래프와 연도 선택기.
+// 분모가 아주 작은 해가 나오면 막대 하나가 나머지를 전부 짜부라뜨리므로,
+// 막대 길이만 상한을 두고 숫자 자체는 그대로 보여준다.
 import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatMoney } from '../utils/formatters.js';
 import DividendIncomeSummary from './DividendIncomeSummary.jsx';

@@ -1,3 +1,5 @@
+// 종목별 배당 카드 묶음.
+// 종목마다 지금까지 받은 배당, 다음 배당 예상, 연 배당수익률을 한 장에 담는다.
 import { Banknote, DollarSign } from 'lucide-react';
 import FeatureInfo from './FeatureInfo';
 import { formatMoney } from '../utils/formatters';

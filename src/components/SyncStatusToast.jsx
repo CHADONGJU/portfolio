@@ -1,3 +1,4 @@
+// 시세·클라우드 동기화 진행 상황을 알리는 토스트.
 import { AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 
 const ICON_TONE = {

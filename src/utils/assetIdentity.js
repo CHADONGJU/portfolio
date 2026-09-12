@@ -1,3 +1,6 @@
+// 매매·배당 기록이 어떤 보유 자산의 것인지 판정한다.
+// 티커가 양쪽에 있으면 티커로, 없으면 이름으로 맞춘다. 회차(round)까지 봐야
+// 전량 매도 후 재매수한 물량의 기록이 이전 회차에 섞이지 않는다.
 const normalizeTicker = (ticker = '') => String(ticker || '').trim().toUpperCase();
 
 /**

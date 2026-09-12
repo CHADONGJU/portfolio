@@ -1,3 +1,6 @@
+// 매수 내역 편집기.
+// 한 종목의 매수 건들을 표로 펼쳐 수량·단가·날짜·수수료를 직접 고친다.
+// 증권사 화면과 평단가가 맞지 않을 때 사용자가 직접 맞출 수 있는 통로다.
 import { Plus, Trash2, X } from 'lucide-react';
 import { ACCOUNT_TYPE_OPTIONS, normalizeAccountType } from '../utils/accountTypes';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from '../utils/formatters';

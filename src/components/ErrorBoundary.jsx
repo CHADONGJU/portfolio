@@ -1,3 +1,4 @@
+// 화면 전체가 하얘지는 것을 막는 마지막 방어선.
 import { Component } from 'react';
 
 /**

@@ -1,3 +1,6 @@
+// 해외주식 양도소득세(추정).
+// 한 해의 해외 종목 손익을 통산해 기본공제 250만원을 뺀 뒤 22%를 매긴다.
+// 세법대로 환차익도 과세 대상에 넣는다(취득가액은 매수일, 양도가액은 매도일 환율).
 import {
   OVERSEAS_STOCK_CAPITAL_GAINS_DEDUCTION_KRW,
   OVERSEAS_STOCK_CAPITAL_GAINS_TAX_RATE,

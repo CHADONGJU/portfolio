@@ -1,3 +1,6 @@
+// Cloudflare Worker 진입점.
+// 브라우저에서 직접 부를 수 없는 외부 API(AI 요약, 증시 일정)를 대신 호출한다.
+// API 키가 프런트엔드 번들에 박히지 않게 하는 것이 목적이다.
 import { verifyFirebaseIdToken } from './firebaseAuth.js';
 import { consumeQuota, getSecondsUntilReset, refundQuota } from './quota.js';
 import { fetchMarketCalendarEvents, getCalendarRequest } from './marketCalendar.js';

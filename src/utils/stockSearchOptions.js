@@ -1,3 +1,5 @@
+// 종목 검색 콤보박스의 후보 목록과 필터.
+// 보유 자산과 매매 기록에 나온 종목을 이름·티커로 찾을 수 있게 모은다.
 const normalizeSearchText = (value) => String(value || '').trim().toLocaleLowerCase('ko');
 
 export const buildStockSearchOptions = (records = []) => {

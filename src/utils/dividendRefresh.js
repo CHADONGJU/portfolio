@@ -1,3 +1,6 @@
+// 배당 자동 갱신을 언제 다시 돌릴지 판단한다.
+// 보유 수량이 바뀌었거나, 계산 규칙 버전이 올라갔거나, 마지막 갱신에서
+// 충분한 시간이 지난 경우에만 다시 받아온다.
 import { isRecordForAsset } from './assetIdentity.js';
 import { getDividendLedgerRows, getDividendTradeSide } from './dividendHoldings.js';
 

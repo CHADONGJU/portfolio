@@ -1,3 +1,4 @@
+// 로그인 통과 후에야 App 청크를 내려받게 하는 지연 로더.
 import { Suspense, lazy } from 'react';
 import { useAuth } from '../context/useAuth';
 

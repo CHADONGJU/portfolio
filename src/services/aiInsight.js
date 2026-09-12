@@ -1,3 +1,4 @@
+// AI 종목 요약 클라이언트. 키가 번들에 박히지 않도록 워커 프록시를 거친다.
 import { buildStockInsightPayload } from '../utils/stockInsightPayload';
 
 /**

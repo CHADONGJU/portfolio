@@ -1,3 +1,6 @@
+// 클라우드 저장에 실패했을 때의 로컬 저널.
+// 저장하지 못한 변경을 남겨 두었다가 다음 접속에서 합친다. 네트워크가 끊긴
+// 채로 입력한 매매가 사라지지 않게 하는 마지막 안전망이다.
 import {
   arePortfolioSnapshotsEquivalent,
   PORTFOLIO_COLLECTION_FIELDS,

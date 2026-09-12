@@ -1,3 +1,6 @@
+// 연간 배당 추이 막대 그래프.
+// 한 해의 월별 세후 배당을 원화로 환산해 나란히 세운다. 이미 받은 달과 앞으로
+// 받을 달을 색으로 구분하고, 막대를 누르면 그 달의 캘린더로 이동한다.
 import { useMemo } from 'react';
 import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatMoney } from '../utils/formatters';

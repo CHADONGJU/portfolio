@@ -1,3 +1,4 @@
+// 라이트/다크 테마 상태. 선택은 localStorage에 남기고, 없으면 시스템 설정을 따른다.
 import { useCallback, useEffect, useState } from 'react';
 import { THEME_STORAGE_KEY } from '../constants.js';
 

@@ -1,3 +1,5 @@
+// "배당기준일에 몇 주를 들고 있었나"를 매매 원장에서 되짚는다.
+// 지금 보유 수량으로 과거 배당을 계산하면, 그 뒤에 사고판 만큼 금액이 어긋난다.
 import { normalizeAccountType } from './accountTypes.js';
 
 const normalizeTicker = (value = '') => String(value || '').trim().toUpperCase();

@@ -1,3 +1,11 @@
+// 화면에 뜨는 거의 모든 금액을 파생시키는 훅.
+//
+// 보유 자산의 평가금액·평가손익, 분류별 비중, 종목별 성과(평가+실현+배당),
+// 배당 요약을 한곳에서 만든다. 핵심 규칙 두 가지:
+//
+// 1) 투자 원금은 매수 시점 환율로 낸 실제 원화에 고정한다. 오늘 환율로 다시
+//    환산하면 과거 원금이 매일 흔들려 증권사 화면과 어긋난다.
+// 2) 실현손익도 기록에 각인된 거래 시점 환율로만 계산한다.
 import { useMemo } from 'react';
 import { getCategoryColor, getCategoryDetailColor, isPortfolioAssetCategory } from '../constants.js';
 import { getDividendExDate, getDividendReportingDate } from '../utils/dividendDates.js';

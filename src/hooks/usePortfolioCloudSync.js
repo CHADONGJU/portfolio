@@ -1,3 +1,6 @@
+// Firestore와의 포트폴리오 동기화.
+// 불러오기·저장·실시간 구독과 실패 시 재시도를 담당한다. 저장 전에는 반드시
+// 안전 검사(portfolioWriteSafety)를 거쳐, 사고로 기록이 통째로 지워지지 않게 한다.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   loadPortfolioState, migratePortfolioState, saveJoinedAt,

@@ -1,3 +1,5 @@
+// 매매 기록 탭 상단의 합계(총 매수·매도 수량, 실현 손익).
+// 실현손익은 포트폴리오 탭 카드와 반드시 같은 환율 규칙을 써야 한다.
 const parseNumber = (value) => {
   const parsed = Number(String(value ?? '').replace(/,/g, ''));
   return Number.isFinite(parsed) ? parsed : 0;

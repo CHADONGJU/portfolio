@@ -1,3 +1,4 @@
+// 사용자 설정 모달(계정 정보, 라이트/다크 테마).
 import { Moon, Sun, UserRound, X } from 'lucide-react';
 
 /**

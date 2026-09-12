@@ -1,3 +1,4 @@
+// Firestore 오류 코드를 사용자가 읽을 수 있는 문장으로 바꾼다.
 const CONNECTION_ERRORS = new Set(['unavailable', 'deadline-exceeded', 'network-request-failed']);
 
 export const getPortfolioSyncError = (error) => {

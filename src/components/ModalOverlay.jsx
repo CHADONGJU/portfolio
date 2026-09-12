@@ -1,3 +1,6 @@
+// 모달 공통 껍데기.
+// 배경 클릭·ESC로 닫고, 열려 있는 동안 포커스를 모달 안에 가둔다(focus trap).
+// 키보드와 스크린리더로도 모달 밖으로 새 나가지 않게 하기 위한 것이다.
 import { useEffect, useRef } from 'react';
 
 const FOCUSABLE_SELECTOR = [

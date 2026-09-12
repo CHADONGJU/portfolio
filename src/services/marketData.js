@@ -1,3 +1,8 @@
+// 시세·환율 조회.
+//
+// 여러 무료 제공처를 순서대로 시도하고, 하나가 죽어도 다음으로 넘어간다.
+// 모든 요청에 타임아웃을 건다 — 연결만 받고 응답하지 않는 제공처가 있어서,
+// 타임아웃이 없으면 동기화 루프가 통째로 멈춘 채 풀리지 않는다.
 import { fetchBufferedResponse as fetchWithTimeout } from '../utils/network.js';
 import { formatKoreanDate } from '../utils/dates.js';
 

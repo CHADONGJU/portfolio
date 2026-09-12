@@ -1,3 +1,6 @@
+// 매수 내역 편집기에서 한 건(lot)을 고칠 때의 규칙.
+// 매수일을 바꾸면 그 날짜의 환율을 다시 받아와야 하므로 기존 fxRate를 지운다.
+// 수량·단가만 바꾼 경우에는 이미 각인된 환율을 그대로 지킨다.
 export const editBuyLot = (lot, field, value) => ({
   ...lot,
   [field]: value,

@@ -1,3 +1,6 @@
+// 배당 세전·세후 금액 계산.
+// 국내 배당은 소액주주 원천징수(15.4%), 해외는 현지 원천징수율을 적용한다.
+// ISA·연금 계좌는 원천징수를 떼지 않는다(accountTypes 참고).
 const toNonNegativeNumber = (value) => {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : 0;

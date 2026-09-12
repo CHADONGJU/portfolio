@@ -1,3 +1,6 @@
+// 응답 헤더는 왔는데 본문이 끊기지 않는 요청을 제한 시간에 끊는다.
+// 무료 CORS 프록시가 이런 상태로 매달리는 경우가 있어, 그대로 두면 시세 동기화
+// 전체가 영영 끝나지 않는다.
 // Keep the deadline until the entire response body has been read.
 export const fetchBufferedResponse = async (url, options = {}, timeoutMs = 7000) => {
   const controller = new AbortController();

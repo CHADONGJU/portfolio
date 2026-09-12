@@ -1,3 +1,8 @@
+// 실제 브라우저에서 앱을 띄워 보는 스모크 테스트.
+//
+// 단위 테스트가 못 잡는 사고(렌더 중 예외, 임포트 누락, 모달이 안 열림)를 잡는다.
+// 인증과 Firestore만 가짜로 바꾸고 나머지는 실제 코드를 그대로 돌린다.
+// 실계좌는 전혀 읽지 않으며, 화면마다 새 브라우저 컨텍스트와 합성 데이터를 쓴다.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';

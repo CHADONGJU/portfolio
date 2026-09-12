@@ -1,3 +1,5 @@
+// 매매 기록 한 줄을 펼쳐 고치는 인라인 편집기.
+// 매도가·수수료를 고치면 실현손익이 그만큼 다시 계산된다.
 import { useId, useState } from 'react';
 import { Check, Eraser, Trash2, X } from 'lucide-react';
 import FeatureInfo from './FeatureInfo';

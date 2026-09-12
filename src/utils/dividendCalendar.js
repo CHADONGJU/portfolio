@@ -1,3 +1,5 @@
+// 배당 캘린더에 찍을 이벤트 고르기와 월 합계.
+// 한 달치 지급 예정·확정 배당을 날짜별로 모으고, 통화별 세후 합계를 낸다.
 const CURRENCY_ORDER = ['KRW', 'USD', 'JPY'];
 
 // The calendar and bars share payout events; changing a view only selects a

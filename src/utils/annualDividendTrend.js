@@ -1,3 +1,6 @@
+// 연간 배당 추이 그래프에 쓰는 월별 집계.
+// 이미 받은 배당과 앞으로 받을 예상 배당을 한 해의 12개월에 배치하고,
+// 통화가 섞여 있어도 원화로 환산해 한 줄로 비교할 수 있게 만든다.
 import {
   getDividendExDate,
   getDividendEligibilityDate,

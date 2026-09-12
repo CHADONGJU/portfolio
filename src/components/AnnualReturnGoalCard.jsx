@@ -1,3 +1,7 @@
+// 목표 수익률 카드.
+// 그 해의 목표 수익률을 입력받아 실제 수익률과 달성률을 보여준다.
+// 매수원가를 몰라 수익률을 계산할 수 없는 해는 0%로 위장하지 않고
+// 사유를 문장으로 알려준다.
 import { ChevronLeft, ChevronRight, Target } from 'lucide-react';
 import { formatInputNumber, sanitizeNumericInput } from '../utils/formatters.js';
 import { getAnnualReturnUnavailableMessage } from './annualReturnMessages.js';

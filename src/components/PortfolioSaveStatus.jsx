@@ -1,3 +1,5 @@
+// 클라우드 저장 상태 표시(불러오는 중·저장 중·저장 완료·실패).
+// 저장이 실패한 채로 조용히 넘어가면 사용자는 기록이 남았다고 믿는다.
 import { getPortfolioSyncError } from '../utils/portfolioSyncErrors.js';
 
 const LABELS = {

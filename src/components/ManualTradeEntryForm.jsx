@@ -1,3 +1,5 @@
+// 누락된 매매를 직접 적어 넣는 입력 폼.
+// 원장에 없는 과거 거래를 메모로 남겨 종목별 성과와 실현손익에 반영한다.
 import { Plus, X } from 'lucide-react';
 import { formatInputNumber, sanitizeNumericInput } from '../utils/formatters';
 import FeatureInfo from './FeatureInfo';

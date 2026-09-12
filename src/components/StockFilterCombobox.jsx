@@ -1,3 +1,5 @@
+// 종목 검색·선택 콤보박스.
+// 키보드만으로도 고를 수 있도록 방향키·Enter·ESC를 처리한다.
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Check, ChevronDown, Search, X } from 'lucide-react';
 import { filterStockSearchOptions } from '../utils/stockSearchOptions';

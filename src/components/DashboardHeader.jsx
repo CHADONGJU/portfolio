@@ -1,3 +1,4 @@
+// 상단 헤더 — 포트폴리오 이름, 환율, 마지막 갱신 시각, 새로고침·설정·자산 추가.
 import { useState } from 'react';
 import { Check, LogOut, Pencil, Plus, RefreshCw, UserRound, X } from 'lucide-react';
 import { DEFAULT_PORTFOLIO_NAME } from '../constants';

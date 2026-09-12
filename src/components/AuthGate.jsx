@@ -1,3 +1,6 @@
+// 로그인 관문.
+// 인증이 끝나기 전에는 App을 렌더하지 않는다. 저장 키가 계정별로 나뉘어 있어,
+// userId가 확정되기 전에 상태를 초기화하면 다른 계정의 데이터를 읽을 수 있다.
 import { useState } from 'react';
 import { useAuth } from '../context/useAuth';
 import { DEFAULT_PORTFOLIO_NAME } from '../constants';

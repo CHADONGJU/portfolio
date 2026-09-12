@@ -1,3 +1,6 @@
+// 매매 기록과 메모를 한 줄로 묶는다.
+// 연결 id가 있으면 그것으로, 없는 옛 메모는 종목·날짜·매매구분으로 맞춘다.
+// 짝을 못 찾은 메모도 버리지 않고 별도 줄로 남겨 사용자가 볼 수 있게 한다.
 const toNumber = (value) => Number(String(value ?? '').replace(/,/g, '')) || 0;
 const numbersMatch = (left, right) => Math.abs(toNumber(left) - toNumber(right)) < 0.0001;
 

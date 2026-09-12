@@ -1,3 +1,4 @@
+// 최상단 탭 전환(내 포트폴리오 · 수익·배당 · 목표 · 캘린더).
 const TABS = [
   { id: 'portfolio', label: '내 포트폴리오' },
   { id: 'history', label: '수익·배당' },

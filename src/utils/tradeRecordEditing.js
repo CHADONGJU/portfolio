@@ -1,3 +1,5 @@
+// 이미 기록된 매매를 고칠 때의 검증과 변경분 생성.
+// 매수일을 매도일 뒤로 옮기는 것처럼 원장이 성립하지 않는 수정은 막는다.
 import { deriveFeeRatePercent, roundTradeCost } from './tradeCosts.js';
 import {
   buildPositionFromTradeRows,

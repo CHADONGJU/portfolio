@@ -1,3 +1,13 @@
+// 앱의 뿌리.
+//
+// 남아 있는 책임은 세 가지다.
+// 1) 저장되는 상태를 들고 클라우드와 동기화한다(assets, trades, memos, tradeLedger,
+//    배당, 목표 비중). 계정별 저장 키 분리도 여기서 정한다.
+// 2) 시세·환율 동기화 주기를 돌린다.
+// 3) 매수·매도·기록 편집 같은 쓰기 동작을 수행한다.
+//
+// 화면은 components/tabs 의 탭 네 개와 components/modals 의 모달들이 그린다.
+// 금액 계산은 hooks/usePortfolioMetrics 와 utils 의 순수 함수들이 맡는다.
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   Plus, Minus, TrendingUp, TrendingDown, Trash2,

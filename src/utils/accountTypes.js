@@ -1,3 +1,6 @@
+// 계좌 구분(일반·ISA·연금)과 그에 따른 배당 과세 취급.
+// ISA·연금 계좌는 배당소득세가 인출 시점까지 미뤄지므로, 배당 계산이
+// 원천징수를 뗄지 말지를 이 판정으로 정한다.
 export const ACCOUNT_TYPE_GENERAL = 'GENERAL';
 export const ACCOUNT_TYPE_ISA = 'ISA';
 export const ACCOUNT_TYPE_PENSION = 'PENSION';

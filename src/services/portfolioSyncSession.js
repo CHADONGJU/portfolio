@@ -1,3 +1,5 @@
+// 동기화 세션 관리.
+// 여러 탭·기기가 동시에 열려 있어도 서로의 쓰기를 덮어쓰지 않도록 조율한다.
 import { arePortfolioSnapshotsEquivalent } from '../utils/portfolioSnapshotComparison.js';
 import { getPortfolioSyncError } from '../utils/portfolioSyncErrors.js';
 import {

@@ -1,3 +1,6 @@
+// 주요 증시 일정 조회 클라이언트.
+// 프록시 워커를 통해 일정을 받아온다. 실패해도 앱이 멈추지 않도록 오류를
+// 유형으로 구분해 돌려준다.
 import { koreanDateStart } from '../utils/dates.js';
 import { fetchBufferedResponse } from '../utils/network.js';
 

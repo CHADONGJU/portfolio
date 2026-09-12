@@ -1,3 +1,5 @@
+// 주요 증시 일정 캘린더.
+// 나라별 일정과 사용자가 등록한 관심 키워드 일정을 한국시간으로 한 달치 보여준다.
 import { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, Plus, RotateCw, X } from 'lucide-react';
 import { fetchMarketCalendar } from '../services/marketCalendar';

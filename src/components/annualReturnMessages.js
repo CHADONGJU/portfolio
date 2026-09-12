@@ -1,3 +1,5 @@
+// 연간 수익률을 계산할 수 없을 때 보여줄 사유 문장.
+// "무엇이 없어서 계산을 못 했는지"를 알려줘야 사용자가 고칠 수 있다.
 export const getAnnualReturnUnavailableMessage = (performance) => {
   const reason = performance?.basisUnavailableReason;
   if (reason === 'missing-exchange-rate' || reason === 'missing-dividend-exchange-rate') {

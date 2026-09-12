@@ -1,3 +1,5 @@
+// Worker 쪽 증시 일정 조회.
+// 외부 제공처 응답을 앱이 쓰는 모양으로 정규화해 돌려준다.
 const TRADING_VIEW_CALENDAR_URL = 'https://economic-calendar.tradingview.com/events';
 const ALLOWED_COUNTRIES = ['US', 'KR', 'EU', 'CN', 'JP'];
 const MAX_RANGE_DAYS = 370;

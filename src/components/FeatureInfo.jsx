@@ -1,3 +1,5 @@
+// 물음표 아이콘을 눌러 여는 기능 설명 말풍선.
+// 화면이 좁아도 설명이 잘리지 않도록 정렬 방향을 고를 수 있다.
 import { useEffect, useId, useRef, useState } from 'react';
 import { Info, X } from 'lucide-react';
 

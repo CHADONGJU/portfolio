@@ -1,3 +1,6 @@
+// 시세 동기화 결과를 저장 값에 반영할지 판단한다.
+// 제공처가 가끔 0이나 몇 배 튀는 값을 주는데, 그대로 받으면 평가금액과 수익률이
+// 통째로 망가진다. 의심스러운 갱신은 버리고 기존 값을 지킨다.
 const toPositiveNumber = (value) => {
   const number = Number(value);
   return Number.isFinite(number) && number > 0 ? number : 0;

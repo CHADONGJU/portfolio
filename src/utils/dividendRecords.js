@@ -1,3 +1,10 @@
+// 배당 기록의 정체성·중복 제거·선별.
+//
+// 배당은 두 갈래로 들어온다. 앱이 배당락일과 주당배당금으로 계산한 "공식" 값과,
+// 사용자가 증권사 입금 내역을 보고 직접 넣은 "확정" 값이다. 같은 회차에 둘 다
+// 있으면 확정 값이 공식 값을 대체한다.
+//
+// 같은 날 여러 계좌로 들어온 배당은 서로 다른 건이므로 날짜만으로 합치지 않는다.
 import { getTradeRound } from './tradeReconciliation.js';
 import { getDividendReportingDate } from './dividendDates.js';
 import { normalizeAccountType } from './accountTypes.js';

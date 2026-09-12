@@ -1,3 +1,5 @@
+// AI 종목 요약에 보낼 입력을 만든다.
+// 수량·평단·현재가가 갖춰진 종목만 요약할 수 있으므로 그 판정도 함께 둔다.
 import { isRemovedAssetCategory } from '../constants.js';
 
 /**

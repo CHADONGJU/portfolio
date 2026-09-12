@@ -1,3 +1,6 @@
+// 수령 배당의 원화 환산과 합계.
+// 환율은 기록에 각인된 값 → 지급일의 과거 환율 → 오늘 환율(근사) 순으로 고른다.
+// 근사를 쓴 경우 approximate로 표시해 화면이 감추지 않게 한다.
 import { formatKoreanDate } from './dates.js';
 import { getDividendOfficialPaymentDate, getDividendReportingDate } from './dividendDates.js';
 import { isConfirmedDividendRecord, selectReceivedDividendRecords } from './dividendRecords.js';

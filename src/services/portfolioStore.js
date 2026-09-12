@@ -1,3 +1,5 @@
+// Firestore 읽기·쓰기.
+// 저장은 바뀐 필드만 보내고(diff), 옛 저장본은 읽을 때 현재 형식으로 올린다.
 import {
   collection,
   deleteField,
