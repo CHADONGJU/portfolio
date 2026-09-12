@@ -1,6 +1,9 @@
 // 매매·배당 기록이 어떤 보유 자산의 것인지 판정한다.
 // 티커가 양쪽에 있으면 티커로, 없으면 이름으로 맞춘다. 회차(round)까지 봐야
 // 전량 매도 후 재매수한 물량의 기록이 이전 회차에 섞이지 않는다.
+import { getTradeRound } from './tradeReconciliation.js';
+import { parseNumber } from './formatters.js';
+
 const normalizeTicker = (ticker = '') => String(ticker || '').trim().toUpperCase();
 
 /**
@@ -22,4 +25,34 @@ export const isRecordForAsset = (record = {}, asset = {}) => {
   if (assetTicker && recordTicker) return assetTicker === recordTicker;
 
   return Boolean(asset.name && record.name && asset.name === record.name);
+};
+
+/** 자산 한 건의 정체성. 같은 종목이라도 회차가 다르면 다른 자산이다. */
+export const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}#${getTradeRound(asset)}`;
+
+const getAssetUpdatedAtTime = (asset = {}) => {
+  const timestamp = new Date(asset.updatedAt || asset.createdAt || 0).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+};
+
+const compareAssetVersions = (left = {}, right = {}) => {
+  const leftTime = getAssetUpdatedAtTime(left);
+  const rightTime = getAssetUpdatedAtTime(right);
+  if (leftTime !== rightTime) return leftTime - rightTime;
+
+  return parseNumber(left.quantity) - parseNumber(right.quantity);
+};
+
+export const mergeUniqueAssets = (primary = [], secondary = []) => {
+  const assetByKey = new Map();
+
+  [...primary, ...secondary].forEach((asset) => {
+    const key = getAssetIdentity(asset);
+    const existing = assetByKey.get(key);
+    if (!existing || compareAssetVersions(existing, asset) <= 0) {
+      assetByKey.set(key, asset);
+    }
+  });
+
+  return [...assetByKey.values()];
 };

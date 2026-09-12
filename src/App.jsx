@@ -40,8 +40,7 @@ import useTheme from './hooks/useTheme';
 import usePortfolioCloudSync from './hooks/usePortfolioCloudSync';
 import PortfolioSaveStatus from './components/PortfolioSaveStatus';
 import { readPortfolioJournal } from './utils/portfolioSyncJournal';
-import { formatKoreanDate } from './utils/dates';
-import { editBuyLot, resolveBuyLotFxRate } from './utils/buyLotEditing';
+import { formatKoreanDate, getDateTimestampSeconds } from './utils/dates';
 import { PORTFOLIO_CURRENCIES, getAssetInputCurrency, getTargetItemCurrency, normalizeInputTicker, resolveManualTradeAsset } from './utils/currencies';
 import {
   DEFAULT_TARGET_PORTFOLIO,
@@ -78,7 +77,7 @@ import {
   fetchUsdKrwRate,
   fetchUsdKrwRateByDate,
 } from './services/marketData';
-import { formatInputNumber, formatMoney, parseNumber } from './utils/formatters';
+import { formatMoney, numbersMatch, parseNumber } from './utils/formatters';
 import {
   claimLegacyStorageKeys,
   getScopedStorageKey,
@@ -94,8 +93,6 @@ import {
   getTradeAssetKey,
   getTradeRound,
   recoverMissingAssetsFromTradeLedger,
-  reconcileAssetsAfterTradeDeletion,
-  reconcileAssetsWithTradeLedger,
   resolveNextTradeRound,
   resolveTradeRowKrwRate,
   scaleManualPurchaseKRW,
@@ -141,18 +138,12 @@ import { buildStockSearchOptions } from './utils/stockSearchOptions';
 import { calculateOverseasCapitalGainsTax } from './utils/overseasCapitalGainsTax';
 import { combineTradesWithMemos } from './utils/tradeMemos';
 import {
-  buildTradeRecordEditPatch,
-  countUnmatchedSells,
-  getEditableTradeFields,
-  toLegacySellTradePatch,
-  validateTradeRecordEdit,
 } from './utils/tradeRecordEditing';
 import {
-  isDeletedMemoRecord,
   selectActiveMemoRecords,
 } from './utils/memoRecords';
 import { getDividendRefreshState, getDividendRefreshVersion } from './utils/dividendRefresh';
-import { isRecordForAsset } from './utils/assetIdentity';
+import { getAssetIdentity, isRecordForAsset, mergeUniqueAssets } from './utils/assetIdentity';
 import {
   createMarketCalendarKeyword,
   normalizeMarketCalendarKeywords,
@@ -195,6 +186,8 @@ import {
 import { usePortfolioMetrics } from './hooks/usePortfolioMetrics';
 import { useTargetPortfolio } from './hooks/useTargetPortfolio';
 import { useDividendEntry } from './hooks/useDividendEntry';
+import { useTradeRecordEditing } from './hooks/useTradeRecordEditing';
+import { useBuyLotsEditor } from './hooks/useBuyLotsEditor';
 import { db } from './firebase';
 
 // 과거 거래의 환율을 거래일 기준으로 한 번 고쳐 받았는지 표시하는 플래그.
@@ -270,24 +263,11 @@ const buildCalendarCells = (monthKey) => {
  * 같은 우선순위여야 한다. 예전에는 App만 sellDate를 먼저 봐서, buyDate와 sellDate를
  * 함께 가진 레거시 기록을 화면 정렬과 원장 정렬이 서로 다르게 줄 세웠다.
  */
-const numbersMatch = (left, right) => Math.abs(parseNumber(left) - parseNumber(right)) < 0.0001;
 const findMatchingSellTrade = (memo, trades) => trades.find((trade) => {
   if (!memo.name || memo.name !== trade.name) return false;
   if (!memo.date || memo.date !== trade.sellDate) return false;
   if (parseNumber(memo.quantity) && !numbersMatch(memo.quantity, trade.quantity)) return false;
   if (parseNumber(memo.price) && !numbersMatch(memo.price, trade.sellPrice)) return false;
-  return true;
-});
-
-const findMatchingMemoForLedger = (entry, memos) => memos.find((memo) => {
-  if (isDeletedMemoRecord(memo)) return false;
-  if (memo.ledgerId && (String(memo.ledgerId) === String(entry.id) || String(memo.ledgerId) === String(entry.sourceId))) return true;
-  if (entry.sourceId === `memo-${memo.id}`) return true;
-  if (!entry.name || entry.name !== memo.name) return false;
-  if (!entry.date || entry.date !== memo.date) return false;
-  if (getTradeSide(entry) !== getTradeSide(memo)) return false;
-  if (parseNumber(entry.quantity) && parseNumber(memo.quantity) && !numbersMatch(entry.quantity, memo.quantity)) return false;
-  if (parseNumber(entry.price) && parseNumber(memo.price) && !numbersMatch(entry.price, memo.price)) return false;
   return true;
 });
 
@@ -431,7 +411,6 @@ const buildInitialTradeLedger = ({ assets, trades, memos }) => {
 
 // 회차까지 포함한 자산 식별자.
 // 같은 삼성전자라도 "1차 / 2차"는 서로 다른 자산으로 다뤄 평단가가 섞이지 않게 한다.
-const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}#${getTradeRound(asset)}`;
 
 /**
  * 해외 종목 단가를 달러/원화 중 어느 쪽으로 입력할지 고르는 토글.
@@ -440,32 +419,6 @@ const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}#
  */
 
 
-const getAssetUpdatedAtTime = (asset = {}) => {
-  const timestamp = new Date(asset.updatedAt || asset.createdAt || 0).getTime();
-  return Number.isFinite(timestamp) ? timestamp : 0;
-};
-
-const compareAssetVersions = (left = {}, right = {}) => {
-  const leftTime = getAssetUpdatedAtTime(left);
-  const rightTime = getAssetUpdatedAtTime(right);
-  if (leftTime !== rightTime) return leftTime - rightTime;
-
-  return parseNumber(left.quantity) - parseNumber(right.quantity);
-};
-
-const mergeUniqueAssets = (primary = [], secondary = []) => {
-  const assetByKey = new Map();
-
-  [...primary, ...secondary].forEach((asset) => {
-    const key = getAssetIdentity(asset);
-    const existing = assetByKey.get(key);
-    if (!existing || compareAssetVersions(existing, asset) <= 0) {
-      assetByKey.set(key, asset);
-    }
-  });
-
-  return [...assetByKey.values()];
-};
 
 const mergeUniqueRecords = (primary = [], secondary = []) => {
   const seen = new Set();
@@ -641,16 +594,6 @@ const isSameAssetRecord = (asset, record) => isRecordForAsset(record, asset);
 const getAssetLedgerRows = (asset, ledger = []) => ledger
   .filter((entry) => entry.date && isSameAssetRecord(asset, entry))
   .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-const getDateTimestampSeconds = (date = '') => {
-  const rawDate = String(date || '').trim();
-  const dateParts = rawDate.match(/\d+/g);
-  const normalizedDate = dateParts?.length >= 3
-    ? `${dateParts[0].padStart(4, '0')}-${dateParts[1].padStart(2, '0')}-${dateParts[2].padStart(2, '0')}`
-    : rawDate.replace(/\s*\/\s*/g, '-').replace(/\s+/g, '');
-  const timestamp = new Date(`${normalizedDate}T00:00:00`).getTime();
-  return Number.isFinite(timestamp) ? timestamp / 1000 : 0;
-};
 
 const getDividendStartDate = (asset, ledger = []) => {
   const firstBuy = getDividendLedgerRows(asset, ledger)
@@ -1136,11 +1079,6 @@ useEffect(() => { buyDateFxRatesRef.current = buyDateFxRates; }, [buyDateFxRates
 
 const [isSellingAsset, setIsSellingAsset] = useState(false);
 const [selectedAssetToSell, setSelectedAssetToSell] = useState(null);
-const [selectedAssetToManageBuys, setSelectedAssetToManageBuys] = useState(null);
-const [buyLotDrafts, setBuyLotDrafts] = useState([]);
-const [accountTypeDraft, setAccountTypeDraft] = useState(ACCOUNT_TYPE_GENERAL);
-// 증권사 앱의 '투자 원금'을 그대로 넣어 맞추고 싶을 때 쓰는 수동 입력값.
-const [manualPurchaseKrwDraft, setManualPurchaseKrwDraft] = useState('');
 
 const initialSellFormState = {
   sellPrice: '',
@@ -1207,23 +1145,6 @@ const addBuyFeeCurrency = addBuyForm.priceInputCurrency === 'KRW'
 const addBuyFeePreview = useMemo(() => calculateBuyFee(
   addBuyForm, addBuyForm.quantity, addBuyForm.averagePrice, addBuyFeeCurrency,
 ), [addBuyForm, addBuyFeeCurrency]);
-
-const managedAssetCurrency = selectedAssetToManageBuys?.currency || 'KRW';
-const buyLotDraftSummary = useMemo(() => {
-  const totalQuantity = buyLotDrafts.reduce((sum, lot) => sum + parseNumber(lot.quantity), 0);
-  const totalCost = buyLotDrafts.reduce((sum, lot) => (
-    sum + parseNumber(lot.quantity) * parseNumber(lot.price)
-  ), 0);
-  const totalBuyFee = buyLotDrafts.reduce((sum, lot) => (
-    sum + roundTradeCost(parseNumber(lot.brokerFee), managedAssetCurrency)
-  ), 0);
-
-  return {
-    totalQuantity,
-    averagePrice: totalQuantity > 0 ? totalCost / totalQuantity : 0,
-    totalBuyFee,
-  };
-}, [buyLotDrafts, managedAssetCurrency]);
 
   /**
    * 국내/해외는 수수료율이 다르므로 카테고리를 바꾸면 증권사 기본 요율로 다시 채운다.
@@ -2377,250 +2298,18 @@ const buyLotDraftSummary = useMemo(() => {
     addLog(`[${assetToRemove.name}] 자산과 관련 기록을 삭제했습니다.`, 'success');
   };
 
-  const removeTrade = (record, e) => {
-    if (e) e.stopPropagation();
-    const hasLinkedMemo = record.memoRecordId !== null && record.memoRecordId !== undefined;
-    const isSellRecord = getTradeSide(record) === 'sell';
-
-    if (record.sourceType === 'ledger') {
-      const nextLedger = tradeLedger.filter(entry => entry.id !== record.id);
-      setTradeLedger(nextLedger);
-      setAssets(prevAssets => {
-        const reconciledAssets = reconcileAssetsAfterTradeDeletion(
-          mergeUniqueAssets(prevAssets),
-          nextLedger,
-          record,
-        );
-        return reconciledAssets.filter((asset) => {
-          if (!isRecordForAsset(record, asset)) return true;
-          return nextLedger.some(entry => isRecordForAsset(entry, asset) && getTradeSide(entry) === 'buy');
-        });
-      });
-      setTrades(prevTrades => prevTrades.filter((trade) => {
-        if (record.sourceId?.startsWith('trade-')) {
-          const tradeId = record.sourceId.replace('trade-', '');
-          if (String(trade.id) === tradeId) return false;
-        }
-
-        const isSameSellRecord =
-          record.side === 'sell'
-          && trade.name === record.name
-          && trade.sellDate === record.date
-          && numbersMatch(trade.quantity, record.quantity)
-          && numbersMatch(trade.sellPrice, record.price);
-
-        return !isSameSellRecord;
-      }));
-    } else {
-      setTrades(prevTrades => prevTrades.filter(t => t.id !== record.id));
-    }
-
-    if (hasLinkedMemo) {
-      const deletedAt = new Date().toISOString();
-      setMemos((previous) => previous.map((memo) => (
-        String(memo.id) === String(record.memoRecordId)
-          ? { ...memo, memo: '', status: 'deleted', deletedAt, updatedAt: deletedAt }
-          : memo
-      )));
-      setExpandedTradeMemoId('');
-    }
-
-    addLog(
-      isSellRecord
-        ? `매도 기록${hasLinkedMemo ? '과 연결된 메모를 ' : '을 '}삭제하고 보유 수량을 다시 계산했습니다.`
-        : hasLinkedMemo
-          ? '매수 기록과 연결된 메모를 함께 삭제하고 보유 수량을 다시 계산했습니다.'
-          : '매수 기록을 삭제하고 보유 수량을 다시 계산했습니다.',
-      'success',
-    );
-  };
-
-  const removeTradeMemo = (record, e) => {
-    if (e) e.stopPropagation();
-    if (record.memoRecordId === null || record.memoRecordId === undefined) return;
-
-    const deletedAt = new Date().toISOString();
-    setMemos((previous) => previous.map((memo) => (
-      String(memo.id) === String(record.memoRecordId)
-        ? { ...memo, memo: '', status: 'deleted', deletedAt, updatedAt: deletedAt }
-        : memo
-    )));
-    setExpandedTradeMemoId('');
-    addLog(
-      record.isUnlinkedMemo
-        ? '보존된 미연결 기록을 삭제했습니다.'
-        : '메모만 삭제했습니다. 매매 기록은 유지됩니다.',
-      'success',
-    );
-  };
-
-  /**
-   * 과거 매매 기록의 거래일·단가·수수료·메모를 한 번에 고친다.
-   * 원장(보유 수량·평단의 원본), 옛 매도 기록(trades), 연결된 메모가 같은 거래를 따로
-   * 들고 있어서 셋을 함께 고쳐야 한다. 하나만 바꾸면 메모가 '미연결 기록'으로 떨어진다.
-   * 저장하면 true를 돌려 편집기를 닫게 한다.
-   */
-  const updateTradeRecord = async (record, draft) => {
-    const current = getEditableTradeFields(record);
-    const nextDate = draft.date;
-    const nextPrice = parseNumber(draft.price);
-    // 빈 칸은 '수수료 없음'으로 본다. 0원도 실제로 있는 값이다.
-    const nextBrokerFee = parseNumber(draft.brokerFee);
-    const memoText = String(draft.memo || '').trim();
-    const tradeChanged = nextDate !== current.date
-      || Math.abs(nextPrice - current.price) > 1e-9
-      || Math.abs(nextBrokerFee - current.brokerFee) > 1e-9;
-    const memoChanged = memoText !== String(record.memo || '').trim();
-    const hasMemoRecord = record.memoRecordId !== null && record.memoRecordId !== undefined;
-    const action = current.side === 'sell' ? '매도' : '매수';
-
-    if (!tradeChanged && !memoChanged) {
-      setExpandedTradeMemoId('');
-      return true;
-    }
-    if (tradeChanged) {
-      const validationError = validateTradeRecordEdit({ date: nextDate, price: nextPrice, brokerFee: nextBrokerFee });
-      if (validationError) {
-        addLog(validationError, 'error');
-        return false;
-      }
-    }
-
-    const editsLedger = tradeChanged && !record.isUnlinkedMemo && record.sourceType === 'ledger';
-    const editsLegacyTrade = tradeChanged && !record.isUnlinkedMemo && record.sourceType === 'trade';
-
-    // 해외 종목의 거래일을 옮기면 원화 원금·손익도 그날 환율로 다시 잡아야 한다.
-    let fxRate;
-    const currency = String(record.currency || 'KRW').toUpperCase();
-    if (editsLedger && currency !== 'KRW' && nextDate !== current.date) {
-      const rate = await fetchKrwRateByDate(currency, nextDate).catch(() => 0);
-      if (!(Number(rate) > 0)) {
-        addLog('바꾼 거래일의 환율을 받아오지 못했습니다. 잠시 후 다시 저장해주세요.', 'error');
-        return false;
-      }
-      fxRate = Number(rate);
-    }
-
-    const updatedAt = new Date().toISOString();
-    const editValues = { date: nextDate, price: nextPrice, brokerFee: nextBrokerFee };
-    const isSameLegacySell = (trade, legacyTradeId) => (
-      (legacyTradeId && String(trade.id) === legacyTradeId)
-      || (
-        trade.name === record.name
-        && trade.sellDate === current.date
-        && numbersMatch(trade.quantity, record.quantity)
-        && numbersMatch(trade.sellPrice, current.price)
-      )
-    );
-    const editLegacySell = (trade) => ({
-      ...trade,
-      ...toLegacySellTradePatch(buildTradeRecordEditPatch({ ...trade, side: 'sell' }, editValues)),
-      updatedAt,
-    });
-    let tradePatch = null;
-
-    if (editsLedger) {
-      // 환율을 기다리는 사이 원장이 바뀌었을 수 있으니 최신 원장에서 고친다.
-      const currentLedger = tradeLedgerRef.current;
-      const entry = currentLedger.find((row) => String(row.id) === String(record.id));
-      if (!entry) {
-        addLog('수정할 매매 기록을 찾지 못했습니다. 새로고침 후 다시 시도해주세요.', 'error');
-        return false;
-      }
-      tradePatch = buildTradeRecordEditPatch(entry, { ...editValues, fxRate });
-      const nextLedger = currentLedger.map((row) => (row === entry ? { ...entry, ...tradePatch, updatedAt } : row));
-      const assetKey = getTradeAssetKey(entry);
-      const rowsOfAsset = (ledger) => ledger.filter((row) => getTradeAssetKey(row) === assetKey);
-      if (countUnmatchedSells(rowsOfAsset(nextLedger)) > countUnmatchedSells(rowsOfAsset(currentLedger))) {
-        addLog('이 날짜로 옮기면 그때까지 산 수량보다 판 수량이 많아집니다. 거래일을 확인해주세요.', 'error');
-        return false;
-      }
-
-      setTradeLedger(nextLedger);
-      setAssets((prevAssets) => reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), nextLedger));
-      if (getTradeSide(entry) === 'sell') {
-        const sourceId = String(entry.sourceId || '');
-        const legacyTradeId = sourceId.startsWith('trade-') ? sourceId.slice('trade-'.length) : '';
-        setTrades((prevTrades) => prevTrades.map((trade) => (
-          isSameLegacySell(trade, legacyTradeId) ? editLegacySell(trade) : trade
-        )));
-      }
-    } else if (editsLegacyTrade) {
-      const legacyTrade = trades.find((trade) => String(trade.id) === String(record.id));
-      if (!legacyTrade) {
-        addLog('수정할 매매 기록을 찾지 못했습니다. 새로고침 후 다시 시도해주세요.', 'error');
-        return false;
-      }
-      tradePatch = buildTradeRecordEditPatch({ ...legacyTrade, side: 'sell' }, editValues);
-      setTrades((prevTrades) => prevTrades.map((trade) => (
-        String(trade.id) === String(record.id) ? editLegacySell(trade) : trade
-      )));
-    }
-
-    const deletesMemo = memoChanged && !memoText && hasMemoRecord && !record.isUnlinkedMemo;
-    if (hasMemoRecord) {
-      setMemos((previous) => previous.map((memo) => {
-        if (String(memo.id) !== String(record.memoRecordId)) return memo;
-        // 미연결 메모는 그 자체가 기록이라 거래일·단가를 메모에 직접 고친다.
-        const memoTradePatch = record.isUnlinkedMemo
-          ? (tradeChanged ? buildTradeRecordEditPatch(memo, editValues) : null)
-          : tradePatch;
-        if (deletesMemo) {
-          return { ...memo, ...memoTradePatch, memo: '', status: 'deleted', deletedAt: updatedAt, updatedAt };
-        }
-        return {
-          ...memo,
-          ...memoTradePatch,
-          memo: memoChanged ? memoText : memo.memo,
-          // 거래일을 옮기면 이름·날짜로는 더 이상 짝이 맞지 않으니 원장 id로 붙잡아 둔다.
-          ledgerId: record.isUnlinkedMemo ? (memo.ledgerId || '') : record.id,
-          updatedAt,
-        };
-      }));
-    } else if (memoText) {
-      const source = tradePatch ? { ...record, ...tradePatch } : record;
-      setMemos((previous) => [{
-        id: Date.now() + Math.random(),
-        assetId: source.assetId ?? null,
-        name: source.name,
-        ticker: source.ticker || '',
-        category: source.category || '',
-        currency: source.currency || 'KRW',
-        round: getTradeRound(source),
-        side: current.side,
-        action,
-        quantity: source.quantity,
-        price: getEditableTradeFields(source).price,
-        date: getEditableTradeFields(source).date,
-        pnl: getRecordPnl(source),
-        grossPnl: source.grossPnl,
-        brokerId: source.brokerId || '',
-        brokerName: source.brokerName || '',
-        brokerFeeRate: source.brokerFeeRate || 0,
-        brokerFeeRatePercent: source.brokerFeeRatePercent || 0,
-        brokerFee: source.brokerFee || 0,
-        sellTaxRatePercent: source.sellTaxRatePercent || 0,
-        sellTax: source.sellTax || 0,
-        memo: memoText,
-        ledgerId: record.id,
-        createdAt: updatedAt,
-        updatedAt,
-      }, ...previous]);
-    }
-
-    setExpandedTradeMemoId('');
-    if (tradeChanged) {
-      addLog(
-        editsLedger
-          ? `${record.name} ${action} 기록을 고치고 보유 수량·평단·손익을 다시 계산했습니다.`
-          : `${record.name} ${action} 기록을 고쳤습니다.`,
-        'success',
-      );
-    } else {
-      addLog(deletesMemo ? '메모를 삭제했습니다. 매매 기록은 유지됩니다.' : '매매 메모를 저장했습니다.', 'success');
-    }
-    return true;
-  };
+  // 기록 편집·삭제는 훅에 모여 있다.
+  const { removeTrade, removeTradeMemo, updateTradeRecord } = useTradeRecordEditing({
+    trades,
+    setTrades,
+    tradeLedger,
+    tradeLedgerRef,
+    setTradeLedger,
+    setAssets,
+    setMemos,
+    setExpandedTradeMemoId,
+    addLog,
+  });
 
   const getMeasuredKrwRate = (currency) => {
     const code = String(currency || 'KRW').toUpperCase();
@@ -2904,80 +2593,6 @@ const buyLotDraftSummary = useMemo(() => {
   setIsSellingAsset(true);
 };
 
-  const buildBuyLotDrafts = (asset) => {
-  const buyRows = getAssetBuyLedgerRows(asset, tradeLedger);
-  const sourceRows = buyRows.length > 0
-    ? buyRows
-    : [{
-      id: '',
-      sourceId: '',
-      date: asset.buyDate || defaultBuyDate,
-      quantity: asset.quantity,
-      price: asset.originalAveragePrice || asset.averagePrice,
-    }];
-
-  return sourceRows.map((row, index) => ({
-    draftId: String(row.id || row.sourceId || `fallback-${asset.id}-${index}`),
-    ledgerId: row.id ? String(row.id) : '',
-    sourceId: row.sourceId || '',
-    date: getRecordDate(row) || asset.buyDate || defaultBuyDate,
-    quantity: String(row.quantity ?? ''),
-    price: String(row.price ?? ''),
-    // 이 매수 건에 실제로 적용된 환율. 0이면 아직 못 받아온 상태다.
-    fxRate: Number(row.fxRate) > 0 ? Number(row.fxRate) : 0,
-    /**
-     * 유관기관제비용 요율은 체결된 시장·세션에 따라 건마다 다르다.
-     * 요율을 들고 다니며 다시 계산하면 증권사가 실제로 뗀 금액과 어긋나므로,
-     * 증권사 화면에 찍힌 수수료 금액을 그대로 들고 다닌다.
-     */
-    brokerFee: Number(row.brokerFee) || 0,
-  }));
-};
-
-  const openBuyLotsModal = (asset) => {
-  setSelectedAssetToManageBuys(asset);
-  setBuyLotDrafts(buildBuyLotDrafts(asset));
-  setAccountTypeDraft(normalizeAccountType(asset.accountType));
-  setManualPurchaseKrwDraft(
-    parseNumber(asset.manualPurchaseKRW) > 0
-      ? formatInputNumber(String(Math.round(parseNumber(asset.manualPurchaseKRW))))
-      : ''
-  );
-};
-
-  const closeBuyLotsModal = () => {
-  setSelectedAssetToManageBuys(null);
-  setBuyLotDrafts([]);
-  setAccountTypeDraft(ACCOUNT_TYPE_GENERAL);
-  setManualPurchaseKrwDraft('');
-};
-
-  const updateBuyLotDraft = (draftId, field, value) => {
-  setBuyLotDrafts(prevDrafts => prevDrafts.map(lot => (
-    lot.draftId === draftId ? editBuyLot(lot, field, value) : lot
-  )));
-};
-
-  const addBuyLotDraft = () => {
-  setBuyLotDrafts(prevDrafts => [
-    ...prevDrafts,
-    {
-      draftId: `new-${Date.now()}-${prevDrafts.length}`,
-      ledgerId: '',
-      sourceId: '',
-      date: defaultBuyDate,
-      quantity: '',
-      price: '',
-      fxRate: 0,
-      brokerFee: 0,
-    },
-  ]);
-};
-
-  const removeBuyLotDraft = (draftId) => {
-  setBuyLotDrafts(prevDrafts => prevDrafts.filter(lot => lot.draftId !== draftId));
-};
-
   const getBuyDateFxKey = (currency, date) => `${currency || ''}::${date || ''}`;
   const getBuyDateFxState = (currency, date) => {
     if (!currency || currency === 'KRW') return { rate: 1, status: 'ready' };
@@ -2985,176 +2600,25 @@ const buyLotDraftSummary = useMemo(() => {
     return buyDateFxRates[getBuyDateFxKey(currency, date)] || { rate: 0, status: 'idle' };
   };
 
-  const handleSaveBuyLots = () => {
-  if (!selectedAssetToManageBuys) return;
-  if (buyLotDrafts.length === 0) {
-    addLog('매수 기록은 최소 1개 이상 필요합니다.', 'error');
-    return;
-  }
-
-  const normalizedDrafts = buyLotDrafts.map((lot) => ({
-    ...lot,
-    quantity: parseNumber(lot.quantity),
-    price: parseNumber(lot.price),
-  }));
-
-  const hasInvalidLot = normalizedDrafts.some(lot => (
-    !lot.date
-    || getDateTimestampSeconds(lot.date) <= 0
-    || lot.quantity <= 0
-    || lot.price <= 0
-  ));
-
-  if (hasInvalidLot) {
-    addLog('매수일, 수량, 단가를 모두 올바르게 입력해주세요.', 'error');
-    return;
-  }
-
-  const totalBuyQuantity = normalizedDrafts.reduce((sum, lot) => sum + lot.quantity, 0);
-  const totalSellQuantity = getAssetLedgerRows(selectedAssetToManageBuys, tradeLedger)
-    .filter((entry) => getTradeSide(entry) === 'sell')
-    .reduce((sum, entry) => sum + (Number(entry.quantity) || 0), 0);
-
-  if (totalBuyQuantity + 0.000001 < totalSellQuantity) {
-    addLog('총 매수 수량이 이미 기록된 매도 수량보다 적을 수 없습니다.', 'error');
-    return;
-  }
-
-  const now = new Date().toISOString();
-  const existingBuyRows = getAssetBuyLedgerRows(selectedAssetToManageBuys, tradeLedger);
-  const existingBuyRowsById = new Map(existingBuyRows.map(row => [String(row.id), row]));
-  const hasUnresolvedChangedDate = normalizedDrafts.some((lot) => {
-    const existingRow = existingBuyRowsById.get(String(lot.ledgerId));
-    if (existingRow && getRecordDate(existingRow) === lot.date) return false;
-    return resolveBuyLotFxRate({
-      lot, existingRow, currency: selectedAssetToManageBuys.currency,
-      lookedUpRate: getBuyDateFxState(selectedAssetToManageBuys.currency, lot.date).rate,
-    }) <= 0;
+  // 매수 내역 편집기(수량·단가·날짜·수수료 직접 수정)는 훅에 모여 있다.
+  const {
+    selectedAssetToManageBuys, buyLotDrafts,
+    accountTypeDraft, setAccountTypeDraft,
+    buyLotDraftSummary,
+    openBuyLotsModal, closeBuyLotsModal,
+    updateBuyLotDraft, addBuyLotDraft, removeBuyLotDraft,
+    handleSaveBuyLots,
+  } = useBuyLotsEditor({
+    tradeLedger,
+    setTradeLedger,
+    setAssets,
+    setMemos,
+    getBuyDateFxState,
+    getAssetBuyLedgerRows,
+    getAssetLedgerRows,
+    defaultBuyDate,
+    addLog,
   });
-  if (hasUnresolvedChangedDate) {
-    addLog('변경한 매수일의 환율을 확인하지 못했습니다. 조회 완료 후 다시 저장해 주세요.', 'error');
-    return;
-  }
-  const sortedDrafts = [...normalizedDrafts].sort((a, b) => (
-    getDateTimestampSeconds(a.date) - getDateTimestampSeconds(b.date)
-  ));
-  const nextBuyRows = sortedDrafts.map((lot, index) => {
-    const existingRow = lot.ledgerId ? existingBuyRowsById.get(String(lot.ledgerId)) : null;
-    const fxRate = resolveBuyLotFxRate({
-      lot, existingRow, currency: selectedAssetToManageBuys.currency,
-      lookedUpRate: getBuyDateFxState(selectedAssetToManageBuys.currency, lot.date).rate,
-    });
-
-    return {
-      ...(existingRow || {}),
-      id: existingRow?.id || `buy-${selectedAssetToManageBuys.id}-${Date.now()}-${index}`,
-      sourceId: existingRow?.sourceId || lot.sourceId || undefined,
-      assetId: selectedAssetToManageBuys.id,
-      name: selectedAssetToManageBuys.name,
-      ticker: selectedAssetToManageBuys.ticker || '',
-      category: selectedAssetToManageBuys.category || '',
-      currency: selectedAssetToManageBuys.currency || 'KRW',
-      accountType: normalizeAccountType(accountTypeDraft),
-      accountTypeSource: 'user',
-      round: getTradeRound(selectedAssetToManageBuys),
-      side: 'buy',
-      action: '매수',
-      quantity: lot.quantity,
-      price: lot.price,
-      date: lot.date,
-      fxRate,
-      pnl: 0,
-      // 입력한 수수료 금액을 그대로 남기고, 요율은 그 금액에서 역산한다.
-      brokerFee: roundTradeCost(parseNumber(lot.brokerFee), selectedAssetToManageBuys.currency),
-      brokerFeeRatePercent: deriveFeeRatePercent(
-        parseNumber(lot.brokerFee), lot.quantity * lot.price,
-      ),
-      brokerFeeRate: deriveFeeRatePercent(
-        parseNumber(lot.brokerFee), lot.quantity * lot.price,
-      ) / 100,
-      createdAt: existingRow?.createdAt || now,
-      updatedAt: now,
-    };
-  });
-
-  const nextLedger = [
-    ...tradeLedger.filter(entry => !(
-      isSameAssetRecord(selectedAssetToManageBuys, entry)
-      && getTradeSide(entry) === 'buy'
-    )),
-    ...nextBuyRows,
-  ].sort((a, b) => new Date(getRecordDate(b)) - new Date(getRecordDate(a)));
-
-  setTradeLedger(nextLedger);
-  // 원금 수동 입력값은 원장 재계산과 별개로 자산에 직접 붙여 둔다. 비우면 자동 계산으로 돌아간다.
-  const manualPurchaseKRW = parseNumber(manualPurchaseKrwDraft);
-  // 원금 칸을 그대로 두고 매수 수량만 고친 경우, 예전 총액이 그대로 남아 원금이
-  // 부풀려졌다. 사용자가 원금을 직접 건드리지 않았다면 원장 재계산 결과를 따른다.
-  const openedManualPurchaseKRW = Math.round(parseNumber(selectedAssetToManageBuys.manualPurchaseKRW));
-  const keepsOpenedManualPurchase = Math.abs(manualPurchaseKRW - openedManualPurchaseKRW) <= 1;
-  const manageIdentity = getAssetIdentity(selectedAssetToManageBuys);
-  setAssets(prevAssets => reconcileAssetsWithTradeLedger(mergeUniqueAssets(prevAssets), nextLedger).map((asset) => {
-    if (asset.id !== selectedAssetToManageBuys.id && getAssetIdentity(asset) !== manageIdentity) return asset;
-    const reconciledManualPurchaseKRW = parseNumber(asset.manualPurchaseKRW);
-    const nextManualPurchaseKRW = keepsOpenedManualPurchase
-      ? reconciledManualPurchaseKRW
-      : manualPurchaseKRW;
-    return {
-      ...asset,
-      accountType: normalizeAccountType(accountTypeDraft),
-      accountTypeSource: 'user',
-      manualPurchaseKRW: nextManualPurchaseKRW > 0 ? nextManualPurchaseKRW : null,
-      updatedAt: new Date().toISOString(),
-    };
-  }));
-  setMemos(prevMemos => {
-    // 메모는 원장 행 id로 짝지어야 한다. 배열 인덱스로 맞추면 메모가 없는 매수 건이
-    // 섞였을 때 앞뒤가 밀려서 다른 매수 건에 남의 메모가 옮겨 붙는다.
-    const memoByLedgerId = new Map();
-    existingBuyRows.forEach((row) => {
-      const matched = findMatchingMemoForLedger(row, prevMemos);
-      if (matched) memoByLedgerId.set(String(row.id), matched);
-    });
-
-    const reusedMemoIds = new Set();
-    const nextBuyMemos = nextBuyRows.map((row, index) => {
-      const existingMemo = memoByLedgerId.get(String(row.id)) || null;
-      if (existingMemo) reusedMemoIds.add(existingMemo.id);
-
-      return {
-        ...(existingMemo || {}),
-        id: existingMemo?.id || Date.now() + Math.random() + index,
-        assetId: selectedAssetToManageBuys.id,
-        name: selectedAssetToManageBuys.name,
-        ticker: selectedAssetToManageBuys.ticker || '',
-        category: selectedAssetToManageBuys.category || '',
-        currency: selectedAssetToManageBuys.currency || 'KRW',
-        accountType: normalizeAccountType(accountTypeDraft),
-        accountTypeSource: 'user',
-        round: getTradeRound(selectedAssetToManageBuys),
-        side: 'buy',
-        action: '매수',
-        quantity: row.quantity,
-        price: row.price,
-        date: row.date,
-        pnl: 0,
-        memo: existingMemo?.memo || '',
-        createdAt: existingMemo?.createdAt || now,
-        updatedAt: now,
-      };
-    });
-
-    // 실제로 이어붙인 메모만 교체한다. 매수 건이 줄어 짝을 잃은 메모는 지우지 않고
-    // 남겨서, 과거 매매 기록에 '미연결 기록'으로 보이게 한다(내용 소실 방지).
-    return [
-      ...nextBuyMemos,
-      ...prevMemos.filter(memo => !reusedMemoIds.has(memo.id)),
-    ];
-  });
-
-  addLog(`'${selectedAssetToManageBuys.name}' 매수 기록을 저장했습니다.`, 'success');
-  closeBuyLotsModal();
-};
 
   const handleAddBuyToAsset = () => {
   if (!selectedAssetToUpdate) return;
