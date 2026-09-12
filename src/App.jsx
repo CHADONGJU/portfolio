@@ -65,7 +65,6 @@ import {
   fetchUsdKrwRateByDate,
 } from './services/marketData';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from './utils/formatters';
-import { canSummarizeAsset } from './utils/stockInsightPayload';
 import {
   claimLegacyStorageKeys,
   getScopedStorageKey,
@@ -79,7 +78,6 @@ import {
   buildCanonicalTradeRows,
   buildPositionFromTradeRows,
   getTradeAssetKey,
-  getTradeRecordDate,
   getTradeRound,
   recoverMissingAssetsFromTradeLedger,
   reconcileAssetsAfterTradeDeletion,
@@ -89,8 +87,15 @@ import {
   scaleManualPurchaseKRW,
 } from './utils/tradeReconciliation';
 import {
-  addMonthsClamped,
-} from './utils/dividendInterval';
+  TRADE_PAGE_SIZE,
+  getRecordDate,
+  getRecordPnl,
+  getTradeSide,
+} from './utils/tradeRecordView';
+import CalendarTab from './components/tabs/CalendarTab.jsx';
+import PortfolioTab from './components/tabs/PortfolioTab.jsx';
+import HistoryTab from './components/tabs/HistoryTab.jsx';
+import TargetTab from './components/tabs/TargetTab.jsx';
 import { buildLivePriceUpdate, summarizePriceSync } from './utils/livePriceSync';
 import { buildTradeSummary } from './utils/tradeSummary';
 import {
@@ -142,7 +147,6 @@ import {
 import {
   ACCOUNT_TYPE_GENERAL,
   ACCOUNT_TYPE_OPTIONS,
-  getAccountTypeLabel,
   isDividendTaxDeferredAccount,
   migrateUserConfirmedAccountTypes,
   normalizeAccountType,
@@ -155,12 +159,10 @@ import {
 } from './utils/dividendHoldings';
 import {
   getDividendEligibilityDate,
-  getDividendExDate,
   getDividendOfficialPaymentDate,
   getDividendReportingDate,
 } from './utils/dividendDates';
 import {
-  isConfirmedDividendRecord,
   getAutomaticDividendEventKey,
   mergeAutomaticDividendRecords,
   mergeDividendRecords,
@@ -179,24 +181,6 @@ const ANNUAL_DIVIDEND_FX_RATES_STORAGE_KEY = 'portfolio.annualDividendFxRatesV1'
 
 const isDomesticStockCategory = (category) => category?.includes('국내') && category?.includes('주식');
 
-const ASSET_CATEGORIES = PORTFOLIO_ASSET_CATEGORIES;
-
-const formatAssetQuantity = (quantity, category) => {
-  const number = Number(quantity);
-  if (!Number.isFinite(number)) return '0';
-
-  if (category === '해외주식') {
-    return number.toLocaleString(undefined, {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 6,
-    });
-  }
-
-  return number.toLocaleString(undefined, {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: Number.isInteger(number) ? 0 : 3,
-  });
-};
 
 const PORTFOLIO_STORAGE_KEYS = [
   ASSETS_STORAGE_KEY,
@@ -231,17 +215,9 @@ const normalizePortfolioName = (name) => {
   return trimmed;
 };
 
-const TRADE_SORT_OPTIONS = [
-  { value: 'newest', label: '최신 날짜 우선' },
-  { value: 'oldest', label: '가장 오래된 날짜 우선' },
-  { value: 'profit-desc', label: '실현 손익(이득 큰 순)' },
-  { value: 'profit-asc', label: '실현 손익(손해 큰 순)' },
-];
-const TRADE_PAGE_SIZE = 10;
 // 소수점 주식 수량 비교용 허용 오차(원장 계산의 EPSILON과 같은 값).
 const QUANTITY_EPSILON = 0.000001;
 const AUTO_SYNC_INTERVAL_MS = 10 * 60 * 1000;
-const CALENDAR_WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
 const parseNumber = (value) => parseFloat(String(value || '').replace(/,/g, '')) || 0;
 const formatDateKey = (date) => {
@@ -250,7 +226,6 @@ const formatDateKey = (date) => {
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
-const getMonthKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 
 const buildCalendarCells = (monthKey) => {
   const [year, month] = monthKey.split('-').map(Number);
@@ -274,16 +249,6 @@ const buildCalendarCells = (monthKey) => {
  * 같은 우선순위여야 한다. 예전에는 App만 sellDate를 먼저 봐서, buyDate와 sellDate를
  * 함께 가진 레거시 기록을 화면 정렬과 원장 정렬이 서로 다르게 줄 세웠다.
  */
-const getRecordDate = getTradeRecordDate;
-const getRecordPnl = (record) => Number(record.pnl ?? record.realizedPnl ?? 0);
-const getTradeSide = (record) => {
-  if (record.side === 'buy' || record.type === 'buy') return 'buy';
-  if (record.side === 'sell' || record.type === 'sell') return 'sell';
-  if (record.action === '매수') return 'buy';
-  if (record.action === '매도') return 'sell';
-  if (record.sellDate || getRecordPnl(record) !== 0) return 'sell';
-  return 'buy';
-};
 const numbersMatch = (left, right) => Math.abs(parseNumber(left) - parseNumber(right)) < 0.0001;
 const findMatchingSellTrade = (memo, trades) => trades.find((trade) => {
   if (!memo.name || memo.name !== trade.name) return false;
@@ -2037,10 +2002,6 @@ const buyLotDraftSummary = useMemo(() => {
     jpyKrwRate,
   ]);
 
-  const isDomesticStockChart = selectedCategory?.includes('국내') && selectedCategory?.includes('주식');
-  const isOverseasStockChart = selectedCategory?.includes('해외') && selectedCategory?.includes('주식');
-  const profitTone = currentCategoryProfitKRW >= 0 ? 'text-up' : 'text-down';
-  const profitBgTone = currentCategoryProfitKRW >= 0 ? 'bg-up-soft border-up-soft' : 'bg-down-soft border-down-soft';
   const visibleDetailAssets = useMemo(() => (
     [...(selectedCategory ? subChartData : enhancedAssets)]
       .filter((asset) => isPortfolioAssetCategory(asset.category))
@@ -2054,35 +2015,6 @@ const buyLotDraftSummary = useMemo(() => {
         return b.currentKRW - a.currentKRW;
       })
   ), [enhancedAssets, selectedCategory, subChartData, tradeLedger]);
-  const currentChartGradient = useMemo(() => {
-    if (currentChartData.length === 0) return 'conic-gradient(#e2e8f0 0% 100%)';
-
-    const hasMultipleSlices = currentChartData.length > 1;
-    return `conic-gradient(${currentChartData.flatMap((item) => {
-      const start = Math.max(0, item.startPercent);
-      const end = Math.min(100, item.startPercent + item.percent);
-      const gap = hasMultipleSlices ? Math.min(0.07, item.percent * 0.08) : 0;
-      const colorEnd = Math.max(start, end - gap);
-      const colorSlice = `${item.color} ${start.toFixed(3)}% ${colorEnd.toFixed(3)}%`;
-      if (gap <= 0.02 || colorEnd >= end) return [colorSlice];
-      return [colorSlice, `rgba(255,255,255,0.58) ${colorEnd.toFixed(3)}% ${end.toFixed(3)}%`];
-    }).join(', ')})`;
-  }, [currentChartData]);
-  const handleChartRingClick = (event) => {
-    if (selectedCategory || currentChartData.length === 0) return;
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    const deltaX = event.clientX - centerX;
-    const deltaY = event.clientY - centerY;
-    const percent = (((Math.atan2(deltaY, deltaX) * 180) / Math.PI + 90 + 360) % 360) / 3.6;
-    const clickedItem = currentChartData.find((item) => (
-      percent >= item.startPercent && percent <= item.startPercent + item.percent
-    ));
-
-    if (clickedItem) setSelectedCategory(clickedItem.name);
-  };
   const dividendIncome = useMemo(() => summarizeDividendIncome({
     dividends: reportedDividends,
     exchangeRate, jpyKrwRate, currencyRates, historicalRates: annualDividendFxRates,
@@ -4391,1717 +4323,150 @@ const buyLotDraftSummary = useMemo(() => {
         <TabNav activeTab={activeTab} onChange={setActiveTab} />
 
         {activeTab === 'portfolio' && (
-          <div className="space-y-5 anim-fade">
-            <section className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,2fr)]">
-              {/* 히어로 — 총 평가금액 */}
-              <div className="bg-surface rounded-[20px] p-6 lg:p-7 flex flex-col justify-center">
-                <p className="text-[14px] font-semibold text-ink-mute">총 평가금액</p>
-                <p className="mt-2 figure text-[32px] lg:text-[38px] font-bold text-ink leading-none wrap-break-word">
-                  {formatMoney(totalConvertedKRW, 'KRW')}
-                </p>
-                <div className="mt-4 flex flex-wrap items-center gap-2">
-                  <span
-                    className={`inline-flex items-center gap-1 h-8 px-3 rounded-full text-[14px] font-bold tnum ${
-                      dashboardSummary.totalReturnPercent >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'
-                    }`}
-                  >
-                    {dashboardSummary.totalReturnPercent >= 0
-                      ? <TrendingUp size={14} aria-hidden="true" />
-                      : <TrendingDown size={14} aria-hidden="true" />}
-                    {dashboardSummary.totalReturnPercent > 0 ? '+' : ''}
-                    {dashboardSummary.totalReturnPercent.toFixed(2)}%
-                  </span>
-                  <span className={`text-[14px] font-semibold tnum ${dashboardSummary.evaluationProfitKRW >= 0 ? 'text-up' : 'text-down'}`}>
-                    {dashboardSummary.evaluationProfitKRW > 0 ? '+' : ''}
-                    {formatMoney(dashboardSummary.evaluationProfitKRW, 'KRW')}
-                  </span>
-                  <span className="text-[13px] font-medium text-ink-mute">
-                    · 국내/해외 주식 기준
-                  </span>
-                </div>
-              </div>
-
-              {/* 보조 지표 3개 */}
-              <div className="grid grid-cols-3 gap-3">
-                {[
-                  {
-                    label: '보유 자산',
-                    value: `${portfolioAssets.length.toLocaleString()}개`,
-                    tone: 'text-ink',
-                    helper: '등록된 주식 수',
-                  },
-                  {
-                    label: '실현손익',
-                    value: `${totalConvertedNetProfit > 0 ? '+' : ''}${formatMoney(totalConvertedNetProfit, 'KRW')}`,
-                    tone: totalConvertedNetProfit >= 0 ? 'text-up' : 'text-down',
-                    helper: '매수·매도 시점 환율 기준',
-                  },
-                  {
-                    label: '배당 수익',
-                    value: dividendCurrencyParts.length > 0 ? dividendCurrencyParts.join(' / ') : formatMoney(0, 'KRW'),
-                    tone: dashboardSummary.dividendKRW >= 0 ? 'text-ink' : 'text-down',
-                    helper: '실제 입금 + 지급 완료 계산분',
-                  },
-                ].map((item) => (
-                  <div key={item.label} className="bg-surface rounded-[20px] p-4 lg:p-5 flex flex-col justify-center">
-                    <p className="text-[13px] font-semibold text-ink-mute">{item.label}</p>
-                    <p className={`mt-1.5 figure text-[17px] lg:text-[20px] font-bold leading-tight wrap-break-word ${item.tone}`}>
-                      {item.value}
-                    </p>
-                    <p className="mt-1.5 text-[12px] font-medium text-ink-mute">{item.helper}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <div className="grid lg:grid-cols-[minmax(0,1fr)_30rem] xl:grid-cols-[minmax(0,1fr)_34rem] gap-4 lg:gap-5">
-            {/* SVG 드릴다운 차트 */}
-            <div className="order-2 lg:order-2 bg-surface p-6 lg:p-7 rounded-[20px] flex flex-col items-center h-full">
-              <div className="w-full flex justify-between items-center mb-5 lg:mb-5">
-                <h2 className="text-base lg:text-[16px] font-bold text-ink flex items-center gap-2"><PieIcon className="text-ink-soft" size={18}/> {selectedCategory ? `${selectedCategory}` : '자산 비중'}</h2>
-                {selectedCategory && (
-                  <button onClick={() => setSelectedCategory(null)} className="text-[11px] md:text-[12px] font-bold text-ink-soft bg-line-soft px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center gap-1 hover:bg-line"><ArrowLeft size={10} /> 메인으로</button>
-                )}
-              </div>
-              {portfolioAssets.length === 0 ? (
-                <div className="w-full min-h-72 md:min-h-80 flex flex-col items-center justify-center text-center px-3">
-                  <div className="w-14 h-14 md:w-16 md:h-16 rounded-2xl bg-line-soft text-ink-soft flex items-center justify-center mb-4 md:mb-5">
-                    <Target size={24} className="md:w-7 md:h-7" />
-                  </div>
-                  <p className="text-base md:text-lg font-bold text-ink">첫 자산을 추가해보세요</p>
-                  <p className="mt-2 text-xs md:text-sm font-medium text-ink-mute leading-relaxed max-w-xs">
-                    국내주식이나 해외주식을 등록하면 비중, 수익률, 배당 기록이 이 화면에 바로 쌓입니다.
-                  </p>
-                  <button
-                    onClick={() => {
-                      setIsAdding(true);
-                    }}
-                    className="mt-6 inline-flex items-center gap-2 h-12 px-5 bg-brand text-surface rounded-2xl text-[15px] font-bold hover:bg-brand-strong active:scale-[0.99] transition-all"
-                  >
-                    <Plus size={16} /> 자산 추가
-                  </button>
-                </div>
-              ) : (
-		                <div className="relative w-64 h-64 lg:w-80 lg:h-80 xl:w-88 xl:h-88">
-                  <div
-                    className={`absolute inset-0 rounded-full transition-all duration-700 ${!selectedCategory ? 'cursor-pointer hover:opacity-90' : 'opacity-95'}`}
-                    style={{ background: currentChartGradient }}
-                    onClick={handleChartRingClick}
-                    /*
-                     * 링은 클릭 좌표로 분류를 고르므로 키 이벤트에는 구조적으로
-                     * 반응할 수 없다. role="button" + tabIndex만 달아두면 포커스는
-                     * 가는데 Enter를 눌러도 아무 일이 없는 '죽은 정거장'이 된다.
-                     * 같은 선택을 아래 범례의 진짜 버튼들이 이미 제공하므로,
-                     * 링은 마우스 편의 장치로만 두고 보조기술에는 숨긴다.
-                     */
-                    aria-hidden="true"
-                  />
-                  <div className="absolute inset-[12%] rounded-full bg-surface shadow-inner shadow-line" />
-	                  <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none p-4 lg:p-6">
-	                    <span className="text-[11px] md:text-[12px] text-ink-mute font-bold tracking-[0.06em] mb-1">{selectedCategory ? `${selectedCategory}` : 'Total'}</span>
-	                    <div className="flex flex-col items-center gap-0.5">
-	                      {currentCategoryKRW > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-ink tracking-tight whitespace-nowrap">{formatMoney(currentCategoryKRW, 'KRW')}</span>}
-	                      {currentCategoryKRW > 0 && currentCategoryUSD > 0 && <span className="text-[11px] text-ink-mute font-bold">+</span>}
-	                      {currentCategoryUSD > 0 && <span className="text-base md:text-lg lg:text-[clamp(1rem,1.35vw,1.35rem)] font-bold text-ink tracking-tight whitespace-nowrap">{formatMoney(currentCategoryUSD, 'USD')}</span>}
-	                    </div>
-                    {isDomesticStockChart ? (
-	                      <div className={`mt-2 md:mt-3 max-w-[82%] px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center justify-center gap-1.5 ${profitBgTone}`}>
-                        <span className="text-[11px] md:text-[11px] font-bold text-ink-mute">총 수익금액</span>
-                        <span className={`text-[12px] md:text-[13px] font-bold ${profitTone}`}>
-                          {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
-                        </span>
-                      </div>
-                    ) : isOverseasStockChart ? (
-	                      <div className={`mt-2 md:mt-3 max-w-[82%] px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center justify-center gap-1.5 ${currentCategoryProfitUSD >= 0 ? 'bg-up-soft border-up-soft' : 'bg-down-soft border-down-soft'}`}>
-                        <span className="text-[11px] md:text-[11px] font-bold text-ink-mute">총 수익금액</span>
-                        <span className={`text-[12px] md:text-[13px] font-bold ${currentCategoryProfitUSD >= 0 ? 'text-up' : 'text-down'}`}>
-                          {currentCategoryProfitUSD > 0 ? '+' : ''}{formatMoney(currentCategoryProfitUSD, 'USD')}
-                        </span>
-                      </div>
-                    ) : (
-                      <>
-	                        <div className="mt-2 md:mt-3 max-w-[86%] bg-canvas px-2 py-1 md:px-3 md:py-1.5 rounded-full flex items-center justify-center gap-1.5">
-	                          <span className="text-[11px] md:text-[11px] font-bold text-ink-mute whitespace-nowrap">총 평가가치</span>
-	                          <span className="text-[12px] md:text-[13px] lg:text-[13px] font-bold text-ink-soft whitespace-nowrap">{formatMoney(currentCategoryTotalConverted, 'KRW')}</span>
-	                        </div>
-	                        <div className={`mt-1.5 max-w-[86%] px-2 py-1 md:px-3 md:py-1.5 rounded-full border flex items-center justify-center gap-1.5 ${profitBgTone}`}>
-	                          <span className="text-[11px] md:text-[11px] font-bold text-ink-mute whitespace-nowrap">총 수익금액</span>
-	                          <span className={`text-[12px] md:text-[13px] font-bold ${profitTone}`}>
-                            {currentCategoryProfitKRW > 0 ? '+' : ''}{formatMoney(currentCategoryProfitKRW, 'KRW')}
-                          </span>
-                          {isOverseasStockChart && currentCategoryProfitUSD !== 0 && (
-                            <span className={`text-[12px] md:text-[13px] font-bold ${profitTone}`}>
-                              / {currentCategoryProfitUSD > 0 ? '+' : ''}{formatMoney(currentCategoryProfitUSD, 'USD')}
-                            </span>
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
-              <div className="mt-6 lg:mt-6 w-full space-y-1.5">
-                {currentChartData.map(data => (
-                  <button key={data.id || data.name} onClick={() => !selectedCategory && setSelectedCategory(data.name)} className={`w-full flex items-center justify-between p-3 lg:px-3 lg:py-2.5 rounded-xl border transition-all ${!selectedCategory ? 'bg-canvas border-line hover:bg-surface hover:border-line' : 'bg-surface border-line'}`}>
-                    <div className="flex items-center gap-3">
-                      <div className="w-2.5 h-2.5 md:w-3 md:h-3 rounded-full shadow-inner" style={{ backgroundColor: data.color }}></div>
-                      <span className="text-[13px] md:text-xs font-bold text-ink-soft">{data.name}</span>
-                    </div>
-                    <span className="text-[12px] md:text-[13px] font-bold text-ink-mute">{data.percent.toFixed(1)}%</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* List 섹션 */}
-            <div className="order-1 lg:order-1 space-y-6 min-w-0">
-              <div className="bg-surface rounded-[20px] overflow-hidden">
-                <div className="p-5 lg:px-5 lg:py-4 border-b border-line flex justify-between items-center bg-surface">
-                  <h3 className="text-base lg:text-[16px] font-bold text-ink">{selectedCategory ? `${selectedCategory} 상세 목록` : '보유 자산 상세'}</h3>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full table-fixed text-left">
-                    <thead className="hidden md:table-header-group">
-                      <tr className="text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.06em] border-b border-line bg-canvas/50">
-                        <th className="px-4 py-3 md:px-5 md:py-3.5 w-[30%]">종목/자산</th>
-                        <th className="px-4 py-3 md:px-5 md:py-3.5 w-[38%]">상세 가치</th>
-                        <th className="px-4 py-3 md:px-4 md:py-3.5 text-right w-[20%]">수익률</th>
-                        <th className="px-4 py-3 md:px-3 md:py-3.5 text-center w-[12%]">관리</th>
-                      </tr>
-                    </thead>
-                    <tbody className="block md:table-row-group divide-y divide-line-soft">
-                      {visibleDetailAssets.map((asset) => {
-                        // 해외(외화) 종목은 행마다 $ / ₩ 를 눌러 바꿔 볼 수 있다.
-                        const nativeCurrency = asset.originalCurrency || asset.currency || 'KRW';
-                        const canToggleCurrency = nativeCurrency !== 'KRW';
-                        const isKrwView = canToggleCurrency && assetCurrencyView[asset.id] === 'KRW';
-                        const viewCurrency = isKrwView ? 'KRW' : nativeCurrency;
-                        const rate = Number(asset.krwRate) > 0 ? Number(asset.krwRate) : 1;
-                        const todayRate = Number(asset.todayKrwRate) > 0 ? Number(asset.todayKrwRate) : rate;
-                        const nativeAveragePrice = asset.nativeAveragePrice
-                          || Number(asset.originalAveragePrice)
-                          || Number(asset.averagePrice)
-                          || 0;
-
-                        /**
-                         * ₩ 보기는 증권사 앱과 같은 기준이다.
-                         * 원금은 매수 시점 환율로 실제 낸 원화, 평가금액은 오늘 환율.
-                         * 그래서 손익에 환차손익이 함께 들어간다.
-                         * $ 보기는 환율을 걷어낸 순수 주가 손익만 보여준다.
-                         */
-                        const view = isKrwView
-                          ? {
-                            purchase: asset.purchaseKRW,
-                            averagePrice: asset.krwAveragePrice,
-                            current: asset.currentKRW,
-                            price: asset.nativeCurrentPrice * todayRate,
-                            profit: asset.profitKRW,
-                            returnPercent: asset.returnPercentKRW,
-                          }
-                          : {
-                            purchase: asset.purchaseNative,
-                            averagePrice: nativeAveragePrice,
-                            current: asset.currentNative,
-                            price: asset.nativeCurrentPrice,
-                            profit: asset.profitNative,
-                            returnPercent: asset.returnPercent,
-                          };
-                        // 매수 시점 환율을 다 모르면 원금이 오늘 환율로 환산된 근사값이다.
-                        const isApproxKrwPrincipal = isKrwView && asset.purchaseKRWSource === 'today-rate';
-
-                        return (
-                        <tr key={asset.id} className="block md:table-row px-4 py-5 md:p-0 hover:bg-canvas/60 transition-all group">
-                          <td className="block md:table-cell px-0 py-0 md:px-5 md:py-4 whitespace-nowrap align-middle">
-                            <div className="flex items-center gap-3">
-                              <div className="w-11 h-11 md:w-9 md:h-9 shrink-0 rounded-2xl md:rounded-xl flex items-center justify-center text-surface font-bold text-xl md:text-lg shadow-sm group-hover:scale-[1.02] transition-transform" style={{ backgroundColor: asset.color }}>
-                                {asset.name[0]}
-                              </div>
-                              <div className="min-w-0 flex-1">
-                                <p className="font-bold text-ink text-base md:text-[16px] leading-none truncate">{asset.name}</p>
-                                <p className="text-xs md:text-[13px] text-ink-mute font-bold mt-2 md:mt-1.5 truncate">
-                                  {asset.ticker} • {formatAssetQuantity(asset.quantity, asset.category)}주
-                                </p>
-                                <p className="text-[12px] md:text-[13px] text-ink-mute font-bold mt-1 truncate">
-                                  최초 매수일 {asset.displayBuyDate || asset.buyDate || '-'}
-                                </p>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="block md:table-cell px-0 py-4 md:px-5 md:py-4 align-middle">
-                            {canToggleCurrency && (
-                              <div className="flex items-center justify-end gap-1 mb-2 px-4 md:px-0">
-                                <div className="seg inline-flex items-center p-0.5 rounded-[10px]" role="group" aria-label="통화 전환">
-                                  {[
-                                    { key: 'NATIVE', label: nativeCurrency === 'JPY' ? '¥' : '$' },
-                                    { key: 'KRW', label: '₩' },
-                                  ].map((option) => {
-                                    const active = option.key === 'KRW' ? isKrwView : !isKrwView;
-                                    return (
-                                      <button
-                                        key={option.key}
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setAssetCurrencyView(prev => ({ ...prev, [asset.id]: option.key }));
-                                        }}
-                                        aria-pressed={active}
-                                        title={option.key === 'KRW' ? '원화로 보기' : '현지 통화로 보기'}
-                                        className={`seg-item px-2.5 py-1 rounded-lg text-[12px] md:text-[13px] font-bold leading-none ${
-                                          active ? 'text-ink' : 'text-ink-mute hover:text-ink-soft'
-                                        }`}
-                                      >
-                                        {option.label}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            )}
-                            <div className="grid grid-cols-2 gap-x-4 md:gap-x-5 gap-y-3 md:gap-y-1.5 bg-canvas/80 md:bg-transparent px-4 py-3.5 md:p-0 rounded-xl md:rounded-none group-transition-colors w-full min-w-0">
-                              <div className="flex flex-col">
-                                <span className="text-[11px] md:text-[11px] text-ink-mute font-bold whitespace-nowrap overflow-hidden text-ellipsis">
-                                  총 매입
-                                  {isKrwView && asset.purchaseKRWSource === 'manual' && ' · 직접 입력'}
-                                  {isApproxKrwPrincipal && ' · 오늘 환율'}
-                                </span>
-                                <span className="font-bold text-ink-soft text-xs md:text-[14px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(view.purchase, viewCurrency)}</span>
-                              </div>
-                              <div className="flex flex-col text-right">
-                                <span className="text-[11px] md:text-[11px] text-ink-mute font-bold">평단가</span>
-                                <span className="font-bold text-ink-soft text-xs md:text-[14px] mt-1 whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(view.averagePrice, viewCurrency)}</span>
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[11px] md:text-[11px] text-ink-soft font-bold">총 가치</span>
-                                <span className="font-bold text-ink text-xs md:text-[14px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(view.current, viewCurrency)}</span>
-                              </div>
-                              <div className="flex flex-col text-right">
-                                <span className="text-[11px] md:text-[11px] text-ink-soft font-bold">현재가</span>
-                                <span className="font-bold text-ink text-xs md:text-[14px] mt-1 leading-none whitespace-nowrap overflow-hidden text-ellipsis">{formatMoney(view.price, viewCurrency)}</span>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="block md:table-cell px-0 pb-4 md:px-4 md:py-4 text-left md:text-right whitespace-nowrap align-middle">
-                            <div className="flex flex-row md:flex-col items-stretch md:items-end gap-2">
-                              <div className={`inline-flex items-center justify-center gap-1.5 flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[14px] font-bold ${view.returnPercent >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
-                                {view.returnPercent >= 0 ? <TrendingUp size={14}/> : <TrendingDown size={14}/>} {Math.abs(view.returnPercent).toFixed(2)}%
-                              </div>
-                              <div className={`inline-flex items-center justify-center flex-1 md:flex-none md:w-full px-2 md:px-2.5 py-2.5 md:py-1.5 rounded-xl md:rounded-lg text-xs md:text-[14px] font-bold ${view.profit >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
-                                {view.profit > 0 ? '+' : ''}{formatMoney(view.profit, viewCurrency)}
-                              </div>
-                            </div>
-                          </td>
-                          <td className="block md:table-cell px-0 py-0 md:px-3 md:py-4 text-right md:text-center whitespace-nowrap align-middle">
-                          <div className="flex flex-wrap md:flex-col items-center justify-end md:justify-center gap-2 md:gap-1">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openAddBuyModal(asset);
-                              }}
-                              className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-ink hover:bg-line-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
-                              title="추가 매수"
-                            >
-                              <Plus size={16} className="md:w-4.5 md:h-4.5" />
-                              <span className="md:hidden">추가 매수</span>
-                            </button>
-
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openSellModal(asset);
-                              }}
-                              className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-warn hover:bg-warn-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
-                              title="일부 매도"
-                            >
-                              <Minus size={16} className="md:w-4.5 md:h-4.5" />
-                              <span className="md:hidden">일부 매도</span>
-                            </button>
-
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                openBuyLotsModal(asset);
-                              }}
-                              className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-brand hover:bg-brand-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
-                              title="매수 기록 관리"
-                            >
-                              <CalendarDays size={16} className="md:w-4.5 md:h-4.5" />
-                              <span className="md:hidden">매수 기록</span>
-                            </button>
-
-                            {canSummarizeAsset(asset) && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setInsightAsset(asset);
-                                }}
-                                className="inline-flex items-center justify-center gap-1.5 text-ink-soft hover:text-brand hover:bg-brand-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
-                                title="AI 요약"
-                              >
-                                <Sparkles size={16} className="md:w-4.5 md:h-4.5" />
-                                <span className="md:hidden">AI 요약</span>
-                              </button>
-                            )}
-
-                            <button
-                              onClick={(e) => requestRemoveAsset(asset.id, e)}
-                              className="inline-flex items-center justify-center gap-1.5 text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors px-2.5 py-2 rounded-xl text-[13px] font-bold"
-                              title="자산 삭제"
-                            >
-                              <Trash2 size={16} className="md:w-4.5 md:h-4.5" />
-                            </button>
-                          </div>
-                        </td>
-                        </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  {visibleDetailAssets.length === 0 && (
-                    <div className="p-6 md:p-12 text-center">
-                      <div className="mx-auto w-12 h-12 md:w-14 md:h-14 rounded-2xl bg-canvas text-ink-mute flex items-center justify-center mb-4">
-                        <Wallet size={24} />
-                      </div>
-                      <p className="text-ink font-bold text-sm md:text-base">아직 등록된 주식이 없습니다.</p>
-                      <p className="mt-2 text-ink-mute font-medium text-xs md:text-sm">국내주식이나 해외주식을 추가하면 상세 가치와 수익률이 표시됩니다.</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            </div>
-          </div>
+          <PortfolioTab
+            totalConvertedKRW={totalConvertedKRW}
+            totalConvertedNetProfit={totalConvertedNetProfit}
+            dashboardSummary={dashboardSummary}
+            dividendCurrencyParts={dividendCurrencyParts}
+            portfolioAssets={portfolioAssets}
+            visibleDetailAssets={visibleDetailAssets}
+            selectedCategory={selectedCategory}
+            setSelectedCategory={setSelectedCategory}
+            currentChartData={currentChartData}
+            currentCategoryKRW={currentCategoryKRW}
+            currentCategoryUSD={currentCategoryUSD}
+            currentCategoryTotalConverted={currentCategoryTotalConverted}
+            currentCategoryProfitKRW={currentCategoryProfitKRW}
+            currentCategoryProfitUSD={currentCategoryProfitUSD}
+            assetCurrencyView={assetCurrencyView}
+            setAssetCurrencyView={setAssetCurrencyView}
+            setIsAdding={setIsAdding}
+            setInsightAsset={setInsightAsset}
+            openAddBuyModal={openAddBuyModal}
+            openSellModal={openSellModal}
+            openBuyLotsModal={openBuyLotsModal}
+            requestRemoveAsset={requestRemoveAsset}
+          />
         )}
 
         {/* 수익 및 기록 탭 */}
         {activeTab === 'history' && (
-          <div className="space-y-8 anim-fade">
-            <h3 className="text-lg md:text-xl font-bold text-ink flex items-center gap-2"><TrendingUp className="text-ink-soft" size={20} /> 평가손익(미실현) 요약</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-              <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
-                <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><Banknote size={20} /></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">국내주식 평가손익</p>
-                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${dashboardSummary.krwEvaluationProfit >= 0 ? 'text-up' : 'text-down'}`}>
-                  {dashboardSummary.krwEvaluationProfit > 0 ? '+' : ''}{formatMoney(dashboardSummary.krwEvaluationProfit, 'KRW')}
-                </p>
-              </div>
-              <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
-                <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><DollarSign size={20} /></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">해외주식 평가손익</p>
-                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${dashboardSummary.usdEvaluationProfit >= 0 ? 'text-up' : 'text-down'}`}>
-                  {dashboardSummary.usdEvaluationProfit > 0 ? '+' : ''}{formatMoney(dashboardSummary.usdEvaluationProfit, 'USD')}
-                </p>
-              </div>
-            </div>
-
-            <h3 className="text-lg md:text-xl font-bold text-ink flex items-center gap-2"><ArrowRightLeft className="text-ink-soft" size={20} /> 종목 매매(실현) 수익 요약</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
-              <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
-                <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><Banknote size={20} /></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">원화 매매 총수익</p>
-                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${krwGrossProfit >= 0 ? 'text-up' : 'text-down'}`}>
-                  {krwGrossProfit > 0 ? '+' : ''}{formatMoney(krwGrossProfit, 'KRW')}
-                </p>
-              </div>
-              <div className="bg-surface p-5 md:p-7 rounded-[20px] flex flex-col justify-center">
-                <div className="w-10 h-10 md:w-12 md:h-12 bg-canvas text-ink-soft rounded-xl md:rounded-2xl flex items-center justify-center mb-3 md:mb-4"><DollarSign size={20} /></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">달러 매매 총수익</p>
-                <p className={`text-2xl md:text-3xl font-bold tracking-tighter ${usdGrossProfit >= 0 ? 'text-up' : 'text-down'}`}>
-                  {usdGrossProfit > 0 ? '+' : ''}{formatMoney(usdGrossProfit, 'USD')}
-                </p>
-              </div>
-              <div className="bg-ink p-5 md:p-7 rounded-2xl shadow-sm flex flex-col justify-center text-surface relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-4 opacity-10"><Wallet size={50}/></div>
-                <p className="text-ink-mute text-[12px] md:text-[13px] font-bold tracking-[0.06em] mb-1">총 환산 매매 순수익</p>
-                <p className={`text-3xl md:text-4xl font-bold tracking-tighter ${totalConvertedNetProfit >= 0 ? 'text-up' : 'text-down'}`}>
-                  {totalConvertedNetProfit > 0 ? '+' : ''}{formatMoney(totalConvertedNetProfit, 'KRW')}
-                </p>
-              </div>
-            </div>
-
-            <div className="bg-surface rounded-[20px] overflow-hidden">
-              <div className="p-5 md:p-7 border-b border-line flex items-center gap-2">
-                <h3 className="text-base md:text-lg font-bold text-ink">
-                  {annualReturnYear}년 해외주식 양도소득세 (추정)
-                </h3>
-                <FeatureInfo text="같은 해 해외 종목 손익을 통산해 기본공제 250만원을 뺀 뒤 22%(양도세 20% + 지방소득세 2%)를 매깁니다. 국내주식과는 통산되지 않고, 환차익도 과세 대상이라 매수일·매도일 환율을 각각 적용합니다. 실제 신고는 이듬해 5월입니다." />
-              </div>
-              <div className="p-5 md:p-7 grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <div>
-                  <p className="text-[11px] font-bold text-ink-mute">통산 양도차익</p>
-                  <p className={`figure text-lg md:text-xl font-bold mt-1 ${overseasCapitalGainsTax.netGainKRW >= 0 ? 'text-up' : 'text-down'}`}>
-                    {overseasCapitalGainsTax.netGainKRW > 0 ? '+' : ''}{formatMoney(overseasCapitalGainsTax.netGainKRW, 'KRW')}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-bold text-ink-mute">남은 기본공제</p>
-                  <p className="figure text-lg md:text-xl font-bold text-ink mt-1">
-                    {formatMoney(overseasCapitalGainsTax.remainingDeductionKRW, 'KRW')}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-bold text-ink-mute">과세표준</p>
-                  <p className="figure text-lg md:text-xl font-bold text-ink mt-1">
-                    {formatMoney(overseasCapitalGainsTax.taxBaseKRW, 'KRW')}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-bold text-ink-mute">예상 세액</p>
-                  <p className="figure text-lg md:text-xl font-bold text-ink mt-1">
-                    {formatMoney(overseasCapitalGainsTax.taxKRW, 'KRW')}
-                  </p>
-                </div>
-              </div>
-              <p className="px-5 pb-5 md:px-7 md:pb-7 text-[11px] font-semibold text-ink-mute leading-relaxed">
-                매도 {overseasCapitalGainsTax.tradeCount.toLocaleString()}건 기준
-                {overseasCapitalGainsTax.estimated ? ' · 환율이나 취득가액이 없는 기록이 있어 일부는 추정했습니다.' : ''}
-                {overseasCapitalGainsTax.unresolvedCount > 0
-                  ? ` · 취득가액을 알 수 없는 ${overseasCapitalGainsTax.unresolvedCount.toLocaleString()}건은 뺐습니다.`
-                  : ''}
-              </p>
-            </div>
-
-            <div className="bg-surface rounded-[20px] overflow-hidden">
-              <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-surface">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base md:text-lg font-bold text-ink">종목별 총 손익</h3>
-                  <FeatureInfo text="평가손익, 실현손익, 세후 배당을 합산합니다." />
-                </div>
-                <div className="relative w-full md:w-72">
-                  <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-ink-mute" />
-                  <input
-                    value={performanceSearchTerm}
-                    onChange={(e) => setPerformanceSearchTerm(e.target.value)}
-                    placeholder="종목명 또는 티커 검색"
-                    className="w-full pl-10 pr-4 py-3 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold text-ink-soft"
-                  />
-                </div>
-              </div>
-              <div className="max-h-120 overflow-auto scroll-soft">
-                <table className="w-full text-left table-auto">
-                  <thead className="sticky top-0 z-10 bg-canvas text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.06em]">
-                    <tr>
-                      <th className="px-4 py-4 md:px-8 md:py-5">종목</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">보유/매도</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">평가 손익</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">실현 손익</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">세후 배당</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">총 손익</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line-soft">
-                    {filteredPerformanceSummary.map((summary) => {
-                      const isForeignCurrency = summary.currency !== 'KRW';
-                      const unrealizedDisplay = isForeignCurrency ? summary.unrealizedNative : summary.unrealizedKRW;
-                      const realizedDisplay = isForeignCurrency ? summary.realizedNative : summary.realizedKRW;
-                      const dividendDisplay = isForeignCurrency ? summary.dividendNative : summary.dividendKRW;
-                      const totalDisplay = isForeignCurrency ? summary.totalNative : summary.totalKRW;
-                      const displayCurrency = isForeignCurrency ? summary.currency : 'KRW';
-                      const totalTone = totalDisplay >= 0 ? 'text-up bg-up-soft' : 'text-down bg-down-soft';
-                      return (
-                        <tr key={summary.key || summary.name} className="hover:bg-canvas transition-colors">
-                          <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
-                            <p className="text-sm md:text-base font-bold text-ink">{summary.name}</p>
-                            <p className="text-[11px] md:text-[12px] font-bold text-ink-mute mt-1">
-                              {summary.ticker || summary.category || '기록 종목'}
-                              {summary.displayDate && ` • ${summary.displayDate} ${summary.displayDateLabel}`}
-                            </p>
-                          </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
-                            {/* 이미 정리된 포지션은 매도 수량이 주인공이므로 위로 올린다.
-                                보유 중인 종목은 반대로 보유 수량이 먼저다. */}
-                            {summary.isClosedPosition ? (
-                              <>
-                                <div>매도 {summary.totalSellQuantity.toLocaleString()}주</div>
-                                <div className="text-ink-mute mt-1">보유 {summary.quantity.toLocaleString()}주</div>
-                              </>
-                            ) : (
-                              <>
-                                <div>보유 {summary.quantity.toLocaleString()}주</div>
-                                <div className="text-ink-mute mt-1">매도 {summary.totalSellQuantity.toLocaleString()}주</div>
-                              </>
-                            )}
-                          </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
-                            {unrealizedDisplay > 0 ? '+' : ''}{formatMoney(unrealizedDisplay, displayCurrency)}
-                          </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
-                            {realizedDisplay > 0 ? '+' : ''}{formatMoney(realizedDisplay, displayCurrency)}
-                          </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
-                            {dividendDisplay > 0 ? '+' : ''}{formatMoney(dividendDisplay, displayCurrency)}
-                          </td>
-                          <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
-                            <div className="flex flex-col items-end gap-1">
-                              {isForeignCurrency && (
-                                <>
-                                  <span className={`inline-flex px-3 py-1.5 rounded-xl text-xs md:text-sm font-bold ${totalTone}`}>
-                                    {summary.totalNative > 0 ? '+' : ''}{formatMoney(summary.totalNative, summary.currency)}
-                                  </span>
-                                  <span className="text-[12px] md:text-xs font-bold text-ink-mute">
-                                    원화 기준 합계 {summary.totalKRW > 0 ? '+' : ''}{formatMoney(summary.totalKRW, 'KRW')}
-                                  </span>
-                                </>
-                              )}
-                              {!isForeignCurrency && (
-                                <span className={`inline-flex px-3 py-1.5 rounded-xl text-xs md:text-sm font-bold ${totalTone}`}>
-                                  {summary.totalKRW > 0 ? '+' : ''}{formatMoney(summary.totalKRW, 'KRW')}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {filteredPerformanceSummary.length === 0 && (
-                  <p className="p-8 md:p-10 text-center text-ink-mute font-bold text-xs md:text-sm">검색 결과가 없습니다.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="bg-surface p-5 md:p-7 rounded-[20px]">
-              <div className="mb-6">
-                <DividendIncomeSummary
-                  year={annualReturnYear}
-                  summary={selectedAnnualPerformance.dividendIncome}
-                  earliestYear={earliestAnnualYear}
-                  onYearChange={setAnnualReturnYear}
-                />
-              </div>
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 md:mb-8 gap-3 md:gap-4">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-lg md:text-xl font-bold flex items-center gap-2 md:gap-3">
-                    <Receipt className="text-ink-soft" size={20}/>
-                    {selectedDividendAsset ? `${selectedDividendAsset} 배당 상세 기록` : '종목별 누적 배당 요약'}
-                  </h3>
-                  <FeatureInfo text="실제 입금액을 우선하고, 나머지는 공식 분배금과 기준일 보유수량으로 계산합니다." />
-                </div>
-                
-                <div className="flex flex-wrap items-center gap-2 md:gap-3">
-                  <input
-                    ref={dividendImportInputRef}
-                    type="file"
-                    accept="application/json,.json"
-                    onChange={handleConfirmedDividendImport}
-                    className="hidden"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => dividendImportInputRef.current?.click()}
-                    className="text-[11px] md:text-[12px] font-bold text-ink-soft bg-line-soft px-3 py-1.5 md:px-4 md:py-2 rounded-full flex items-center gap-1 hover:bg-line transition-all"
-                  >
-                    <ArrowRightLeft size={12} /> 복구 파일 불러오기
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openActualDividendForm}
-                    className="text-[11px] md:text-[12px] font-bold text-white bg-brand px-3 py-1.5 md:px-4 md:py-2 rounded-full flex items-center gap-1 hover:opacity-90 transition-all"
-                  >
-                    <Plus size={12} /> 실제 입금 추가
-                  </button>
-                  {selectedDividendAsset && (
-                    <>
-                    <select 
-                      value={dividendFilter} 
-                      onChange={e => setDividendFilter(e.target.value)}
-                      className="px-3 py-1.5 md:px-4 md:py-2 bg-canvas rounded-lg md:rounded-xl text-[12px] md:text-xs font-bold outline-none text-ink-soft"
-                    >
-                      <option value="이번 달">이번 달</option>
-                      <option value="올해">올해</option>
-                      <option value="전체">전체 기간</option>
-                    </select>
-                    <button onClick={() => { setSelectedDividendAsset(null); setDividendFilter('전체'); }} className="text-[11px] md:text-[12px] font-bold text-ink-soft bg-line-soft px-3 py-1.5 md:px-4 md:py-2 rounded-full flex items-center gap-1 hover:bg-line transition-all">
-                      <ArrowLeft size={12} /> 전체 보기
-                    </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {!selectedDividendAsset ? (
-                <div className="max-h-155 overflow-y-auto pr-1 md:pr-2">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                  {currentDividendSummaryGroups.length > 0 && (
-                    <DividendSummaryGrid
-                      groups={currentDividendSummaryGroups}
-                      onSelect={setSelectedDividendAsset}
-                    />
-                  )}
-
-                  {historicalDividendCount > 0 && (
-                    <details className="col-span-full rounded-2xl border border-line bg-canvas/60 overflow-hidden">
-                      <summary className="cursor-pointer list-none px-5 py-4 md:px-6 md:py-5 flex items-center justify-between gap-3 font-bold text-sm md:text-base text-ink hover:bg-canvas">
-                        <span>과거 보유 · 배당 수령 내역</span>
-                        <span className="text-[11px] md:text-xs text-ink-mute">{historicalDividendCount}종목 · 클릭하여 보기</span>
-                      </summary>
-                      <div className="border-t border-line p-4 md:p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                        <DividendSummaryGrid
-                          groups={historicalDividendSummaryGroups}
-                          onSelect={setSelectedDividendAsset}
-                        />
-                      </div>
-                    </details>
-                  )}
-
-                  {currentDividendSummaryGroups.length === 0 && historicalDividendCount === 0 && (
-                    <div className="col-span-full py-8 md:py-12 text-center text-ink-mute font-bold text-xs md:text-sm">
-                      {isFetching ? '배당 데이터를 갱신 중입니다...' : '매수일 이후 배당 내역이 없거나 데이터를 불러올 수 없습니다.'}
-                    </div>
-                  )}
-                  </div>
-                </div>
-              ) : (
-                <div className="bg-canvas rounded-2xl p-1 md:p-2">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left table-auto">
-                      <thead className="text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.06em] border-b border-line/50">
-                        <tr>
-                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">기준 수량</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">주당 세후</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5">지급 기준 일자</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5">종목명</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">세전</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">세금</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5 text-right">세후</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5 text-center">상태</th>
-                          <th className="px-4 py-4 md:px-8 md:py-5 text-center">관리</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-line-soft">
-                        {filteredHistory.length > 0 ? filteredHistory.map(div => (
-                          <tr key={div.id} className="hover:bg-surface transition-colors group">
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number(div.quantity) > 0 ? `${Number(div.quantity).toLocaleString()}주` : '-'}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number(div.perShareNetAmount) > 0 ? formatMoney(div.perShareNetAmount, div.currency) : '-'}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">
-                              {(div.actualPaymentDate || div.paymentDate)
-                                ? `지급일 ${getDividendReportingDate(div)}`
-                                : `배당락일 ${getDividendExDate(div)}`}
-                              <span className="block mt-1 text-[11px] text-ink-mute">
-                                {`배당기준일 ${div.recordDate || getDividendEligibilityDate(div) || getDividendExDate(div)}`}
-                              </span>
-                              <span className="block mt-1 text-[11px] text-ink-mute">
-                                배당지급일 {getDividendOfficialPaymentDate(div) || '미정'}
-                              </span>
-                            </td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-bold text-ink whitespace-nowrap">{div.name}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number.isFinite(Number(div.grossAmount)) ? formatMoney(div.grossAmount, div.currency) : '-'}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-down whitespace-nowrap">{Number.isFinite(Number(div.taxAmount)) ? `-${formatMoney(div.taxAmount, div.currency)}` : '-'}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-bold text-ink whitespace-nowrap">{formatMoney(div.amount, div.currency)}</td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-center whitespace-nowrap">
-                              <span className="text-[11px] md:text-[12px] bg-up-soft text-up px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl font-bold">
-                                {isConfirmedDividendRecord(div)
-                                  ? '실제 입금·확정'
-                                  : `${getAccountTypeLabel(div.accountType)} · 자동 계산`}
-                              </span>
-                            </td>
-                            <td className="px-4 py-4 md:px-8 md:py-5 text-center whitespace-nowrap">
-                              {isConfirmedDividendRecord(div) ? (
-                                <button
-                                  type="button"
-                                  onClick={() => removeConfirmedDividend(div.id)}
-                                  className="p-2 text-ink-mute hover:text-danger hover:bg-danger-soft rounded-xl transition-colors"
-                                  title="실제 입금 기록 삭제"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              ) : '-'}
-                            </td>
-                          </tr>
-                        )) : (
-                          <tr>
-                              <td colSpan="9" className="px-4 py-12 md:px-8 md:py-16 text-center">
-                              <p className="text-ink-mute font-bold mb-2 text-xs md:text-sm">해당하는 배당 지급 내역이 없습니다.</p>
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="bg-surface rounded-[20px] overflow-hidden">
-              <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:justify-between md:items-center gap-3 bg-surface">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base md:text-lg font-bold text-ink">과거 매매 기록 · 메모</h3>
-                  <FeatureInfo text="매수·매도 내역과 당시 판단 근거를 한곳에서 관리합니다. 연필 버튼으로 거래일·단가·수수료·메모를 고칠 수 있습니다." />
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsManualTradeEntryOpen((previous) => !previous)}
-                    className="inline-flex items-center justify-center gap-2 px-4 py-3 bg-ink text-surface rounded-xl font-bold text-xs shadow-sm"
-                  >
-                    {isManualTradeEntryOpen ? <X size={16} /> : <PlusCircle size={16} />}
-                    {isManualTradeEntryOpen ? '입력 닫기' : '누락 매매 기록 추가'}
-                  </button>
-                </div>
-              </div>
-              {isManualTradeEntryOpen && (
-                <ManualTradeEntryForm
-                  value={manualMemo}
-                  stockOptions={manualTradeStockOptions}
-                  onChange={setManualMemo}
-                  onSubmit={handleAddManualMemo}
-                  onClose={() => setIsManualTradeEntryOpen(false)}
-                />
-              )}
-              <div className="p-5 md:p-6 border-b border-line bg-surface space-y-4">
-                <div className="flex flex-col md:flex-row gap-3">
-                  <StockFilterCombobox
-                    value={tradeStockFilter}
-                    onChange={setTradeStockFilter}
-                    options={tradeStockFilterOptions}
-                    ariaLabel="과거 매매 기록 종목 필터"
-                  />
-                  <select
-                    value={tradeSideFilter}
-                    onChange={(e) => setTradeSideFilter(e.target.value)}
-                    aria-label="매수 또는 매도 필터"
-                    className="px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
-                  >
-                    <option value="all">전체 거래</option>
-                    <option value="buy">매수</option>
-                    <option value="sell">매도</option>
-                  </select>
-                  <select
-                    value={tradeSortMode}
-                    onChange={(e) => setTradeSortMode(e.target.value)}
-                    className="px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
-                  >
-                    {TRADE_SORT_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className={`grid grid-cols-1 gap-3 ${tradeStockFilter !== 'all' ? 'md:grid-cols-3' : ''}`}>
-                  {tradeStockFilter !== 'all' && (
-                    <>
-                      <div className="bg-canvas rounded-xl p-4">
-                        <p className="text-[12px] font-bold text-ink-mute mb-1">총 매수 수량</p>
-                        <p className="text-lg font-bold text-ink">{tradeSummary.totalBuyQuantity.toLocaleString()}</p>
-                      </div>
-                      <div className="bg-canvas rounded-xl p-4">
-                        <p className="text-[12px] font-bold text-ink-mute mb-1">총 매도 수량</p>
-                        <p className="text-lg font-bold text-ink">{tradeSummary.totalSellQuantity.toLocaleString()}</p>
-                      </div>
-                    </>
-                  )}
-                  <div className="bg-canvas rounded-xl p-4">
-                    <p className="text-[12px] font-bold text-ink-mute mb-1">실현 손익</p>
-                    <p className={`text-lg font-bold ${tradeSummary.totalProfit >= 0 ? 'text-up' : 'text-down'}`}>
-                      {tradeSummary.totalProfit > 0 ? '+' : ''}{formatMoney(tradeSummary.totalProfit, 'KRW')}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left table-auto">
-                  <thead className="bg-canvas/50 text-ink-mute text-[11px] md:text-[12px] font-bold tracking-[0.06em]">
-                    <tr>
-                      <th className="px-4 py-4 md:px-8 md:py-5">종목</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5">매수/매도일</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">매수가/매도가</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-right">실현 손익</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5">메모</th>
-                      <th className="px-4 py-4 md:px-8 md:py-5 text-center">관리</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line-soft">
-                    {displayedTrades.map((trade) => {
-                      const side = getTradeSide(trade);
-                      const action = side === 'sell' ? '매도' : '매수';
-                      const date = getRecordDate(trade);
-                      const price = side === 'sell'
-                        ? (trade.price || trade.sellPrice)
-                        : (trade.price || trade.buyPrice);
-                      const pnl = getRecordPnl(trade);
-                      const brokerFee = Number(trade.brokerFee) || 0;
-                      const sellTax = Number(trade.sellTax) || 0;
-                      const rowKey = `${trade.sourceType}-${trade.id}`;
-                      const isMemoExpanded = expandedTradeMemoId === rowKey;
-
-                      return (
-                        <React.Fragment key={rowKey}>
-                          <tr className={`transition-colors ${isMemoExpanded ? 'bg-canvas/70' : 'hover:bg-canvas'}`}>
-                            <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
-                              <div className="flex items-center gap-2">
-                                <span className={`inline-flex px-2 py-1 rounded-lg text-[12px] font-bold ${side === 'sell' ? 'bg-down-soft text-down' : 'bg-up-soft text-up'}`}>
-                                  {action}
-                                </span>
-                                <div>
-                                  <p className="text-sm md:text-base font-bold text-ink">{trade.name}</p>
-                                  <div className="flex items-center gap-1.5 mt-1">
-                                    {trade.ticker && (
-                                      <p className="text-[11px] md:text-[12px] font-bold text-ink-mute">{trade.ticker}</p>
-                                    )}
-                                    {trade.isUnlinkedMemo && (
-                                      <span className="inline-flex px-2 py-0.5 rounded-md bg-warn-soft text-warn text-[10px] font-bold">미연결 기록</span>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 md:px-8 md:py-6 text-[12px] md:text-xs text-ink-soft font-bold whitespace-nowrap">
-                              <span className="text-ink-mute mr-1 md:mr-2">{action}일:</span>{date || '-'}
-                            </td>
-                            <td className="px-4 py-4 md:px-8 md:py-6 text-right text-xs md:text-sm font-bold text-ink-soft space-y-1 whitespace-nowrap">
-                              <div>{formatMoney(price, trade.currency)}</div>
-                              <div className="text-ink-mute">{Number(trade.quantity || 0).toLocaleString()}주</div>
-                            </td>
-                            <td className="px-4 py-4 md:px-8 md:py-6 text-right whitespace-nowrap">
-                              {side === 'sell' ? (
-                                <div className="flex flex-col items-end gap-1">
-                                  <span className={`inline-flex font-bold px-2 py-1 md:px-3 md:py-1.5 rounded-lg md:rounded-xl text-[12px] md:text-xs ${pnl >= 0 ? 'bg-up-soft text-up' : 'bg-down-soft text-down'}`}>
-                                    {pnl > 0 ? '+' : ''}{formatMoney(pnl, trade.currency)}
-                                  </span>
-                                  {brokerFee > 0 && (
-                                    <span className="text-[11px] font-bold text-ink-mute">
-                                      수수료 -{formatMoney(brokerFee, trade.currency)}
-                                    </span>
-                                  )}
-                                  {sellTax > 0 && (
-                                    <span className="text-[11px] font-bold text-ink-mute">
-                                      제세금 -{formatMoney(sellTax, trade.currency)}
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-[12px] md:text-xs font-bold text-ink-mute">-</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-4 md:px-8 md:py-6 min-w-48 max-w-72">
-                              <button
-                                type="button"
-                                onClick={() => setExpandedTradeMemoId((previous) => previous === rowKey ? '' : rowKey)}
-                                title={trade.memo || '메모 추가'}
-                                className={`w-full inline-flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors ${trade.memo ? 'bg-brand-soft text-ink-soft' : 'bg-canvas text-ink-mute hover:text-ink'}`}
-                              >
-                                <NotebookPen size={15} className="shrink-0" />
-                                <span className="truncate text-[11px] md:text-xs font-bold">{trade.memo || '메모 추가'}</span>
-                              </button>
-                            </td>
-                            <td className="px-4 py-4 md:px-8 md:py-6 text-center whitespace-nowrap">
-                              <button
-                                type="button"
-                                onClick={() => setExpandedTradeMemoId((previous) => previous === rowKey ? '' : rowKey)}
-                                aria-expanded={isMemoExpanded}
-                                className={`transition-colors p-1.5 md:p-2 rounded-xl ${isMemoExpanded ? 'text-brand bg-brand-soft' : 'text-ink-mute hover:text-brand hover:bg-brand-soft'}`}
-                                title={`${action}일·${action}가·수수료·메모 수정`}
-                                aria-label={`${trade.name} ${action} 기록 수정`}
-                              >
-                                <Pencil size={16} />
-                              </button>
-                              {!trade.isUnlinkedMemo ? (
-                                <button onClick={(e) => removeTrade(trade, e)} className="text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors p-1.5 md:p-2 rounded-xl" title={side === 'sell' ? '매도 기록 삭제 · 보유 수량 다시 계산' : '매수 기록 삭제 · 보유 수량 다시 계산'}><Trash2 size={16} /></button>
-                              ) : (
-                                <div className="inline-flex items-center justify-center gap-2">
-                                  <span className="text-[11px] font-bold text-ink-mute">메모만 보존</span>
-                                  <button
-                                    type="button"
-                                    onClick={(e) => removeTradeMemo(trade, e)}
-                                    className="text-ink-mute hover:text-danger hover:bg-danger-soft transition-colors p-1.5 md:p-2 rounded-xl"
-                                    title="보존된 미연결 기록 삭제"
-                                  >
-                                    <Trash2 size={16} />
-                                  </button>
-                                </div>
-                              )}
-                            </td>
-                          </tr>
-                          {isMemoExpanded && (
-                            <tr>
-                              <td colSpan="6" className="px-4 pb-4 md:px-8 md:pb-6 bg-canvas/40">
-                                <TradeRecordEditor
-                                  key={rowKey}
-                                  record={trade}
-                                  onSave={(draft) => updateTradeRecord(trade, draft)}
-                                  onDelete={(event) => removeTradeMemo(trade, event)}
-                                  onClose={() => setExpandedTradeMemoId('')}
-                                />
-                              </td>
-                            </tr>
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                  </tbody>
-                </table>
-                {visibleTrades.length === 0 && <p className="p-8 md:p-10 text-center text-ink-mute font-bold text-xs md:text-sm">표시할 매매 기록이 없습니다.</p>}
-              </div>
-              {visibleTrades.length > 0 && (
-                <div className="px-5 py-4 md:px-8 md:py-5 border-t border-line bg-canvas/40 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-                  <p className="text-[12px] md:text-xs font-bold text-ink-mute">
-                    최근 {displayedTrades.length.toLocaleString()}개 표시 중 / 전체 {visibleTrades.length.toLocaleString()}개
-                  </p>
-                  <div className="flex gap-2">
-                    {hasMoreTrades && (
-                      <button
-                        onClick={() => setTradeVisibleCount(count => count + TRADE_PAGE_SIZE)}
-                        className="px-4 py-2 bg-canvas rounded-xl text-[12px] md:text-xs font-bold text-ink-soft hover:text-ink transition-colors"
-                      >
-                        더보기
-                      </button>
-                    )}
-                    {displayedTrades.length > TRADE_PAGE_SIZE && (
-                      <button
-                        onClick={() => setTradeVisibleCount(TRADE_PAGE_SIZE)}
-                        className="px-4 py-2 bg-canvas rounded-xl text-[12px] md:text-xs font-bold text-ink-mute hover:text-ink-soft transition-colors"
-                      >
-                        접기
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-          </div>
+          <HistoryTab
+            dashboardSummary={dashboardSummary}
+            totalConvertedNetProfit={totalConvertedNetProfit}
+            krwGrossProfit={krwGrossProfit}
+            usdGrossProfit={usdGrossProfit}
+            overseasCapitalGainsTax={overseasCapitalGainsTax}
+            annualReturnYear={annualReturnYear}
+            setAnnualReturnYear={setAnnualReturnYear}
+            earliestAnnualYear={earliestAnnualYear}
+            selectedAnnualPerformance={selectedAnnualPerformance}
+            performanceSearchTerm={performanceSearchTerm}
+            setPerformanceSearchTerm={setPerformanceSearchTerm}
+            filteredPerformanceSummary={filteredPerformanceSummary}
+            dividendFilter={dividendFilter}
+            setDividendFilter={setDividendFilter}
+            selectedDividendAsset={selectedDividendAsset}
+            setSelectedDividendAsset={setSelectedDividendAsset}
+            filteredHistory={filteredHistory}
+            currentDividendSummaryGroups={currentDividendSummaryGroups}
+            historicalDividendSummaryGroups={historicalDividendSummaryGroups}
+            historicalDividendCount={historicalDividendCount}
+            openActualDividendForm={openActualDividendForm}
+            removeConfirmedDividend={removeConfirmedDividend}
+            dividendImportInputRef={dividendImportInputRef}
+            handleConfirmedDividendImport={handleConfirmedDividendImport}
+            isFetching={isFetching}
+            tradeStockFilter={tradeStockFilter}
+            setTradeStockFilter={setTradeStockFilter}
+            tradeStockFilterOptions={tradeStockFilterOptions}
+            tradeSideFilter={tradeSideFilter}
+            setTradeSideFilter={setTradeSideFilter}
+            tradeSortMode={tradeSortMode}
+            setTradeSortMode={setTradeSortMode}
+            tradeSummary={tradeSummary}
+            visibleTrades={visibleTrades}
+            displayedTrades={displayedTrades}
+            hasMoreTrades={hasMoreTrades}
+            setTradeVisibleCount={setTradeVisibleCount}
+            expandedTradeMemoId={expandedTradeMemoId}
+            setExpandedTradeMemoId={setExpandedTradeMemoId}
+            updateTradeRecord={updateTradeRecord}
+            removeTrade={removeTrade}
+            removeTradeMemo={removeTradeMemo}
+            isManualTradeEntryOpen={isManualTradeEntryOpen}
+            setIsManualTradeEntryOpen={setIsManualTradeEntryOpen}
+            manualTradeStockOptions={manualTradeStockOptions}
+            manualMemo={manualMemo}
+            setManualMemo={setManualMemo}
+            handleAddManualMemo={handleAddManualMemo}
+          />
         )}
 
         {activeTab === 'target' && (
-          <div className="space-y-8 anim-fade">
-            <AnnualReturnGoalCard
-              year={annualReturnYear}
-              earliestYear={earliestAnnualYear}
-              targetPercent={targetPortfolio.annualReturnGoals?.[annualReturnYear] || ''}
-              performance={selectedAnnualPerformance}
-              onYearChange={setAnnualReturnYear}
-              onTargetChange={(value) => setTargetPortfolio((previous) => ({
-                ...previous,
-                annualReturnGoals: {
-                  ...(previous.annualReturnGoals || {}),
-                  [annualReturnYear]: value,
-                },
-              }))}
-            />
-            <AnnualReturnHistory
-              year={annualReturnYear}
-              earliestYear={earliestAnnualYear}
-              years={annualPerformanceYears}
-              performance={selectedAnnualPerformance}
-              performances={annualPerformances}
-              onYearChange={setAnnualReturnYear}
-              includeDividends={includeDividendsInReturn}
-              onIncludeDividendsChange={(value) => setTargetPortfolio((previous) => ({
-                ...previous,
-                includeDividendsInReturn: value,
-              }))}
-            />
-            <div className="bg-surface rounded-[20px] overflow-hidden">
-              <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-surface">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-base md:text-lg font-bold text-ink">목표 포트폴리오 설정</h3>
-                  <FeatureInfo text="분류별 목표 비중과 분류 안 종목별 목표 비중을 저장합니다." />
-                </div>
-                <div className="w-full md:w-80">
-                  <label htmlFor="app-field-1" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-                    기준 총 예산
-                  </label>
-                  <input id="app-field-1"
-                    value={formatInputNumber(targetPortfolio.budget)}
-                    onChange={(e) => setTargetPortfolio(prev => ({ ...prev, budget: sanitizeNumericInput(e.target.value) }))}
-                    placeholder={`현재 총자산 ${formatMoney(totalConvertedKRW, 'KRW')}`}
-                    className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand text-sm font-bold text-ink"
-                  />
-                </div>
-              </div>
-
-              <div className="p-5 md:p-6 border-b border-line bg-surface">
-                <div className="flex flex-col md:flex-row gap-3 md:items-end">
-                  <div className="flex-1">
-                    <label htmlFor="app-field-2" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-                      분류 추가
-                    </label>
-                    <select id="app-field-2"
-                      value={targetCategoryDraft}
-                      onChange={(e) => setTargetCategoryDraft(e.target.value)}
-                      className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink-soft"
-                    >
-                      {ASSET_CATEGORIES.map(category => (
-                        <option key={category} value={category}>{category}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <button
-                    onClick={addTargetCategory}
-                    className="h-12 px-5 bg-ink text-surface rounded-2xl font-bold text-[14px] flex items-center justify-center gap-1.5 hover:opacity-90 transition-opacity"
-                  >
-                    <Plus size={16} /> 분류 추가
-                  </button>
-                  <div className={`px-5 py-3 rounded-xl border text-xs md:text-sm font-bold ${Math.abs(targetCategoryTotalPercent - 100) < 0.001 ? 'bg-brand-soft text-brand' : 'bg-warn-soft text-warn'}`}>
-                    전체 목표 {targetCategoryTotalPercent.toFixed(1)}%
-                  </div>
-                  {Math.abs(targetCategoryTotalPercent - 100) >= 0.001 && targetPortfolio.categories.length > 0 && (
-                    <button
-                      onClick={normalizeCategoryPercents}
-                      className="px-4 py-3 bg-line-soft text-ink-soft rounded-xl font-bold text-xs hover:bg-line transition-colors"
-                      title="지금 넣은 비율은 유지한 채 합만 100%로 맞춥니다"
-                    >
-                      100%로 맞추기
-                    </button>
-                  )}
-                  {targetPriceSyncStatus && (
-                    <div className="px-5 py-3 rounded-xl border bg-canvas border-line text-ink-soft text-xs md:text-sm font-bold">
-                      {targetPriceSyncStatus}
-                    </div>
-                  )}
-                  <div className="flex bg-line-soft rounded-xl p-1">
-                    {[
-                      { id: 'table', label: '표' },
-                      { id: 'chart', label: '파이그래프' },
-                    ].map((mode) => (
-                      <button
-                        key={mode.id}
-                        onClick={() => setTargetViewMode(mode.id)}
-                        className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${targetViewMode === mode.id ? 'bg-surface text-ink shadow-sm' : 'text-ink-mute hover:text-ink-soft'}`}
-                      >
-                        {mode.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {targetViewMode === 'chart' && (
-                <div className="p-5 md:p-7 border-b border-line grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {[
-                    {
-                      title: selectedTargetGroupGuide
-                        ? `${selectedTargetGroupGuide.name || '미분류'} 현재 보유`
-                        : selectedTargetGuide
-                          ? `${selectedTargetGuide.id} 현재 보유`
-                          : '현재 포트폴리오',
-                      data: selectedTargetGuide ? targetCurrentDrilldownChartData : targetCurrentChartData,
-                      center: selectedTargetGroupGuide
-                        ? formatMoney(selectedTargetGroupGuide.currentValue, 'KRW')
-                        : selectedTargetGuide
-                          ? formatMoney(selectedTargetGuide.currentValue, 'KRW')
-                          : formatMoney(totalConvertedKRW, 'KRW'),
-                      drilldown: true,
-                    },
-                    {
-                      title: selectedTargetGroupGuide
-                        ? `${selectedTargetGroupGuide.name || '미분류'} 세부 종목`
-                        : selectedTargetGuide
-                          ? `${selectedTargetGuide.id} 목표 내부`
-                          : '목표 포트폴리오',
-                      data: selectedTargetGuide ? targetDrilldownChartData : targetGoalChartData,
-                      center: selectedTargetGroupGuide
-                        ? formatMoney(selectedTargetGroupGuide.targetValue, 'KRW')
-                        : selectedTargetGuide
-                          ? formatMoney(selectedTargetGuide.targetValue, 'KRW')
-                          : formatMoney(targetBudgetKRW, 'KRW'),
-                      drilldown: true,
-                      showBackButton: true,
-                    },
-                  ].map((chart) => (
-                    <div key={chart.title} className="bg-canvas rounded-2xl p-5 md:p-6">
-                      <div className="flex items-center justify-between gap-3 mb-5">
-                        <h4 className="text-sm md:text-base font-bold text-ink">{chart.title}</h4>
-                        {chart.showBackButton && selectedTargetGuide ? (
-                          <button
-                            onClick={() => {
-                              if (selectedTargetGroupGuide) {
-                                setSelectedTargetGroup(null);
-                              } else {
-                                setSelectedTargetCategory(null);
-                              }
-                            }}
-                            className="text-[12px] font-bold text-ink-soft bg-canvas px-3 py-1.5 rounded-xl flex items-center gap-1"
-                          >
-                            <ArrowLeft size={12} /> {selectedTargetGroupGuide ? '폴더 목록' : '전체 목표'}
-                          </button>
-                        ) : (
-                          <span className="text-[12px] font-bold text-ink-mute">{chart.center}</span>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-5 items-center">
-                        <div className="relative w-52 h-52 mx-auto">
-                          <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
-                            {chart.data.map((item) => (
-                              <circle
-                                key={item.id}
-                                cx="18"
-                                cy="18"
-                                r="15.9"
-                                fill="transparent"
-                                stroke={item.color}
-                                strokeWidth="3.8"
-                                strokeDasharray={`${item.percent} ${100 - item.percent}`}
-                                strokeDashoffset={-item.startPercent}
-                                className={chart.drilldown && !selectedTargetGroupGuide ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}
-                                onClick={() => {
-                                  if (chart.drilldown && !selectedTargetGuide) {
-                                    setSelectedTargetCategory(item.name);
-                                    setSelectedTargetGroup(null);
-                                  }
-                                  else if (chart.drilldown && selectedTargetGuide && !selectedTargetGroupGuide && item.groupId) setSelectedTargetGroup(item.groupId);
-                                }}
-                              />
-                            ))}
-                          </svg>
-                          <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                            <span className="text-[12px] font-bold text-ink-mute">
-                              {selectedTargetGroupGuide && chart.drilldown ? selectedTargetGroupGuide.name : selectedTargetGuide && chart.drilldown ? selectedTargetGuide.id : 'Total'}
-                            </span>
-                            <span className="text-sm font-bold text-ink mt-1">{chart.center}</span>
-                          </div>
-                        </div>
-                        <div className="space-y-2">
-                          {chart.data.map((item) => (
-                            <button
-                              key={item.id}
-                              onClick={() => {
-                                if (chart.drilldown && !selectedTargetGuide) {
-                                  setSelectedTargetCategory(item.name);
-                                  setSelectedTargetGroup(null);
-                                }
-                                else if (chart.drilldown && selectedTargetGuide && !selectedTargetGroupGuide && item.groupId) setSelectedTargetGroup(item.groupId);
-                              }}
-                              className={`w-full flex items-center justify-between gap-3 bg-surface rounded-xl px-4 py-3 text-left ${chart.drilldown && !selectedTargetGroupGuide ? 'hover:text-ink transition-colors' : ''}`}
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-                                <span className="text-xs font-bold text-ink-soft truncate">{item.name}</span>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <p className="text-xs font-bold text-ink">{item.percent.toFixed(1)}%</p>
-                                <p className="text-[12px] font-bold text-ink-mute">{formatMoney(item.value, 'KRW')}</p>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {targetViewMode === 'chart' && (
-                <div className="p-5 md:p-7 border-b border-line">
-                  <h4 className="text-sm md:text-base font-bold text-ink mb-1">카테고리별 현재 vs 목표 비중</h4>
-                  <p className="text-[11px] md:text-xs font-semibold text-ink-mute mb-5">두 파이그래프만으로는 비교하기 어려운 차이를 막대로 바로 보여줍니다.</p>
-                  <div className="space-y-5">
-                    {targetPortfolioGuide.map((category) => {
-                      const currentPct = Math.max(0, Math.min(100, category.currentPercent));
-                      const targetPct = Math.max(0, Math.min(100, Number(category.percent) || 0));
-                      const gapPercentPoint = category.currentPercent - targetPct;
-                      return (
-                        <div key={category.id}>
-                          <div className="flex items-center justify-between gap-3 mb-2">
-                            <span className="text-xs md:text-sm font-bold text-ink">{category.id}</span>
-                            {Math.abs(gapPercentPoint) > 0.05 && (
-                              <span className="text-[11px] md:text-xs font-bold text-ink-mute">
-                                목표 대비 {gapPercentPoint > 0 ? '+' : ''}{gapPercentPoint.toFixed(1)}%p
-                              </span>
-                            )}
-                          </div>
-                          <div className="space-y-1.5">
-                            <div className="flex items-center gap-2">
-                              <span className="w-9 shrink-0 text-[10px] font-bold text-ink-mute">현재</span>
-                              <div className="flex-1 h-2.5 rounded-full bg-line-soft overflow-hidden">
-                                <div className="h-full rounded-full bg-brand" style={{ width: `${Math.max(currentPct, currentPct > 0 ? 1 : 0)}%` }} />
-                              </div>
-                              <span className="w-14 shrink-0 text-right text-[11px] font-bold text-ink">{category.currentPercent.toFixed(1)}%</span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <span className="w-9 shrink-0 text-[10px] font-bold text-ink-mute">목표</span>
-                              <div className="flex-1 h-2.5 rounded-full bg-line-soft overflow-hidden">
-                                <div className="h-full rounded-full bg-ink" style={{ width: `${Math.max(targetPct, targetPct > 0 ? 1 : 0)}%` }} />
-                              </div>
-                              <span className="w-14 shrink-0 text-right text-[11px] font-bold text-ink">{targetPct.toFixed(1)}%</span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {targetPortfolioGuide.length === 0 && (
-                      <p className="text-xs font-bold text-ink-mute">분류를 추가하면 여기에 비교 막대가 표시됩니다.</p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {targetViewMode === 'table' && (
-              <div className="divide-y divide-line-soft">
-                {targetPortfolioGuide.map((category) => (
-                  <div key={category.id} className="p-5 md:p-7 space-y-5">
-                    <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr_auto] gap-3 lg:items-end">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm md:text-base font-bold text-ink">{category.id}</p>
-                          {category.buyCount > 0 && (
-                            <span className="px-2 py-0.5 rounded-full bg-up-soft text-up text-[10px] font-bold">매수 {category.buyCount}</span>
-                          )}
-                          {category.sellCount > 0 && (
-                            <span className="px-2 py-0.5 rounded-full bg-down-soft text-down text-[10px] font-bold">매도 {category.sellCount}</span>
-                          )}
-                        </div>
-                        <p className="text-[12px] md:text-xs font-bold text-ink-mute mt-1">
-                          현재 {category.currentPercent.toFixed(1)}% / 목표 {Number(category.percent || 0).toFixed(1)}%
-                        </p>
-                      </div>
-                      <div>
-                        <label htmlFor="app-field-3" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-                          목표 비중
-                        </label>
-                        <input id="app-field-3"
-                          inputMode="decimal"
-                          value={category.percent}
-                          onChange={(e) => updateTargetCategoryPercent(category.id, e.target.value)}
-                          className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand text-sm font-bold text-ink"
-                        />
-                      </div>
-                      <button
-                        onClick={() => removeTargetCategory(category.id)}
-                        className="px-4 py-3 text-ink-mute hover:text-danger hover:bg-danger-soft rounded-xl transition-colors justify-self-start lg:justify-self-end"
-                        title="분류 삭제"
-                      >
-                        <Trash2 size={17} />
-                      </button>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div className="bg-canvas rounded-xl p-4">
-                        <p className="text-[12px] font-bold text-ink-mute mb-1">현재 가치</p>
-                        <p className="text-lg font-bold text-ink">{formatMoney(category.currentValue, 'KRW')}</p>
-                      </div>
-                      <div className="bg-canvas rounded-xl p-4">
-                        <p className="text-[12px] font-bold text-ink-mute mb-1">목표 가치</p>
-                        <p className="text-lg font-bold text-ink">{formatMoney(category.targetValue, 'KRW')}</p>
-                      </div>
-                      <div className="bg-canvas rounded-xl p-4">
-                        <p className="text-[12px] font-bold text-ink-mute mb-1">{category.gapValue >= 0 ? '추가 필요 금액' : '목표 초과 금액'}</p>
-                        <p className={`text-lg font-bold ${category.gapValue >= 0 ? 'text-up' : 'text-down'}`}>
-                          {formatMoney(Math.abs(category.gapValue), 'KRW')}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-xs md:text-sm font-bold text-ink">분류 안 폴더 목표</p>
-                          <p className={`text-[12px] md:text-xs font-bold mt-1 ${Math.abs(category.groupTotalPercent - 100) < 0.001 || category.groups.length === 0 ? 'text-ink-mute' : 'text-warn'}`}>
-                            폴더 목표 합계 {category.groupTotalPercent.toFixed(1)}%
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {Math.abs(category.groupTotalPercent - 100) >= 0.001 && category.groups.length > 0 && (
-                            <button
-                              onClick={() => normalizeGroupPercents(category.id)}
-                              className="px-4 py-2.5 bg-line-soft text-ink-soft rounded-xl font-bold text-xs hover:bg-line transition-colors"
-                              title="지금 넣은 비율은 유지한 채 합만 100%로 맞춥니다"
-                            >
-                              100%로 맞추기
-                            </button>
-                          )}
-                          <button
-                            onClick={() => addTargetGroup(category.id)}
-                            className="px-4 py-2.5 bg-line-soft text-ink-soft rounded-xl font-bold text-xs flex items-center gap-2 hover:bg-line transition-colors"
-                          >
-                            <Plus size={14} /> 폴더 추가
-                          </button>
-                        </div>
-                      </div>
-
-                      {category.groups.map((group) => (
-                        <div key={group.id} className="bg-canvas rounded-2xl p-4 md:p-5 space-y-3">
-                          <div className="grid grid-cols-1 lg:grid-cols-[1fr_0.5fr_auto_auto] gap-2 lg:items-center">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <Folder size={17} className="text-ink-soft shrink-0" />
-                              <input
-                                value={group.name}
-                                onChange={(e) => updateTargetGroup(category.id, group.id, { name: e.target.value })}
-                                placeholder="폴더명 예: 빅테크"
-                                className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
-                              />
-                            </div>
-                            <input
-                              inputMode="decimal"
-                              value={group.percent}
-                              onChange={(e) => updateTargetGroup(category.id, group.id, { percent: sanitizeNumericInput(e.target.value) })}
-                              placeholder="폴더 비중 %"
-                              className="px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
-                            />
-                            <button
-                              onClick={() => addTargetItem(category.id, group.id)}
-                              className="px-3 py-2.5 bg-canvas text-ink-soft rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 hover:bg-canvas transition-colors"
-                            >
-                              <Plus size={13} /> 종목
-                            </button>
-                            <button
-                              onClick={() => removeTargetGroup(category.id, group.id)}
-                              className="p-2 text-ink-mute hover:text-danger hover:bg-danger-soft rounded-xl transition-colors"
-                              title="폴더 삭제"
-                            >
-                              <Trash2 size={15} />
-                            </button>
-                          </div>
-
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-[12px] md:text-xs font-bold">
-                            <span className="bg-surface rounded-xl px-3 py-2 text-ink-soft">폴더 목표 {Number(group.percent || 0).toFixed(1)}%</span>
-                            <span className="bg-surface rounded-xl px-3 py-2 text-ink">목표 {formatMoney(group.targetValue, 'KRW')}</span>
-                            <span className="bg-surface rounded-xl px-3 py-2 text-ink-soft">현재 {formatMoney(group.currentValue, 'KRW')}</span>
-                            {Math.abs(group.itemTotalPercent - 100) >= 0.001 && group.items.length > 0 ? (
-                              <button
-                                onClick={() => normalizeItemPercents(category.id, group.id)}
-                                className="bg-warn-soft text-warn rounded-xl px-3 py-2 text-left hover:opacity-80 transition-opacity"
-                                title="지금 넣은 비율은 유지한 채 합만 100%로 맞춥니다"
-                              >
-                                종목 합계 {group.itemTotalPercent.toFixed(1)}% · 100%로 맞추기
-                              </button>
-                            ) : (
-                              <span className="text-ink-soft bg-surface rounded-xl px-3 py-2">
-                                종목 합계 {group.itemTotalPercent.toFixed(1)}%
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="space-y-2 pl-3 md:pl-5 border-l-2 border-line">
-                            {group.items.map((item) => (
-                              <div key={item.id} className="grid grid-cols-1 lg:grid-cols-[1fr_0.8fr_0.55fr_0.8fr_auto] gap-2 bg-surface rounded-2xl p-3">
-                                <div className="relative">
-                                  <input
-                                    value={item.name}
-                                    onChange={(e) => updateTargetItem(category.id, group.id, item.id, { name: e.target.value })}
-                                    placeholder="종목명"
-                                    className="w-full px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
-                                  />
-                                  {!item.isMatched && (item.name || item.ticker) && (
-                                    <span
-                                      className="absolute -top-2 -right-2 px-1.5 py-0.5 rounded-full bg-warn-soft text-warn text-[9px] font-bold"
-                                      title="현재 보유 종목과 자동으로 매칭되지 않았습니다. 종목명 또는 티커를 확인하세요."
-                                    >
-                                      미연동
-                                    </span>
-                                  )}
-                                </div>
-                                <input
-                                  value={item.ticker}
-                                  onChange={(e) => updateTargetItem(category.id, group.id, item.id, { ticker: e.target.value.toUpperCase() })}
-                                  placeholder="티커"
-                                  className="px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
-                                />
-                                <input
-                                  inputMode="decimal"
-                                  value={item.percent}
-                                  onChange={(e) => updateTargetItem(category.id, group.id, item.id, { percent: sanitizeNumericInput(e.target.value) })}
-                                  placeholder="%"
-                                  className="px-3 py-2.5 bg-canvas rounded-xl outline-none focus:ring-2 focus:ring-brand text-xs md:text-sm font-bold"
-                                />
-                                <div className="px-3 py-2.5 bg-canvas rounded-xl text-xs md:text-sm font-bold text-ink-soft">
-                                  {item.currentPriceKRW > 0 ? (
-                                    <>
-                                      <span className="block text-[11px] font-bold text-ink-mute">자동 현재가</span>
-                                      <span>{formatMoney(item.currentPriceKRW, 'KRW')}</span>
-                                      {item.currency && item.currency !== 'KRW' && (
-                                        <span className="block text-[12px] text-ink-soft mt-0.5">{formatMoney(item.currentPriceNative, item.currency)}</span>
-                                      )}
-                                    </>
-                                  ) : (
-                                    <span className="text-ink-mute">티커 입력 시 자동 연동</span>
-                                  )}
-                                </div>
-                                <button
-                                  onClick={() => removeTargetItem(category.id, group.id, item.id)}
-                                  className="p-2 text-ink-mute hover:text-danger hover:bg-danger-soft rounded-xl transition-colors"
-                                  title="종목 삭제"
-                                >
-                                  <Trash2 size={15} />
-                                </button>
-                                <div className="lg:col-span-5 grid grid-cols-1 md:grid-cols-[1fr_1fr_1.3fr] gap-2 text-[12px] md:text-xs font-bold">
-                                  <span className="bg-canvas rounded-xl px-3 py-2 text-ink-soft">현재 {formatMoney(item.currentValue, 'KRW')}</span>
-                                  <span className="bg-canvas rounded-xl px-3 py-2 text-ink">목표 {formatMoney(item.targetValue, 'KRW')}</span>
-                                  <span className={`rounded-xl px-3 py-2 ${
-                                    item.adjustmentSide === 'buy'
-                                      ? 'bg-up-soft text-up'
-                                      : item.adjustmentSide === 'sell'
-                                        ? 'bg-down-soft text-down'
-                                        : 'bg-canvas text-ink-soft'
-                                  }`}>
-                                    {item.adjustmentSide === 'buy'
-                                      ? `매수 필요 · ${formatMoney(Math.abs(item.gapValue), 'KRW')} (${item.adjustmentQuantity.toFixed(3)}주)`
-                                      : item.adjustmentSide === 'sell'
-                                        ? `매도 필요 · ${formatMoney(Math.abs(item.gapValue), 'KRW')} (${item.adjustmentQuantity.toFixed(3)}주)`
-                                        : '조정 필요 없음'}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                            {group.items.length === 0 && (
-                              <p className="px-3 py-4 text-xs font-bold text-ink-mute">이 폴더에 종목을 추가하세요.</p>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-
-                    {category.unassignedAssets.length > 0 && (
-                      <div className="space-y-3">
-                        <div>
-                          <p className="text-xs md:text-sm font-bold text-ink">계획에 없는 보유 종목</p>
-                          <p className="text-[12px] md:text-xs font-bold text-warn mt-1">
-                            이 분류에 속하지만 목표 계획(폴더·종목)에 연결되지 않은 보유 자산입니다 · 합계 {formatMoney(category.unassignedValue, 'KRW')}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          {category.unassignedAssets.map((asset) => (
-                            <span
-                              key={asset.id || `${asset.name}-${asset.ticker}`}
-                              className="inline-flex items-center gap-1.5 bg-warn-soft/60 rounded-full pl-3 pr-2.5 py-1.5 text-[12px] md:text-xs font-bold"
-                              title={formatMoney(asset.currentKRW, 'KRW')}
-                            >
-                              <span className="text-ink">{asset.name}</span>
-                              <span className="text-warn">{formatMoney(asset.currentKRW, 'KRW')}</span>
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-              )}
-            </div>
-          </div>
+          <TargetTab
+            targetPortfolio={targetPortfolio}
+            setTargetPortfolio={setTargetPortfolio}
+            targetBudgetKRW={targetBudgetKRW}
+            totalConvertedKRW={totalConvertedKRW}
+            targetViewMode={targetViewMode}
+            setTargetViewMode={setTargetViewMode}
+            targetCategoryDraft={targetCategoryDraft}
+            setTargetCategoryDraft={setTargetCategoryDraft}
+            targetCategoryTotalPercent={targetCategoryTotalPercent}
+            targetGoalChartData={targetGoalChartData}
+            targetCurrentChartData={targetCurrentChartData}
+            targetDrilldownChartData={targetDrilldownChartData}
+            targetCurrentDrilldownChartData={targetCurrentDrilldownChartData}
+            targetPortfolioGuide={targetPortfolioGuide}
+            selectedTargetGuide={selectedTargetGuide}
+            selectedTargetGroupGuide={selectedTargetGroupGuide}
+            setSelectedTargetCategory={setSelectedTargetCategory}
+            setSelectedTargetGroup={setSelectedTargetGroup}
+            targetPriceSyncStatus={targetPriceSyncStatus}
+            addTargetCategory={addTargetCategory}
+            removeTargetCategory={removeTargetCategory}
+            updateTargetCategoryPercent={updateTargetCategoryPercent}
+            normalizeCategoryPercents={normalizeCategoryPercents}
+            addTargetGroup={addTargetGroup}
+            removeTargetGroup={removeTargetGroup}
+            updateTargetGroup={updateTargetGroup}
+            normalizeGroupPercents={normalizeGroupPercents}
+            addTargetItem={addTargetItem}
+            removeTargetItem={removeTargetItem}
+            updateTargetItem={updateTargetItem}
+            normalizeItemPercents={normalizeItemPercents}
+            annualReturnYear={annualReturnYear}
+            setAnnualReturnYear={setAnnualReturnYear}
+            annualPerformances={annualPerformances}
+            annualPerformanceYears={annualPerformanceYears}
+            selectedAnnualPerformance={selectedAnnualPerformance}
+            earliestAnnualYear={earliestAnnualYear}
+            includeDividendsInReturn={includeDividendsInReturn}
+          />
         )}
 
         {activeTab === 'calendar' && (
-          <div className="space-y-6 anim-fade">
-          <div className="bg-surface rounded-[20px] overflow-hidden">
-            <div className="p-5 md:p-7 border-b border-line flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <CalendarDays size={18} className="shrink-0 text-ink-soft" />
-                <h3 className="sr-only">투자 캘린더</h3>
-                <div className="seg flex items-center gap-0.5 p-1 rounded-[14px]" role="tablist" aria-label="캘린더 종류">
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={calendarView === 'dividend'}
-                    data-active={calendarView === 'dividend'}
-                    onClick={() => setCalendarView('dividend')}
-                    className="seg-item rounded-[10px] px-3 py-2 text-xs md:text-sm font-bold whitespace-nowrap text-ink-mute hover:text-ink"
-                  >
-                    배당 캘린더
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={calendarView === 'market'}
-                    data-active={calendarView === 'market'}
-                    onClick={() => setCalendarView('market')}
-                    className="seg-item rounded-[10px] px-3 py-2 text-xs md:text-sm font-bold whitespace-nowrap text-ink-mute hover:text-ink"
-                  >
-                    주요 증시 일정
-                  </button>
-                </div>
-                <FeatureInfo text={calendarView === 'dividend' ? '캘린더와 그래프는 같은 지급 일정과 세후 금액을 사용합니다. 공시 지급일은 한국시간 기준이며, 예상 지급일은 최근 배당 주기와 지급 간격으로 추정합니다.' : '미국·한국·유로존·중국·일본의 중요 일정과 관심 키워드 일정을 한국시간으로 표시합니다.'} />
-              </div>
-              <div className="seg flex items-center gap-0.5 p-1 rounded-[14px]">
-                <button
-                  onClick={() => setCalendarMonth(getMonthKey(addMonthsClamped(new Date(`${calendarMonth}-01T00:00:00`), -1)))}
-                  aria-label="이전 달"
-                  className="seg-item w-9 h-9 grid place-items-center rounded-[10px] text-ink-mute hover:text-ink hover:bg-surface"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                <div className="px-3 min-w-24 text-center text-xs md:text-sm font-bold text-ink tabular-nums">
-                  {calendarMonth}
-                </div>
-                <button
-                  onClick={() => setCalendarMonth(getMonthKey(addMonthsClamped(new Date(`${calendarMonth}-01T00:00:00`), 1)))}
-                  aria-label="다음 달"
-                  className="seg-item w-9 h-9 grid place-items-center rounded-[10px] text-ink-mute hover:text-ink hover:bg-surface"
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </div>
-
-            {calendarView === 'dividend' ? (
-            <>
-            <div role="region" aria-label="월별 배당 합계" className="px-5 py-4 md:px-7 md:py-5 border-b border-line bg-canvas/60 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div>
-                <p className="text-[12px] md:text-xs font-bold text-ink-mute">
-                  {calendarMonth.replace('-', '년 ')}월 세후 예상 배당 합계
-                </p>
-                <p className="text-[11px] md:text-[12px] font-semibold text-ink-mute mt-1">
-                  지급 확정 {dividendCalendarMonthlySummary.confirmedCount.toLocaleString()}건 · 예상 {dividendCalendarMonthlySummary.estimatedCount.toLocaleString()}건 · 통화별 합계
-                </p>
-              </div>
-              <div className="flex flex-col items-start md:items-end gap-2">
-                <div className="flex flex-wrap gap-2">
-                  {dividendCalendarMonthlySummary.totals.length > 0 ? (
-                    dividendCalendarMonthlySummary.totals.map(({ currency, amount }) => (
-                      <span key={currency} className="figure px-3 py-2 rounded-xl bg-surface border border-line-soft text-sm md:text-base font-bold text-ink">
-                        {formatMoney(amount, currency)}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-xs md:text-sm font-bold text-ink-mute">예정 금액 없음</span>
-                  )}
-                </div>
-                {dividendCalendarMonthlySummary.totals.length > 0 && (
-                  <p className="figure text-xs font-semibold text-ink-mute">
-                    원화 환산 {formatMoney(annualDividendTrend.months[Number(calendarMonth.slice(5, 7)) - 1].total, 'KRW')}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="p-4 md:p-7">
-              <div className="grid grid-cols-7 gap-1.5 md:gap-2 mb-2">
-                {CALENDAR_WEEKDAYS.map((weekday, weekdayIndex) => (
-                  <div
-                    key={weekday}
-                    className={`text-center text-[11px] md:text-[12px] font-bold tracking-[0.06em] py-2 ${weekdayIndex === 0 ? 'text-up/70' : weekdayIndex === 6 ? 'text-down/70' : 'text-ink-mute'}`}
-                  >
-                    {weekday}
-                  </div>
-                ))}
-              </div>
-              <div className="grid grid-cols-7 gap-1.5 md:gap-2">
-                {dividendCalendarCells.map((cell) => {
-                  const events = dividendCalendarEventsByDate[cell.dateKey] || [];
-                  return (
-                    <div
-                      key={cell.dateKey}
-                      className={`min-h-20 md:min-h-28 rounded-xl border p-2 transition-colors ${cell.isCurrentMonth ? 'bg-surface border-line-soft' : 'bg-canvas/50 border-transparent text-ink-mute'}`}
-                    >
-                      <div className={`text-[12px] md:text-xs font-semibold mb-1.5 tabular-nums ${cell.isCurrentMonth ? 'text-ink-soft' : 'text-ink-mute/70'}`}>
-                        {cell.day}
-                      </div>
-                      <div className="space-y-1">
-                        {events.slice(0, 3).map((event) => (
-                          <button
-                            key={event.id}
-                            onClick={() => setSelectedCalendarEventId(event.id)}
-                            aria-label={`${event.date} ${event.name} ${event.isEstimated ? '예상' : '지급 확정'} 세후 ${formatMoney(event.netAmount, event.currency)}`}
-                            title={`${event.dateLabel} ${event.date} · ${event.name} 세후 ${formatMoney(event.netAmount, event.currency)}`}
-                            className={`w-full truncate rounded-md px-1.5 py-1 text-[11px] md:text-[12px] font-semibold text-left transition-all ${selectedCalendarEvent?.id === event.id ? 'bg-ink text-surface shadow-card' : event.isEstimated ? 'bg-brand-soft text-ink-soft hover:bg-line' : 'bg-up-soft text-up hover:brightness-95'}`}
-                          >
-                            {event.name}
-                          </button>
-                        ))}
-                        {events.length > 3 && (
-                          <button
-                            type="button"
-                            onClick={() => setExpandedCalendarDate((previous) => (
-                              previous === cell.dateKey ? '' : cell.dateKey
-                            ))}
-                            aria-expanded={expandedCalendarDate === cell.dateKey}
-                            aria-label={`${cell.dateKey} 배당 일정 ${events.length - 3}건 더 보기`}
-                            className={`block w-full rounded-md px-1 py-0.5 text-left text-[11px] font-bold transition-colors ${expandedCalendarDate === cell.dateKey ? 'bg-ink text-surface' : 'text-ink-mute hover:bg-canvas hover:text-ink'}`}
-                          >
-                            +{events.length - 3} 더보기
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {expandedCalendarEvents.length > 0 && (
-                <div className="mt-4 md:mt-5 rounded-2xl border border-line bg-surface p-4 md:p-5 shadow-card">
-                  <div className="flex items-center justify-between gap-3 mb-3">
-                    <div>
-                      <p className="text-[11px] md:text-[12px] font-bold text-ink-mute">선택한 날짜의 전체 배당 일정</p>
-                      <h4 className="text-sm md:text-base font-bold text-ink mt-0.5">
-                        {expandedCalendarDate} · {expandedCalendarEvents.length.toLocaleString()}건
-                      </h4>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setExpandedCalendarDate('')}
-                      aria-label="날짜별 전체 일정 닫기"
-                      className="p-2 rounded-full bg-canvas text-ink-mute hover:text-ink transition-colors"
-                    >
-                      <X size={16} />
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
-                    {expandedCalendarEvents.map((event) => (
-                      <button
-                        key={event.id}
-                        type="button"
-                        onClick={() => setSelectedCalendarEventId(event.id)}
-                        className={`rounded-xl border p-3 text-left transition-colors ${selectedCalendarEvent?.id === event.id ? 'border-ink bg-ink text-surface' : 'border-line-soft bg-canvas hover:border-line'}`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="font-bold text-xs md:text-sm truncate">{event.name}</p>
-                            <p className={`text-[11px] font-semibold mt-1 ${selectedCalendarEvent?.id === event.id ? 'text-surface/70' : 'text-ink-mute'}`}>
-                              {event.dateLabel} · {event.isEstimated ? '예상' : '확정'}
-                            </p>
-                          </div>
-                          <span className={`figure shrink-0 text-xs md:text-sm font-bold ${selectedCalendarEvent?.id === event.id ? 'text-surface' : 'text-up'}`}>
-                            {formatMoney(event.netAmount, event.currency)}
-                          </span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-5 md:mt-6 bg-canvas rounded-2xl p-5 md:p-6">
-                {selectedCalendarEvent ? (
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                    <div>
-                      <p className="text-[12px] md:text-xs font-bold text-ink-mute mb-1">{selectedCalendarEvent.dateLabel} {selectedCalendarEvent.date}</p>
-                      <h4 className="text-lg md:text-xl font-bold text-ink">{selectedCalendarEvent.name}</h4>
-                      <p className="text-xs md:text-sm font-bold text-ink-soft mt-1">{selectedCalendarEvent.ticker} · {selectedCalendarEvent.quantity > 0 ? `${selectedCalendarEvent.quantity.toLocaleString()}주 기준` : '수량 미기록'}</p>
-                      <p className="text-[11px] md:text-xs font-bold text-ink-mute mt-1">
-                        {selectedCalendarEvent.isEstimated ? '예상 배당기준일' : '배당기준일'} {selectedCalendarEvent.eligibilityDate || '미기록'}
-                      </p>
-                      <p className="text-[11px] md:text-xs font-bold text-ink-mute mt-1">
-                        {selectedCalendarEvent.isEstimated ? `예상 지급일 ${selectedCalendarEvent.date}` : `배당지급일 ${selectedCalendarEvent.officialPaymentDate || '미기록'}`}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 min-w-full md:min-w-80">
-                      <div className="bg-surface border border-line-soft rounded-xl p-4">
-                        <p className="text-[12px] font-bold text-ink-mute mb-1">{selectedCalendarEvent.isEstimated ? '세전 예상' : '세전'}</p>
-                        <p className="figure text-base md:text-lg font-bold text-ink">{selectedCalendarEvent.grossAmount > 0 ? formatMoney(selectedCalendarEvent.grossAmount, selectedCalendarEvent.currency) : '미기록'}</p>
-                      </div>
-                      <div className="bg-surface border border-line-soft rounded-xl p-4">
-                        <p className="text-[12px] font-bold text-ink-mute mb-1">{selectedCalendarEvent.isEstimated ? '세후 예상' : '세후'}</p>
-                        <p className="figure text-base md:text-lg font-bold text-up">{formatMoney(selectedCalendarEvent.netAmount, selectedCalendarEvent.currency)}</p>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-center text-xs md:text-sm font-bold text-ink-mute">이번 달에 표시할 배당 일정이 없습니다.</p>
-                )}
-              </div>
-            </div>
-            </>
-            ) : (
-              <MarketCalendar
-                month={calendarMonth}
-                calendarCells={dividendCalendarCells}
-                keywords={marketCalendarKeywords}
-                onMonthChange={setCalendarMonth}
-                onAddKeyword={addMarketCalendarKeyword}
-                onRemoveKeyword={removeMarketCalendarKeyword}
-              />
-            )}
-          </div>
-          {calendarView === 'dividend' && (
-            <AnnualDividendTrend
-              year={annualDividendYear}
-              selectedMonth={Number(calendarMonth.slice(5, 7))}
-              trend={annualDividendTrend}
-              isFxLoading={annualDividendFxLookupDates.length > 0}
-              onYearChange={(year) => setCalendarMonth(`${year}-${calendarMonth.slice(5, 7)}`)}
-              onMonthChange={(month) => setCalendarMonth(`${annualDividendYear}-${String(month).padStart(2, '0')}`)}
-            />
-          )}
-          </div>
+          <CalendarTab
+            calendarView={calendarView}
+            setCalendarView={setCalendarView}
+            calendarMonth={calendarMonth}
+            setCalendarMonth={setCalendarMonth}
+            dividendCalendarCells={dividendCalendarCells}
+            dividendCalendarEventsByDate={dividendCalendarEventsByDate}
+            dividendCalendarMonthlySummary={dividendCalendarMonthlySummary}
+            selectedCalendarEvent={selectedCalendarEvent}
+            setSelectedCalendarEventId={setSelectedCalendarEventId}
+            expandedCalendarDate={expandedCalendarDate}
+            setExpandedCalendarDate={setExpandedCalendarDate}
+            expandedCalendarEvents={expandedCalendarEvents}
+            annualDividendTrend={annualDividendTrend}
+            annualDividendYear={annualDividendYear}
+            annualDividendFxLookupDates={annualDividendFxLookupDates}
+            marketCalendarKeywords={marketCalendarKeywords}
+            addMarketCalendarKeyword={addMarketCalendarKeyword}
+            removeMarketCalendarKeyword={removeMarketCalendarKeyword}
+          />
         )}
       </div>
 
