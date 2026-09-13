@@ -1684,8 +1684,6 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
     krwGrossProfit,
     usdGrossProfit,
     totalConvertedNetProfit,
-    fxContribution,
-    annualizedReturnPercent,
     stockPerformanceSummary,
     dividendSummary,
     filteredHistory,
@@ -3145,8 +3143,6 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
             dashboardSummary={dashboardSummary}
             totalConvertedNetProfit={totalConvertedNetProfit}
             krwGrossProfit={krwGrossProfit}
-            fxContribution={fxContribution}
-            annualizedReturnPercent={annualizedReturnPercent}
             usdGrossProfit={usdGrossProfit}
             overseasCapitalGainsTax={overseasCapitalGainsTax}
             annualReturnYear={annualReturnYear}
