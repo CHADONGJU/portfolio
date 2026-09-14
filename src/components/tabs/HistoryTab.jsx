@@ -2,7 +2,7 @@
 // 평가손익 요약, 종목별 성과 표, 배당 내역(현재 보유 / 과거 보유), 매매 기록
 // 목록과 인라인 편집기를 그린다. 이 탭만 쓰는 정렬 옵션은 여기에 두고, 금액과
 // 목록은 모두 App이 계산해 넘겨준다.
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import {
   ArrowLeft, ArrowRightLeft, Banknote, DollarSign, NotebookPen, Pencil,
   Plus, PlusCircle, Receipt, Search, Trash2, TrendingUp, Wallet, X,
@@ -23,6 +23,10 @@ import {
 import { isConfirmedDividendRecord } from '../../utils/dividendRecords.js';
 import { formatMoney } from '../../utils/formatters.js';
 import { TRADE_PAGE_SIZE, getRecordDate, getRecordPnl, getTradeSide } from '../../utils/tradeRecordView.js';
+
+// 종목별 총 손익 표의 기본 노출 개수. 보유 종목이 늘어도 이 탭이 세로로
+// 한없이 늘어지지 않게 접어 두고, 남은 개수는 표 아래에 숫자로 밝힌다.
+const PERFORMANCE_PREVIEW_COUNT = 5;
 
 // 매매 기록 정렬 기준. 이 탭 바깥에서는 쓰지 않는다.
 const TRADE_SORT_OPTIONS = [
@@ -81,7 +85,14 @@ const HistoryTab = ({
   manualMemo,
   setManualMemo,
   handleAddManualMemo,
-}) => (
+}) => {
+  const [showAllPerformance, setShowAllPerformance] = useState(false);
+  const visiblePerformanceSummary = showAllPerformance
+    ? filteredPerformanceSummary
+    : filteredPerformanceSummary.slice(0, PERFORMANCE_PREVIEW_COUNT);
+  const hiddenPerformanceCount = filteredPerformanceSummary.length - visiblePerformanceSummary.length;
+
+  return (
       <div className="space-y-8 anim-fade">
         <h3 className="text-lg md:text-xl font-bold text-ink flex items-center gap-2"><TrendingUp className="text-ink-soft" size={20} /> 평가손익(미실현) 요약</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
@@ -200,7 +211,7 @@ const HistoryTab = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-line-soft">
-                {filteredPerformanceSummary.map((summary) => {
+                {visiblePerformanceSummary.map((summary) => {
                   const isForeignCurrency = summary.currency !== 'KRW';
                   const unrealizedDisplay = isForeignCurrency ? summary.unrealizedNative : summary.unrealizedKRW;
                   const realizedDisplay = isForeignCurrency ? summary.realizedNative : summary.realizedKRW;
@@ -285,6 +296,19 @@ const HistoryTab = ({
               <p className="p-8 md:p-10 text-center text-ink-mute font-bold text-xs md:text-sm">검색 결과가 없습니다.</p>
             )}
           </div>
+          {filteredPerformanceSummary.length > PERFORMANCE_PREVIEW_COUNT && (
+            <div className="px-5 py-4 md:px-8 md:py-5 border-t border-line bg-canvas/40 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <p className="text-[12px] md:text-xs font-bold text-ink-mute">
+                {visiblePerformanceSummary.length.toLocaleString()}종목 표시 중 / 전체 {filteredPerformanceSummary.length.toLocaleString()}종목
+              </p>
+              <button
+                onClick={() => setShowAllPerformance(value => !value)}
+                className={`px-4 py-2 bg-canvas rounded-xl text-[12px] md:text-xs font-bold transition-colors ${showAllPerformance ? 'text-ink-mute hover:text-ink-soft' : 'text-ink-soft hover:text-ink'}`}
+              >
+                {showAllPerformance ? '접기' : `더보기 (${hiddenPerformanceCount.toLocaleString()}종목 더)`}
+              </button>
+            </div>
+          )}
         </div>
 
         <div className="bg-surface p-5 md:p-7 rounded-[20px]">
@@ -686,6 +710,7 @@ const HistoryTab = ({
         </div>
 
       </div>
-);
+  );
+};
 
 export default HistoryTab;
