@@ -8,7 +8,7 @@ import { parseTradeNumber as parseNumber } from '../utils/tradeReconciliation';
 
 export default function BuyLotsEditor({ asset, drafts, summary, accountType, onAccountTypeChange, onClose, onUpdate, onRemove, onAdd, onSave }) {
   return (
-    <div className="bg-surface w-full max-w-4xl h-[92dvh] md:h-auto md:max-h-[92dvh] rounded-t-[24px] md:rounded-[24px] shadow-modal anim-rise flex flex-col overflow-hidden">
+    <div className="bg-surface w-full max-w-4xl h-[92dvh] md:h-auto md:max-h-[92dvh] rounded-t-3xl md:rounded-3xl shadow-modal anim-rise flex flex-col overflow-hidden">
       <div className="flex justify-between items-start gap-4 px-6 pt-6 md:px-7 md:pt-7 mb-5 md:mb-6 shrink-0">
         <div className="min-w-0">
           <h3 id="manage-buys-title" className="text-lg md:text-xl font-bold text-ink truncate">
@@ -91,7 +91,7 @@ export default function BuyLotsEditor({ asset, drafts, summary, accountType, onA
             const lotAmount = lotQuantity * lotPrice;
 
             return (
-              <div key={lot.draftId} className="grid grid-cols-1 md:grid-cols-[1.05fr_1fr_1fr_0.7fr_1fr_44px] gap-2 md:gap-3 items-end rounded-xl bg-canvas bg-canvas/70 p-3">
+              <div key={lot.draftId} className="grid grid-cols-1 md:grid-cols-[1.05fr_1fr_1fr_0.7fr_1fr_44px] gap-2 md:gap-3 items-end rounded-xl bg-canvas p-3">
                 <div>
                   <label htmlFor={`buy-lot-${lot.draftId}-date`} className="md:hidden block text-[11px] font-bold text-ink-mute mb-1">매수일</label>
                   <input

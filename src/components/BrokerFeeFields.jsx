@@ -46,7 +46,7 @@ const BrokerFeeFields = ({
         </div>
         <select
           id={`${idPrefix}-broker`}
-          className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+          className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
           value={brokerId}
           onChange={(event) => {
             const nextBrokerId = event.target.value;
@@ -96,7 +96,7 @@ const BrokerFeeFields = ({
           id={`${idPrefix}-fee`}
           type="text"
           inputMode="decimal"
-          className="w-full px-4 h-[52px] bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
+          className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-ink text-xs md:text-sm"
           value={isAmountMode ? formatInputNumber(feeAmount) : feeRatePercent}
           placeholder={isAmountMode ? '증권사 화면의 수수료 금액' : '0'}
           onChange={(event) => {
