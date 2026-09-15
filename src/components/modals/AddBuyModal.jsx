@@ -7,6 +7,7 @@ import ModalOverlay from '../ModalOverlay.jsx';
 import BrokerFeeFields from '../BrokerFeeFields.jsx';
 import PriceInputCurrencyToggle from '../PriceInputCurrencyToggle.jsx';
 import { formatInputNumber, getCurrencySymbol, sanitizeNumericInput } from '../../utils/formatters.js';
+import { formatNameWithAccount } from '../../utils/accountTypes.js';
 
 const AddBuyModal = ({
   asset,
@@ -24,7 +25,7 @@ const AddBuyModal = ({
       <div className="bg-surface w-full max-w-110 rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
         <div className="flex justify-between items-center mb-6 md:mb-8">
           <h3 id="update-asset-title" className="text-lg md:text-xl font-bold text-ink">
-            {asset.name} 추가 매수
+            {formatNameWithAccount(asset.name, asset.accountName)} 추가 매수
           </h3>
           <button
             onClick={onClose}

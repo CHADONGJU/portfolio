@@ -53,6 +53,37 @@ export const isDividendTaxDeferredAccount = (value = '') => {
   return accountType === ACCOUNT_TYPE_ISA || accountType === ACCOUNT_TYPE_PENSION;
 };
 
+/**
+ * 계좌 이름(예: 키움, 토스). 같은 유형의 계좌를 여러 개 쓸 때 같은 종목을
+ * 계좌마다 따로 보유하게 해 준다. 비어 있으면 예전처럼 종목 단위로 합쳐진다.
+ */
+export const ACCOUNT_NAME_MAX_LENGTH = 20;
+
+export const normalizeAccountName = (value = '') => String(value ?? '')
+  .trim()
+  .replace(/\s+/g, ' ')
+  .slice(0, ACCOUNT_NAME_MAX_LENGTH);
+
+/**
+ * 자산·원장 키 뒤에 붙이는 계좌 구분자. 계좌 이름이 없으면 빈 문자열이라
+ * 계좌 이름을 쓰기 전의 키가 그대로 유지된다.
+ */
+export const getAccountNameKeySuffix = (record = {}) => {
+  const accountName = normalizeAccountName(record.accountName);
+  return accountName ? `@${accountName}` : '';
+};
+
+/** 과세 방식(유형)과 계좌 이름을 합친 보유 범위. 배당을 계좌별로 나눌 때 쓴다. */
+export const getAccountScope = (record = {}) => (
+  `${normalizeAccountType(record.accountType)}${getAccountNameKeySuffix(record)}`
+);
+
+/** 화면용 이름. 계좌 이름이 있으면 "삼성전자 · 토스"처럼 붙인다. */
+export const formatNameWithAccount = (name = '', accountName = '') => {
+  const normalizedAccountName = normalizeAccountName(accountName);
+  return normalizedAccountName ? `${name} · ${normalizedAccountName}` : name;
+};
+
 export const migrateUserConfirmedAccountType = (asset = {}) => {
   const normalizedAccountType = normalizeAccountType(asset.accountType);
   const hasExplicitSource = Boolean(String(asset.accountTypeSource || '').trim());

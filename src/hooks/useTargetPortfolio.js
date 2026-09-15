@@ -72,11 +72,14 @@ export const useTargetPortfolio = ({
         const itemTotalPercent = items.reduce((sum, item) => sum + (Number(item.percent) || 0), 0);
         const enrichedItems = items.map((item) => {
           const itemCurrency = getTargetItemCurrency(categoryTarget.id, item.ticker, item.currency);
-          const matchedAsset = categoryAssets.find((asset) => (
+          // 같은 종목을 여러 계좌에 나눠 담았으면 보유 자산이 여러 개다. 목표 비중은
+          // 종목 단위이므로 전부 더해야 한다. 하나만 보면 "매수 필요"가 부풀려진다.
+          const itemAssets = categoryAssets.filter((asset) => (
             asset.name === item.name || (item.ticker && asset.ticker?.toUpperCase() === item.ticker.toUpperCase())
           ));
-          if (matchedAsset) matchedAssets.add(matchedAsset);
-          const currentItemValue = matchedAsset?.currentKRW || 0;
+          itemAssets.forEach((asset) => matchedAssets.add(asset));
+          const matchedAsset = itemAssets[0];
+          const currentItemValue = itemAssets.reduce((sum, asset) => sum + (asset.currentKRW || 0), 0);
           const itemTargetValue = itemTotalPercent > 0
             ? groupTargetValue * ((Number(item.percent) || 0) / itemTotalPercent)
             : 0;
@@ -100,7 +103,7 @@ export const useTargetPortfolio = ({
             quantityToSell: gapValue < 0 && currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
             adjustmentSide: gapValue > 0 ? 'buy' : gapValue < 0 ? 'sell' : 'hold',
             adjustmentQuantity: currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
-            matchedQuantity: matchedAsset?.quantity || 0,
+            matchedQuantity: itemAssets.reduce((sum, asset) => sum + (Number(asset.quantity) || 0), 0),
             // 이름·티커가 어긋나 매칭이 조용히 실패하면 "매수 필요"가 실제보다
             // 크게 나오는데, 화면에는 원인이 안 보인다. 매칭 성공 여부를 그대로 넘긴다.
             isMatched: Boolean(matchedAsset),

@@ -3,6 +3,7 @@
 // 무엇이 몇 건 지워지는지 먼저 보여준 뒤 확인을 받는다. 배당 내역은 통계를
 // 위해 남기므로 그 사실도 함께 알린다.
 import { Trash2 } from 'lucide-react';
+import { formatNameWithAccount } from '../../utils/accountTypes.js';
 
 const RemoveAssetConfirmModal = ({ pendingRemoval, onCancel, onConfirm }) => {
   if (!pendingRemoval) return null;
@@ -23,7 +24,7 @@ const RemoveAssetConfirmModal = ({ pendingRemoval, onCancel, onConfirm }) => {
           <Trash2 size={20} aria-hidden="true" />
         </div>
         <h2 id="remove-asset-title" className="text-base md:text-lg font-bold text-ink">
-          [{pendingRemoval.asset.name}] 자산을 삭제할까요?
+          [{formatNameWithAccount(pendingRemoval.asset.name, pendingRemoval.asset.accountName)}] 자산을 삭제할까요?
         </h2>
         <p className="mt-2 text-xs md:text-sm font-medium text-ink-soft leading-relaxed">
           아래 기록이 함께 삭제되며 되돌릴 수 없습니다.

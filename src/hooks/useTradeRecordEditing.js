@@ -21,6 +21,7 @@ import {
   validateTradeRecordEdit,
 } from '../utils/tradeRecordEditing.js';
 import { isRecordForAsset, mergeUniqueAssets } from '../utils/assetIdentity.js';
+import { normalizeAccountName, normalizeAccountType } from '../utils/accountTypes.js';
 import { getRecordPnl, getTradeSide } from '../utils/tradeRecordView.js';
 import { fetchKrwRateByDate } from '../services/marketData.js';
 import { numbersMatch, parseNumber } from '../utils/formatters.js';
@@ -245,6 +246,8 @@ export const useTradeRecordEditing = ({
         ticker: source.ticker || '',
         category: source.category || '',
         currency: source.currency || 'KRW',
+        accountType: normalizeAccountType(source.accountType),
+        accountName: normalizeAccountName(source.accountName),
         round: getTradeRound(source),
         side: current.side,
         action,

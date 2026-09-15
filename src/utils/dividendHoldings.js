@@ -1,6 +1,6 @@
 // "배당기준일에 몇 주를 들고 있었나"를 매매 원장에서 되짚는다.
 // 지금 보유 수량으로 과거 배당을 계산하면, 그 뒤에 사고판 만큼 금액이 어긋난다.
-import { normalizeAccountType } from './accountTypes.js';
+import { getAccountScope, normalizeAccountName } from './accountTypes.js';
 
 const normalizeTicker = (value = '') => String(value || '').trim().toUpperCase();
 const normalizeName = (value = '') => String(value || '').trim().toUpperCase();
@@ -20,7 +20,7 @@ export const isSameDividendSecurity = (record = {}, asset = {}) => {
   // 같은 종목을 여러 계좌에 나눠 담은 경우에만 계좌 범위가 붙는다.
   // 이때는 계좌가 다른 원장 행을 서로의 보유 수량으로 세면 안 된다.
   if (asset.dividendAccountScope
-    && normalizeAccountType(record.accountType) !== asset.dividendAccountScope) {
+    && getAccountScope(record) !== asset.dividendAccountScope) {
     return false;
   }
 
@@ -161,9 +161,9 @@ export const buildDividendCalculationAssets = (assets = [], ledger = []) => {
   const safeLedger = Array.isArray(ledger) ? ledger : [];
 
   /**
-   * 같은 종목을 두 계좌(예: ISA + 일반)에 나눠 담으면 과세 방식이 서로 다르다.
-   * 종목만으로 묶으면 한쪽 자산이 다른 쪽을 덮어써서, 살아남은 계좌의 과세 방식이
-   * 합쳐진 전체 수량에 적용된다.
+   * 같은 종목을 두 계좌(예: ISA + 일반, 또는 이름이 다른 두 일반계좌)에 나눠 담으면
+   * 계좌마다 배당을 따로 봐야 한다. 종목만으로 묶으면 한쪽 자산이 다른 쪽을 덮어써서,
+   * 살아남은 계좌의 과세 방식이 합쳐진 전체 수량에 적용된다.
    *
    * 다만 모든 종목을 계좌별로 쪼개면 계좌 정보가 없는 옛 원장 행이 짝을 잃으므로,
    * 실제로 두 개 이상의 계좌에 걸쳐 있는 종목만 분리한다.
@@ -173,7 +173,7 @@ export const buildDividendCalculationAssets = (assets = [], ledger = []) => {
     const security = getSecurityKey(asset);
     if (!security) return;
     const accounts = accountsBySecurity.get(security) || new Set();
-    accounts.add(normalizeAccountType(asset.accountType));
+    accounts.add(getAccountScope(asset));
     accountsBySecurity.set(security, accounts);
   });
 
@@ -194,15 +194,15 @@ export const buildDividendCalculationAssets = (assets = [], ledger = []) => {
 
     const netByAccount = new Map();
     securityRows.forEach((row) => {
-      const account = normalizeAccountType(row.accountType);
+      const account = getAccountScope(row);
       netByAccount.set(account, (netByAccount.get(account) || 0) + signedQuantity(row));
     });
 
-    const assetAccounts = new Set(securityAssets.map((asset) => normalizeAccountType(asset.accountType)));
+    const assetAccounts = new Set(securityAssets.map(getAccountScope));
     if (netByAccount.size !== assetAccounts.size) return false;
 
     return securityAssets.every((asset) => {
-      const net = netByAccount.get(normalizeAccountType(asset.accountType));
+      const net = netByAccount.get(getAccountScope(asset));
       if (net === undefined) return false;
       return Math.abs(net - (Number(asset.quantity) || 0)) <= 1e-6;
     });
@@ -219,7 +219,7 @@ export const buildDividendCalculationAssets = (assets = [], ledger = []) => {
     const security = getSecurityKey(record);
     if (!security) return '';
     return isAccountSplit(record)
-      ? `${security}::${normalizeAccountType(record.accountType)}`
+      ? `${security}::${getAccountScope(record)}`
       : security;
   };
 
@@ -229,7 +229,7 @@ export const buildDividendCalculationAssets = (assets = [], ledger = []) => {
     const key = getGroupKey(asset);
     if (!key) return;
     bySecurity.set(key, isAccountSplit(asset)
-      ? { ...asset, dividendAccountScope: normalizeAccountType(asset.accountType) }
+      ? { ...asset, dividendAccountScope: getAccountScope(asset) }
       : asset);
   });
 
@@ -259,6 +259,7 @@ export const buildDividendCalculationAssets = (assets = [], ledger = []) => {
       || (/^\d{6}$/.test(ticker) ? 'KRW' : 'USD');
 
     const accountType = firstBuy.accountType || representative.accountType || 'GENERAL';
+    const accountName = normalizeAccountName(firstBuy.accountName || representative.accountName);
 
     bySecurity.set(key, {
       id: `dividend-history-${key}`,
@@ -269,12 +270,13 @@ export const buildDividendCalculationAssets = (assets = [], ledger = []) => {
       originalCurrency: currency,
       accountType,
       accountTypeSource: firstBuy.accountTypeSource || representative.accountTypeSource || '',
+      accountName,
       buyDate: firstBuy.date || firstBuy.buyDate || '',
       quantity: 0,
       securityType: firstBuy.securityType || representative.securityType || '',
       historicalOnly: true,
       ...(isAccountSplit(firstBuy)
-        ? { dividendAccountScope: normalizeAccountType(accountType) }
+        ? { dividendAccountScope: getAccountScope({ accountType, accountName }) }
         : {}),
     });
   });

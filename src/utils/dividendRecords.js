@@ -7,7 +7,7 @@
 // 같은 날 여러 계좌로 들어온 배당은 서로 다른 건이므로 날짜만으로 합치지 않는다.
 import { getTradeRound } from './tradeReconciliation.js';
 import { getDividendReportingDate } from './dividendDates.js';
-import { normalizeAccountType } from './accountTypes.js';
+import { getAccountScope } from './accountTypes.js';
 
 const normalizeTicker = (ticker = '') => String(ticker || '').trim().toUpperCase();
 const isDeletedDividendRecord = (dividend = {}) => Boolean(dividend.deletedAt || dividend.status === 'deleted');
@@ -24,22 +24,22 @@ const getRecordTimestamp = (dividend = {}) => {
 
 /**
  * 배당 이벤트 하나를 식별하는 키.
- * 계좌 유형까지 들어가야 한다 — 이 키가 mergeAutomaticDividendRecords에서 어떤
- * 기록이 살아남을지 정하기 때문에, 계좌를 빼면 ISA분과 일반계좌분 중 한쪽이
- * 조용히 사라진다.
+ * 계좌 유형·이름까지 들어가야 한다 — 이 키가 mergeAutomaticDividendRecords에서 어떤
+ * 기록이 살아남을지 정하기 때문에, 계좌를 빼면 ISA분과 일반계좌분(또는 두 일반계좌분)
+ * 중 한쪽이 조용히 사라진다.
  */
 export const getAutomaticDividendEventKey = (dividend = {}) => [
   normalizeTicker(dividend.ticker) || String(dividend.name || '').trim().toUpperCase(),
-  normalizeAccountType(dividend.accountType),
+  getAccountScope(dividend),
   Number(dividend.round) || 1,
   dividend.exDate || dividend.date || '',
 ].join('::');
 
-// 같은 종목이라도 계좌 유형이 다르면 과세가 다른 별개의 보유분이다.
+// 같은 종목이라도 계좌가 다르면 별개의 보유분이다.
 // 계좌를 빼고 묶으면 ISA분과 일반계좌분이 한 건으로 합쳐지면서 한쪽이 사라진다.
 const getAutomaticDividendAssetKey = (dividend = {}) => [
   normalizeTicker(dividend.ticker) || String(dividend.name || '').trim().toUpperCase(),
-  normalizeAccountType(dividend.accountType),
+  getAccountScope(dividend),
 ].join('::');
 
 const getDateDistanceInDays = (left = '', right = '') => {

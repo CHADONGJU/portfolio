@@ -7,6 +7,7 @@ import ModalOverlay from '../ModalOverlay.jsx';
 import BrokerFeeFields from '../BrokerFeeFields.jsx';
 import { formatInputNumber, formatMoney, getCurrencySymbol, sanitizeNumericInput } from '../../utils/formatters.js';
 import { formatFeeRateInput, getSellTaxRatePercent, isDomesticEtfLikeAsset } from '../../utils/tradeCosts.js';
+import { formatNameWithAccount } from '../../utils/accountTypes.js';
 
 const SellAssetModal = ({
   asset,
@@ -24,7 +25,7 @@ const SellAssetModal = ({
       <div className="bg-surface w-full max-w-110 rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
         <div className="flex justify-between items-center gap-4 mb-6 md:mb-8">
           <h3 id="sell-asset-title" className="text-lg md:text-xl font-bold text-ink whitespace-nowrap">
-            {asset.name} 매도
+            {formatNameWithAccount(asset.name, asset.accountName)} 매도
           </h3>
           <button
             onClick={onClose}

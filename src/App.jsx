@@ -137,8 +137,10 @@ import {
 } from './utils/dividendCalculation';
 import {
   ACCOUNT_TYPE_GENERAL,
+  getAccountNameKeySuffix,
   isDividendTaxDeferredAccount,
   migrateUserConfirmedAccountTypes,
+  normalizeAccountName,
   normalizeAccountType,
 } from './utils/accountTypes';
 import {
@@ -287,6 +289,8 @@ const buildLedgerEntry = ({
   currency: asset.currency || 'KRW',
   accountType: normalizeAccountType(asset.accountType),
   accountTypeSource: asset.accountTypeSource || '',
+  // 같은 종목을 여러 계좌에 따로 담았을 때 어느 계좌의 거래인지 가르는 값이다.
+  accountName: normalizeAccountName(asset.accountName),
   // 보유 회차. 전량 매도 후 재매수한 같은 종목을 구분하는 기준값이다.
   round: getTradeRound(asset),
   side,
@@ -439,11 +443,14 @@ const mergeDividendResultsByAsset = (
 };
 
 const mergeDividendAssetRegistry = (previousRegistry = [], nextRegistry = [], assets = []) => {
-  const getRegistryKey = (entry = {}) => (
-    String(entry.ticker || '').trim().toUpperCase()
-    || (entry.assetId !== undefined && entry.assetId !== null ? `id:${entry.assetId}` : '')
-    || String(entry.name || '').trim().toUpperCase()
-  );
+  // 같은 종목을 계좌별로 따로 담았으면 계좌마다 갱신 기록을 둔다.
+  // 한 칸을 나눠 쓰면 짝을 못 찾은 쪽이 시세를 받을 때마다 배당을 다시 받아온다.
+  const getRegistryKey = (entry = {}) => {
+    const baseKey = String(entry.ticker || '').trim().toUpperCase()
+      || (entry.assetId !== undefined && entry.assetId !== null ? `id:${entry.assetId}` : '')
+      || String(entry.name || '').trim().toUpperCase();
+    return baseKey ? `${baseKey}${getAccountNameKeySuffix(entry)}` : '';
+  };
   const activeAssetKeys = new Set(assets.map(getRegistryKey).filter(Boolean));
   const registryByKey = new Map();
 
@@ -662,6 +669,7 @@ const buildAutoDividendRows = ({
         ticker: asset.ticker || '',
         category: asset.category || '',
         round: getTradeRound(asset),
+        accountName: normalizeAccountName(asset.accountName),
         quantity: calculation.quantity,
         perShareGrossAmount: calculation.perShareGrossAmount,
         perShareNetAmount: calculation.perShareNetAmount,
@@ -1027,6 +1035,10 @@ const App = () => {
   buyDate: defaultBuyDate,
   memo: '',
   accountType: ACCOUNT_TYPE_GENERAL,
+  // 증권사 계좌. 고르지 않으면(빈 값) 같은 종목의 기존 보유분에 합쳐진다.
+  accountName: '',
+  // 목록에 없는 계좌 이름을 직접 쓰는 중인지. 화면 상태라 자산에는 저장하지 않는다.
+  isCustomAccountName: false,
   brokerId: DEFAULT_BROKER_ID,
   brokerFeeRate: '0',
   // 매수 수수료도 매도처럼 증권사 화면에 찍힌 금액을 그대로 받는다(요율 % 입력은 두지 않는다).
@@ -1563,10 +1575,14 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
             const nextAutoDividends = successfulResults
               .flatMap((result) => result.rows)
               .sort((a, b) => new Date(b.date) - new Date(a.date));
+            // 계좌 이름은 넣어야 한 계좌를 갱신할 때 같은 종목의 다른 계좌 배당이
+            // 무효화되지 않는다. 계좌 유형은 예전처럼 빼 둔다 — 유형을 바꾼 자산의
+            // 옛 유형 배당 기록이 이 무효화로 정리되기 때문이다.
             const refreshedSourceEventKeys = successfulResults.flatMap((result) => (
               (result.sourceEventDates || []).map((date) => getAutomaticDividendEventKey({
                 ticker: result.asset.ticker,
                 name: result.asset.name,
+                accountName: result.asset.accountName,
                 round: getTradeRound(result.asset),
                 date,
               }))
@@ -1577,6 +1593,7 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
               assetId: result.asset.id,
               name: result.asset.name,
               ticker: result.asset.ticker,
+              accountName: normalizeAccountName(result.asset.accountName),
               category: result.asset.category,
               currency: result.asset.currency,
               hasDividends: result.hasDividends,
@@ -2452,6 +2469,8 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
       ticker: asset.ticker,
       category: asset.category,
       currency: asset.currency,
+      accountType: normalizeAccountType(asset.accountType),
+      accountName: normalizeAccountName(asset.accountName),
       round: getTradeRound(asset),
       side: action === '매도' ? 'sell' : 'buy',
       action,
@@ -2491,6 +2510,9 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
       ticker: matchedAsset?.ticker || manualMemo.ticker,
       category: matchedAsset?.category || '',
       currency: matchedAsset?.currency || manualMemo.currency,
+      // 보유 중인 종목에 붙는 기록이면 그 자산의 계좌로 남겨야 같은 원장에 합쳐진다.
+      accountType: matchedAsset?.accountType,
+      accountName: normalizeAccountName(matchedAsset?.accountName),
     };
     const memoId = Date.now() + Math.random();
     const ledgerId = `memo-${memoId}`;
@@ -2501,6 +2523,8 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
       ticker: manualMemoAsset.ticker,
       category: manualMemoAsset.category,
       currency: manualMemoAsset.currency,
+      accountType: normalizeAccountType(manualMemoAsset.accountType),
+      accountName: manualMemoAsset.accountName,
       side: manualMemo.action === '매도' ? 'sell' : 'buy',
       action: manualMemo.action,
       quantity: parseNumber(manualMemo.quantity),
@@ -2546,6 +2570,26 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
   });
   setIsUpdatingAsset(true);
 };
+
+  // 자산 추가 창에서 고를 수 있게, 지금까지 쓴 계좌 이름을 모아 둔다.
+  const accountNameOptions = useMemo(() => (
+    [...new Set([...assets, ...tradeLedger].map((record) => normalizeAccountName(record.accountName)))]
+      .filter(Boolean)
+      .sort((left, right) => left.localeCompare(right, 'ko'))
+  ), [assets, tradeLedger]);
+
+  // 추가하려는 종목을 이미 들고 있으면 어느 계좌에 있는지 보여줘서,
+  // 합쳐질지 따로 추가될지를 저장 전에 알 수 있게 한다.
+  const newAssetHeldAccountNames = useMemo(() => {
+    const ticker = normalizeInputTicker(newAsset.ticker);
+    const name = String(newAsset.name || '').trim();
+    if (!ticker && !name) return [];
+    return assets
+      .filter((asset) => (
+        ticker ? normalizeInputTicker(asset.ticker) === ticker : asset.name === name
+      ) && parseNumber(asset.quantity) > 0)
+      .map((asset) => normalizeAccountName(asset.accountName));
+  }, [assets, newAsset.ticker, newAsset.name]);
 
   const openAddAssetModal = () => {
   setNewAsset({
@@ -2775,6 +2819,8 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
     ticker: selectedAssetToSell.ticker,
     category: selectedAssetToSell.category,
     currency: selectedAssetToSell.currency,
+    accountType: normalizeAccountType(selectedAssetToSell.accountType),
+    accountName: normalizeAccountName(selectedAssetToSell.accountName),
     round: getTradeRound(selectedAssetToSell),
     buyDate: selectedAssetToSell.buyDate,
     sellDate: sellForm.sellDate,
@@ -2977,8 +3023,9 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
 
     // 이미 보유 중이면 그 회차에 합산(추가 매수)하고,
     // 전량 매도되어 남은 수량이 없으면 새 회차를 열어 이전 기록과 분리한다.
+    const accountName = normalizeAccountName(newAsset.accountName);
     const assetRound = resolveNextTradeRound({
-      record: { ticker, name: newAsset.name, category: newAsset.category },
+      record: { ticker, name: newAsset.name, category: newAsset.category, accountName },
       assets,
       tradeLedger,
     });
@@ -2991,6 +3038,7 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
       currency: assetCurrency,
       accountType: normalizeAccountType(newAsset.accountType),
       accountTypeSource: 'user',
+      accountName,
       round: assetRound,
       averagePrice: nativeAveragePrice, 
       quantity: parsedQty, 
@@ -3005,8 +3053,8 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
       color: getCategoryDetailColor(newAsset.category, assets.filter(asset => asset.category === newAsset.category).length)
     };
 
-    // 같은 회차가 이미 있으면(= 보유 중인 종목을 또 추가한 경우) 평단가를 합산한다.
-    // 회차가 새로 열렸다면 아래 find는 비어 있으므로 별도 자산으로 추가된다.
+    // 같은 계좌·회차가 이미 있으면(= 보유 중인 종목을 또 추가한 경우) 평단가를 합산한다.
+    // 계좌 이름이 다르거나 회차가 새로 열렸다면 아래 find는 비어 있으므로 별도 자산으로 추가된다.
     setAssets(prevAssets => {
       const assetIdentity = getAssetIdentity(asset);
       const existing = prevAssets.find(candidate => getAssetIdentity(candidate) === assetIdentity);
@@ -3041,6 +3089,10 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
           : candidate
       )));
     });
+    // 기존 보유분에 합쳐지는 매수면 원장·메모도 그 자산의 id로 남긴다. 위에서 새로 만든 id는
+    // 저장되지 않으므로, 그대로 쓰면 매수 기록 편집과 자산 삭제에서 이 매수 건이 빠진다.
+    const mergeTarget = assets.find(candidate => getAssetIdentity(candidate) === getAssetIdentity(asset));
+    const recordAsset = mergeTarget ? { ...asset, id: mergeTarget.id } : asset;
     const ledgerId = `buy-${Date.now()}-${Math.random()}`;
     const buyCostFields = {
       brokerId: buyBrokerId,
@@ -3050,7 +3102,7 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
       brokerFee: buyBrokerFee,
     };
     addTradeMemo({
-      asset,
+      asset: recordAsset,
       ledgerId,
       action: '매수',
       quantity: parsedQty,
@@ -3061,7 +3113,7 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
     });
     addLedgerEntry({
       sourceId: ledgerId,
-      asset,
+      asset: recordAsset,
       side: 'buy',
       quantity: parsedQty,
       price: parsedAvgPrice,
@@ -3298,6 +3350,8 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
           newAssetBuyFeePreview={newAssetBuyFeePreview}
           newAssetFeeCurrency={newAssetFeeCurrency}
           resolvedCurrency={getAssetInputCurrency(newAsset.category, newAsset.ticker, newAsset.currency)}
+          accountNameOptions={accountNameOptions}
+          heldAccountNames={newAssetHeldAccountNames}
           onAddAsset={handleAddAsset}
           onClose={() => setIsAdding(false)}
         />

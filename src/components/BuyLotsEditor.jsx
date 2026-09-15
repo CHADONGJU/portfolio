@@ -2,7 +2,7 @@
 // 한 종목의 매수 건들을 표로 펼쳐 수량·단가·날짜·수수료를 직접 고친다.
 // 증권사 화면과 평단가가 맞지 않을 때 사용자가 직접 맞출 수 있는 통로다.
 import { Plus, Trash2, X } from 'lucide-react';
-import { ACCOUNT_TYPE_OPTIONS, normalizeAccountType } from '../utils/accountTypes';
+import { ACCOUNT_TYPE_OPTIONS, formatNameWithAccount, normalizeAccountType } from '../utils/accountTypes';
 import { formatInputNumber, formatMoney, sanitizeNumericInput } from '../utils/formatters';
 import { parseTradeNumber as parseNumber } from '../utils/tradeReconciliation';
 
@@ -12,7 +12,7 @@ export default function BuyLotsEditor({ asset, drafts, summary, accountType, onA
       <div className="flex justify-between items-start gap-4 px-6 pt-6 md:px-7 md:pt-7 mb-5 md:mb-6 shrink-0">
         <div className="min-w-0">
           <h3 id="manage-buys-title" className="text-lg md:text-xl font-bold text-ink truncate">
-            {asset.name} 매수 기록
+            {formatNameWithAccount(asset.name, asset.accountName)} 매수 기록
           </h3>
           <p className="text-[12px] md:text-xs text-ink-mute font-bold mt-1 truncate">
             {asset.ticker || '-'} · {drafts.length.toLocaleString()}개 기록

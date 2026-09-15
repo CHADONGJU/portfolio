@@ -13,6 +13,7 @@ import { sortDividendRecordsNewestFirst } from '../utils/dividendRecords.js';
 import { resolveDividendIncomeRate } from '../utils/dividendIncome.js';
 import { formatKoreanDate } from '../utils/dates.js';
 import { calculateAnnualDividendYield } from '../utils/annualDividendYield.js';
+import { normalizeAccountName } from '../utils/accountTypes.js';
 import {
   buildCanonicalTradeRows,
   buildKrwCostBasisByAsset,
@@ -363,7 +364,15 @@ export const usePortfolioMetrics = ({
     const groups = new Map();
     const addGroup = (record) => {
       const key = groupKey(record);
-      if (!groups.has(key)) groups.set(key, { key, name: record.name, round: getTradeRound(record) });
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          name: record.name,
+          round: getTradeRound(record),
+          // 같은 종목을 계좌별로 따로 담았으면 줄이 계좌마다 갈린다. 화면에서 구분할 이름이다.
+          accountName: normalizeAccountName(record.accountName),
+        });
+      }
       return key;
     };
     [...enhancedAssets, ...ledgerRows].forEach((record) => {
@@ -391,7 +400,7 @@ export const usePortfolioMetrics = ({
       dividendsByGroup.get(key).push(dividend);
     });
 
-    return [...groups.values()].map(({ key, name, round }) => {
+    return [...groups.values()].map(({ key, name, round, accountName }) => {
       const inGroup = (record) => groupKey(record) === key;
       const assetRows = enhancedAssets.filter(inGroup);
       const tradeRows = ledgerRows.filter(inGroup);
@@ -463,6 +472,7 @@ export const usePortfolioMetrics = ({
         name,
         round,
         key,
+        accountName,
         // 같은 종목을 팔았다 다시 산 경우 이름만으로는 두 줄이 구분되지 않는다.
         // 회차 번호를 붙이는 대신 날짜로 갈라 보여준다.
         firstBuyDate,
@@ -547,10 +557,11 @@ export const usePortfolioMetrics = ({
       const receivedAssetDivs = receivedDividends.filter(d => (
         d.name === asset.name && (Number(d.amount) || 0) > 0
       ));
-      const currentAsset = assets.find((candidate) => (
+      // 같은 종목을 여러 계좌에 나눠 담았으면 보유 자산이 여러 개다. 예상 배당은 합계 수량으로 본다.
+      const heldAssets = assets.filter((candidate) => (
         candidate.name === asset.name && parseMetricNumber(candidate.quantity) > 0
       ));
-      const isCurrentHolding = Boolean(currentAsset);
+      const isCurrentHolding = heldAssets.length > 0;
 
       // 매도한 종목은 자동 배당 피드나 과거 레지스트리만 남아 있다는 이유로
       // 목록에 두지 않는다. 실제 수령한 배당이 있을 때만 과거 내역으로 보존한다.
@@ -582,15 +593,20 @@ export const usePortfolioMetrics = ({
       const lastDate = new Date(`${getDividendExDate(lastDiv)}T00:00:00`);
       const lastReportingDateKey = getDividendReportingDate(lastDiv);
       const lastReportingDate = new Date(`${lastReportingDateKey}T00:00:00`);
-      const currentQuantity = isCurrentHolding ? parseMetricNumber(currentAsset.quantity) : 0;
+      const currentQuantity = heldAssets.reduce((sum, candidate) => sum + parseMetricNumber(candidate.quantity), 0);
       const lastDividendQuantity = Number(lastDiv.quantity) || 0;
       const perShareNetAmount = Number(lastDiv.perShareNetAmount)
         || (lastDividendQuantity > 0 ? lastDiv.amount / lastDividendQuantity : 0);
       expectedAmount = perShareNetAmount * currentQuantity;
 
       let monthDiff = 3; 
-      if (assetDivs.length > 1) {
-        const prevDate = new Date(`${getDividendExDate(assetDivs[1])}T00:00:00`);
+      // 계좌마다 같은 배당락일의 기록이 한 건씩 있으므로, 바로 다음 기록이 아니라
+      // 배당락일이 다른 직전 회차와 비교해야 지급 주기가 나온다.
+      const previousDiv = assetDivs.find((dividend) => (
+        getDividendExDate(dividend) !== getDividendExDate(lastDiv)
+      ));
+      if (previousDiv) {
+        const prevDate = new Date(`${getDividendExDate(previousDiv)}T00:00:00`);
         const daysDiff = (lastDate - prevDate) / (1000 * 60 * 60 * 24);
         if (daysDiff >= 20 && daysDiff <= 45) monthDiff = 1;
         else if (daysDiff >= 80 && daysDiff <= 110) monthDiff = 3;
@@ -604,14 +620,16 @@ export const usePortfolioMetrics = ({
       const nextDate = hasLastExDate ? addMonthsClamped(lastDate, monthDiff) : null;
       const nextMonth = nextDate ? nextDate.getMonth() + 1 : 0;
       const nextYear = nextDate ? nextDate.getFullYear() : 0;
-      const currentEnhancedAsset = enhancedAssets.find((candidate) => candidate.name === asset.name);
+      const currentEnhancedAssets = enhancedAssets.filter((candidate) => candidate.name === asset.name);
       const {
         expectedAnnualAmount,
         annualDividendYieldPercent,
       } = calculateAnnualDividendYield({
         expectedPaymentAmount: expectedAmount,
         intervalMonths: monthDiff,
-        currentValue: currentEnhancedAsset?.currentNative,
+        currentValue: currentEnhancedAssets.length > 0
+          ? currentEnhancedAssets.reduce((sum, candidate) => sum + (Number(candidate.currentNative) || 0), 0)
+          : undefined,
       });
 
       if (!isCurrentHolding) {

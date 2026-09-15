@@ -10,7 +10,7 @@
 // - 원장을 다시 쓸 때 기존 메모를 id로 다시 붙여 준다. 그러지 않으면 매수마다
 //   적어 둔 메모가 저장 한 번에 전부 사라진다.
 import { useMemo, useState } from 'react';
-import { ACCOUNT_TYPE_GENERAL, normalizeAccountType } from '../utils/accountTypes.js';
+import { ACCOUNT_TYPE_GENERAL, normalizeAccountName, normalizeAccountType } from '../utils/accountTypes.js';
 import { getAssetIdentity, isRecordForAsset, mergeUniqueAssets } from '../utils/assetIdentity.js';
 import { editBuyLot, resolveBuyLotFxRate } from '../utils/buyLotEditing.js';
 import { formatInputNumber, numbersMatch, parseNumber } from '../utils/formatters.js';
@@ -218,6 +218,8 @@ export const useBuyLotsEditor = ({
       currency: selectedAssetToManageBuys.currency || 'KRW',
       accountType: normalizeAccountType(accountTypeDraft),
       accountTypeSource: 'user',
+      // 계좌 이름은 원장 키의 일부다. 빠지면 이 매수 건들이 다른 계좌 보유분으로 옮겨 간다.
+      accountName: normalizeAccountName(selectedAssetToManageBuys.accountName),
       round: getTradeRound(selectedAssetToManageBuys),
       side: 'buy',
       action: '매수',
@@ -293,6 +295,7 @@ export const useBuyLotsEditor = ({
         currency: selectedAssetToManageBuys.currency || 'KRW',
         accountType: normalizeAccountType(accountTypeDraft),
         accountTypeSource: 'user',
+        accountName: normalizeAccountName(selectedAssetToManageBuys.accountName),
         round: getTradeRound(selectedAssetToManageBuys),
         side: 'buy',
         action: '매수',

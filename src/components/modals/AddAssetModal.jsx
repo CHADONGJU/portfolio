@@ -2,13 +2,48 @@
 // 종목 검색으로 이름·티커·현재가를 채우고, 분류·통화·수량·평단가·매수일과
 // 매수 수수료를 받는다. 외화 종목은 원화로 평단가를 넣을 수 있으며, 그때는
 // 매수일 환율로 현지 단가를 역산한다(App의 handleAddAsset).
+// 증권사 계좌를 고르면 같은 종목이라도 계좌마다 따로 보유한다(평단가 분리).
+// 고르지 않으면 예전처럼 같은 종목끼리 합쳐진다.
 import { Search, X } from 'lucide-react';
 import ModalOverlay from '../ModalOverlay.jsx';
 import BrokerFeeFields from '../BrokerFeeFields.jsx';
 import PriceInputCurrencyToggle from '../PriceInputCurrencyToggle.jsx';
 import { formatInputNumber, getCurrencySymbol, sanitizeNumericInput } from '../../utils/formatters.js';
 import { PORTFOLIO_CURRENCIES } from '../../utils/currencies.js';
-import { ACCOUNT_TYPE_OPTIONS, normalizeAccountType } from '../../utils/accountTypes.js';
+import { BROKER_FEE_PRESETS, formatFeeRateInput, getBrokerFeeRatePercent } from '../../utils/tradeCosts.js';
+import {
+  ACCOUNT_NAME_MAX_LENGTH,
+  ACCOUNT_TYPE_OPTIONS,
+  normalizeAccountName,
+  normalizeAccountType,
+} from '../../utils/accountTypes.js';
+
+const CUSTOM_ACCOUNT_OPTION = '__custom__';
+const UNASSIGNED_ACCOUNT_LABEL = '계좌 미지정';
+
+// 계좌 선택지로 쓰는 증권사 이름. '직접 입력'은 수수료용 항목이라 뺀다.
+const BROKER_ACCOUNT_NAMES = BROKER_FEE_PRESETS
+  .filter((broker) => broker.id !== 'custom')
+  .map((broker) => broker.name);
+
+/** 이미 보유 중인 종목이면, 이번 매수가 기존 보유분에 합쳐지는지 따로 추가되는지 알려준다. */
+const describeAccountMerge = (heldAccountNames = [], accountName = '') => {
+  if (heldAccountNames.length === 0) return null;
+  const heldLabels = [...new Set(heldAccountNames)]
+    .map((name) => (name ? `'${name}'` : UNASSIGNED_ACCOUNT_LABEL));
+  const target = normalizeAccountName(accountName);
+  return `이 종목은 이미 ${heldLabels.join(', ')}에 있어요. `
+    + (heldAccountNames.includes(target)
+      ? `${target ? `'${target}'` : UNASSIGNED_ACCOUNT_LABEL} 보유분에 합쳐집니다.`
+      : '계좌가 달라 평단가를 따로 관리합니다.');
+};
+
+/** 선택 상자에 보일 값. 목록에 없는 이름을 직접 쓰는 중이면 '기타'가 선택돼 있어야 한다. */
+const getAccountSelectValue = (newAsset, options) => {
+  if (newAsset.isCustomAccountName) return CUSTOM_ACCOUNT_OPTION;
+  const accountName = normalizeAccountName(newAsset.accountName);
+  return options.includes(accountName) ? accountName : '';
+};
 
 const AddAssetModal = ({
   newAsset,
@@ -16,9 +51,33 @@ const AddAssetModal = ({
   newAssetBuyFeePreview,
   newAssetFeeCurrency,
   resolvedCurrency,
+  accountNameOptions = [],
+  heldAccountNames = [],
   onAddAsset,
   onClose,
-}) => (
+}) => {
+  // 증권사 목록 + 예전에 직접 입력해 쓴 계좌 이름.
+  const accountOptions = [...new Set([...BROKER_ACCOUNT_NAMES, ...accountNameOptions])];
+
+  const handleAccountSelect = (value) => {
+    if (value === CUSTOM_ACCOUNT_OPTION) {
+      setNewAsset({ ...newAsset, accountName: '', isCustomAccountName: true });
+      return;
+    }
+    // 증권사 계좌를 고르면 매수 수수료도 그 증권사 기준으로 맞춘다.
+    const broker = BROKER_FEE_PRESETS.find((preset) => preset.id !== 'custom' && preset.name === value);
+    setNewAsset({
+      ...newAsset,
+      accountName: value,
+      isCustomAccountName: false,
+      ...(broker ? {
+        brokerId: broker.id,
+        brokerFeeRate: formatFeeRateInput(getBrokerFeeRatePercent(broker.id, newAsset.category)),
+      } : {}),
+    });
+  };
+
+  return (
     <ModalOverlay overlayClassName="z-[100]" labelledBy="add-asset-title" onClose={onClose}>
       <div className="bg-surface w-full max-w-110 rounded-t-3xl md:rounded-3xl p-6 md:p-8 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-8 shadow-modal anim-rise max-h-[88vh] overflow-y-auto scroll-soft">
         <div className="flex justify-between items-center mb-6 md:mb-8 sticky top-0 bg-surface z-10 pt-2 pb-2">
@@ -100,23 +159,53 @@ const AddAssetModal = ({
           </div>
 
           <div>
-            <label htmlFor="app-field-14" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
-              보유 계좌
-            </label>
-            <select id="app-field-14"
-              className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
-              value={newAsset.accountType}
-              onChange={(e) => setNewAsset({
-                ...newAsset,
-                accountType: normalizeAccountType(e.target.value),
-              })}
-            >
-              {ACCOUNT_TYPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
+            <div className="grid grid-cols-2 gap-3 md:gap-4">
+              <div>
+                <label htmlFor="app-field-14" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
+                  계좌 유형
+                </label>
+                <select id="app-field-14"
+                  className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                  value={newAsset.accountType}
+                  onChange={(e) => setNewAsset({
+                    ...newAsset,
+                    accountType: normalizeAccountType(e.target.value),
+                  })}
+                >
+                  {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="add-asset-account" className="block text-[11px] md:text-[12px] font-bold text-ink-mute mb-1.5 ml-1">
+                  증권사 계좌 (선택)
+                </label>
+                <select id="add-asset-account"
+                  className="w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink"
+                  value={getAccountSelectValue(newAsset, accountOptions)}
+                  onChange={(e) => handleAccountSelect(e.target.value)}
+                >
+                  <option value="">선택 안 함</option>
+                  {accountOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+                  <option value={CUSTOM_ACCOUNT_OPTION}>기타 (직접 입력)</option>
+                </select>
+              </div>
+            </div>
+            {newAsset.isCustomAccountName && (
+              <input
+                type="text"
+                aria-label="증권사 계좌 이름"
+                maxLength={ACCOUNT_NAME_MAX_LENGTH}
+                placeholder="예: 키움증권"
+                className="mt-3 w-full px-4 h-13 bg-canvas rounded-2xl outline-none focus:ring-2 focus:ring-brand font-bold text-xs md:text-sm text-ink placeholder:text-ink-mute placeholder:font-medium"
+                value={newAsset.accountName || ''}
+                onChange={(e) => setNewAsset({ ...newAsset, accountName: e.target.value })}
+              />
+            )}
             <p className="mt-1.5 ml-1 text-[11px] font-bold text-ink-mute leading-relaxed">
-              배당은 같은 공식 분배금이라도 계좌 유형에 따라 즉시 원천징수 여부가 달라집니다.
+              {describeAccountMerge(heldAccountNames, newAsset.accountName)
+                || '증권사 계좌를 고르면 같은 종목이라도 계좌별로 평단가를 따로 관리해요. 고르지 않으면 같은 종목끼리 합쳐집니다.'}
             </p>
           </div>
 
@@ -228,6 +317,7 @@ const AddAssetModal = ({
         </div>
       </div>
     </ModalOverlay>
-);
+  );
+};
 
 export default AddAssetModal;

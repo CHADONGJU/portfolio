@@ -3,6 +3,7 @@
 // 전량 매도 후 재매수한 물량의 기록이 이전 회차에 섞이지 않는다.
 import { getTradeRound } from './tradeReconciliation.js';
 import { parseNumber } from './formatters.js';
+import { getAccountNameKeySuffix, normalizeAccountName } from './accountTypes.js';
 
 const normalizeTicker = (ticker = '') => String(ticker || '').trim().toUpperCase();
 
@@ -20,6 +21,9 @@ export const isRecordForAsset = (record = {}, asset = {}) => {
   if (assetId && recordAssetId) return assetId === recordAssetId;
   if (assetId && record.sourceId === `asset-${assetId}`) return true;
 
+  // 같은 종목을 다른 계좌에 따로 담았으면 티커가 같아도 남의 기록이다.
+  if (normalizeAccountName(record.accountName) !== normalizeAccountName(asset.accountName)) return false;
+
   const assetTicker = normalizeTicker(asset.ticker);
   const recordTicker = normalizeTicker(record.ticker);
   if (assetTicker && recordTicker) return assetTicker === recordTicker;
@@ -27,8 +31,10 @@ export const isRecordForAsset = (record = {}, asset = {}) => {
   return Boolean(asset.name && record.name && asset.name === record.name);
 };
 
-/** 자산 한 건의 정체성. 같은 종목이라도 회차가 다르면 다른 자산이다. */
-export const getAssetIdentity = (asset) => `${asset.ticker || ''}::${asset.name || ''}#${getTradeRound(asset)}`;
+/** 자산 한 건의 정체성. 같은 종목이라도 계좌 이름이나 회차가 다르면 다른 자산이다. */
+export const getAssetIdentity = (asset) => (
+  `${asset.ticker || ''}::${asset.name || ''}${getAccountNameKeySuffix(asset)}#${getTradeRound(asset)}`
+);
 
 const getAssetUpdatedAtTime = (asset = {}) => {
   const timestamp = new Date(asset.updatedAt || asset.createdAt || 0).getTime();

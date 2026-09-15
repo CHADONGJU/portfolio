@@ -8,6 +8,7 @@
 // 3) 원화 실현손익은 양도대금을 매도일 환율, 취득원가를 매수일 환율로 환산한다.
 //    증권사 원화 화면·양도소득세와 같은 기준이며 환차손익이 함께 들어간다.
 import { isRemovedAssetCategory } from '../constants.js';
+import { getAccountNameKeySuffix, normalizeAccountName } from './accountTypes.js';
 
 const EPSILON = 0.000001;
 
@@ -61,8 +62,8 @@ export const getTradeRound = (record = {}) => {
   return Number.isFinite(round) && round >= 1 ? Math.floor(round) : 1;
 };
 
-/** 회차를 뺀 "종목 자체"의 키. 새 회차 번호를 매길 때 같은 종목인지 판단하는 기준이다. */
-export const getTradeAssetBaseKey = (record = {}) => {
+/** 계좌와 회차를 모두 뺀 "종목 자체"의 키. 계좌가 달라도 시세는 같으므로 현재가를 나눠 쓸 때 쓴다. */
+export const getTradeSecurityKey = (record = {}) => {
   const ticker = normalizeTradeTicker(record.ticker || '');
   const name = String(record.name || record.stockName || '').trim();
   const category = String(record.category || '').trim();
@@ -71,6 +72,14 @@ export const getTradeAssetBaseKey = (record = {}) => {
   if (ticker) return `ticker:${ticker}`;
   return `name:${name}::${category}`;
 };
+
+/**
+ * 회차를 뺀 "한 계좌 안의 종목" 키. 새 회차 번호를 매길 때 같은 보유분인지 판단하는 기준이다.
+ * 계좌 이름이 다르면 같은 종목이라도 평단가·수량을 섞지 않는다.
+ */
+export const getTradeAssetBaseKey = (record = {}) => (
+  `${getTradeSecurityKey(record)}${getAccountNameKeySuffix(record)}`
+);
 
 export const getTradeAssetKey = (record = {}) => (
   `${getTradeAssetBaseKey(record)}#${getTradeRound(record)}`
@@ -484,8 +493,9 @@ export const reconcileAssetsAfterTradeDeletion = (
   if (!position.hasBuyRows || position.quantity <= EPSILON) return reconciledAssets;
 
   const firstBuyRow = position.rows.find((row) => row.side === 'buy') || deletedRecord;
+  // 계좌가 달라도 시세는 같으므로 다른 계좌의 같은 종목 현재가를 빌려 쓴다.
   const sameStockAsset = reconciledAssets.find((asset) => (
-    getTradeAssetBaseKey(asset) === getTradeAssetBaseKey(deletedRecord)
+    getTradeSecurityKey(asset) === getTradeSecurityKey(deletedRecord)
   ));
   const averagePrice = position.averagePrice;
   const currency = firstBuyRow.currency || deletedRecord.currency || 'KRW';
@@ -499,6 +509,7 @@ export const reconcileAssetsAfterTradeDeletion = (
     currency,
     accountType: firstBuyRow.accountType || deletedRecord.accountType || '',
     accountTypeSource: firstBuyRow.accountTypeSource || deletedRecord.accountTypeSource || '',
+    accountName: normalizeAccountName(firstBuyRow.accountName || deletedRecord.accountName),
     round: getTradeRound(deletedRecord),
     quantity: Number(position.quantity.toFixed(8)),
     averagePrice,
@@ -543,7 +554,7 @@ export const recoverMissingAssetsFromTradeLedger = (assets = [], tradeLedger = [
     if (!firstBuyRow || isRemovedAssetCategory(firstBuyRow.category)) return;
 
     const sameStockAsset = recoveredAssets.find((asset) => (
-      getTradeAssetBaseKey(asset) === getTradeAssetBaseKey(firstBuyRow)
+      getTradeSecurityKey(asset) === getTradeSecurityKey(firstBuyRow)
     ));
     const averagePrice = position.averagePrice;
     const currency = firstBuyRow.currency || 'KRW';
@@ -559,6 +570,7 @@ export const recoverMissingAssetsFromTradeLedger = (assets = [], tradeLedger = [
       currency,
       accountType: firstBuyRow.accountType || '',
       accountTypeSource: firstBuyRow.accountTypeSource || '',
+      accountName: normalizeAccountName(firstBuyRow.accountName),
       round: getTradeRound(firstBuyRow),
       quantity: Number(position.quantity.toFixed(8)),
       averagePrice,

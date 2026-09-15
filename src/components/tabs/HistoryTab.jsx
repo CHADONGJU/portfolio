@@ -13,7 +13,7 @@ import FeatureInfo from '../FeatureInfo.jsx';
 import ManualTradeEntryForm from '../ManualTradeEntryForm.jsx';
 import StockFilterCombobox from '../StockFilterCombobox.jsx';
 import TradeRecordEditor from '../TradeRecordEditor.jsx';
-import { getAccountTypeLabel } from '../../utils/accountTypes.js';
+import { formatNameWithAccount, getAccountTypeLabel } from '../../utils/accountTypes.js';
 import {
   getDividendEligibilityDate,
   getDividendExDate,
@@ -222,7 +222,7 @@ const HistoryTab = ({
                   return (
                     <tr key={summary.key || summary.name} className="hover:bg-canvas transition-colors">
                       <td className="px-4 py-4 md:px-8 md:py-6 whitespace-nowrap">
-                        <p className="text-sm md:text-base font-bold text-ink">{summary.name}</p>
+                        <p className="text-sm md:text-base font-bold text-ink">{formatNameWithAccount(summary.name, summary.accountName)}</p>
                         <p className="text-[11px] md:text-[12px] font-bold text-ink-mute mt-1">
                           {summary.ticker || summary.category || '기록 종목'}
                           {summary.displayDate && ` • ${summary.displayDate} ${summary.displayDateLabel}`}
@@ -435,7 +435,7 @@ const HistoryTab = ({
                             배당지급일 {getDividendOfficialPaymentDate(div) || '미정'}
                           </span>
                         </td>
-                        <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-bold text-ink whitespace-nowrap">{div.name}</td>
+                        <td className="px-4 py-4 md:px-8 md:py-5 text-sm md:text-base font-bold text-ink whitespace-nowrap">{formatNameWithAccount(div.name, div.accountName)}</td>
                         <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-ink-soft whitespace-nowrap">{Number.isFinite(Number(div.grossAmount)) ? formatMoney(div.grossAmount, div.currency) : '-'}</td>
                         <td className="px-4 py-4 md:px-8 md:py-5 text-right text-xs md:text-sm font-bold text-down whitespace-nowrap">{Number.isFinite(Number(div.taxAmount)) ? `-${formatMoney(div.taxAmount, div.currency)}` : '-'}</td>
                         <td className="px-4 py-4 md:px-8 md:py-5 text-right text-sm md:text-base font-bold text-ink whitespace-nowrap">{formatMoney(div.amount, div.currency)}</td>
@@ -583,7 +583,7 @@ const HistoryTab = ({
                               {action}
                             </span>
                             <div>
-                              <p className="text-sm md:text-base font-bold text-ink">{trade.name}</p>
+                              <p className="text-sm md:text-base font-bold text-ink">{formatNameWithAccount(trade.name, trade.accountName)}</p>
                               <div className="flex items-center gap-1.5 mt-1">
                                 {trade.ticker && (
                                   <p className="text-[11px] md:text-[12px] font-bold text-ink-mute">{trade.ticker}</p>

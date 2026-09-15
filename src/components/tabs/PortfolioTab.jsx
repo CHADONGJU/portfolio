@@ -8,6 +8,7 @@ import {
   Trash2, TrendingDown, TrendingUp, Wallet,
 } from 'lucide-react';
 import { formatMoney } from '../../utils/formatters.js';
+import { normalizeAccountName } from '../../utils/accountTypes.js';
 import { canSummarizeAsset } from '../../utils/stockInsightPayload.js';
 
 // 해외주식은 소수점 매수가 가능해 소수 여섯 자리까지 보여준다.
@@ -311,6 +312,7 @@ const PortfolioTab = ({
                       };
                     // 매수 시점 환율을 다 모르면 원금이 오늘 환율로 환산된 근사값이다.
                     const isApproxKrwPrincipal = isKrwView && asset.purchaseKRWSource === 'today-rate';
+                    const accountName = normalizeAccountName(asset.accountName);
 
                     return (
                     <tr key={asset.id} className="block md:table-row px-4 py-5 md:p-0 hover:bg-canvas/60 transition-all group">
@@ -320,7 +322,15 @@ const PortfolioTab = ({
                             {asset.name[0]}
                           </div>
                           <div className="min-w-0 flex-1">
-                            <p className="font-bold text-ink text-base md:text-[16px] leading-none truncate">{asset.name}</p>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <p className="font-bold text-ink text-base md:text-[16px] leading-none truncate">{asset.name}</p>
+                              {/* 같은 종목을 계좌별로 따로 담았을 때 두 줄을 구분하는 표시다. */}
+                              {accountName && (
+                                <span className="shrink-0 inline-flex px-1.5 py-1 rounded-md bg-line-soft text-ink-soft text-[11px] font-bold leading-none">
+                                  {accountName}
+                                </span>
+                              )}
+                            </div>
                             <p className="text-xs md:text-[13px] text-ink-mute font-bold mt-2 md:mt-1.5 truncate">
                               {asset.ticker} • {formatAssetQuantity(asset.quantity, asset.category)}주
                             </p>
