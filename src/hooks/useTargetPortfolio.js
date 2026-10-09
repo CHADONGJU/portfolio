@@ -11,9 +11,12 @@
 import { useMemo, useState } from 'react';
 import { getCategoryColor, getCategoryDetailColor, isPortfolioAssetCategory } from '../constants.js';
 import { getTargetItemCurrency } from '../utils/currencies.js';
-import { getTargetGroups } from '../utils/targetPortfolio.js';
-import { parseNumber, sanitizeNumericInput } from '../utils/formatters.js';
-import { getCachedKrwRate } from '../utils/exchangeRates.js';
+import {
+  buildTargetPortfolioFromHoldings, buildTargetPortfolioGuide, getTargetBudgetKRW,
+  getTargetGroups, normalizeTargetPercents,
+} from '../utils/targetPortfolio.js';
+import { sanitizeNumericInput } from '../utils/formatters.js';
+import { getSearchStockCurrency } from '../services/stockSearch.js';
 
 // 도넛 조각은 앞 조각들의 비중 합계 지점에서 시작한다. 누적값을 map 안에서
 // 굴리면 "렌더 중 변수 재할당"이 되어 React 규칙에 걸리므로, 훅 바깥의 순수
@@ -44,108 +47,11 @@ export const useTargetPortfolio = ({
   const [pickedTargetGroup, setSelectedTargetGroup] = useState(null);
   const [targetCategoryDraft, setTargetCategoryDraft] = useState('국내주식');
 
-  const targetBudgetKRW = parseNumber(targetPortfolio.budget) || totalConvertedKRW;
+  const targetBudgetKRW = getTargetBudgetKRW(targetPortfolio, totalConvertedKRW);
   const targetCategoryTotalPercent = targetPortfolio.categories.reduce((sum, category) => sum + (Number(category.percent) || 0), 0);
-  const targetPortfolioGuide = useMemo(() => {
-    const rate = exchangeRate || 1350;
-    const yenRate = jpyKrwRate || 9.5;
-    const toKrwPrice = (nativePrice, currency) => {
-      return nativePrice * getCachedKrwRate(currency, currencyRates, rate, yenRate);
-    };
-    const toNativePrice = (krwPrice, currency) => {
-      return krwPrice / getCachedKrwRate(currency, currencyRates, rate, yenRate);
-    };
-
-    return targetPortfolio.categories.map((categoryTarget) => {
-      const categoryAssets = enhancedAssets.filter((asset) => asset.category === categoryTarget.id);
-      const currentValue = categoryAssets.reduce((sum, asset) => sum + asset.currentKRW, 0);
-      const targetValue = targetBudgetKRW * ((Number(categoryTarget.percent) || 0) / 100);
-      const groups = getTargetGroups(targetPortfolio, categoryTarget.id);
-      const groupTotalPercent = groups.reduce((sum, group) => sum + (Number(group.percent) || 0), 0);
-      // 목표 종목에 실제로 연결된(매칭된) 보유 자산을 추적해, 계획에 아예 없는
-      // 보유 종목(리밸런싱 계획이 놓치고 있는 것)을 따로 골라낼 수 있게 한다.
-      const matchedAssets = new Set();
-
-      const enrichedGroups = groups.map((group) => {
-        const groupTargetValue = targetValue * ((Number(group.percent) || 0) / 100);
-        const items = group.items || [];
-        const itemTotalPercent = items.reduce((sum, item) => sum + (Number(item.percent) || 0), 0);
-        const enrichedItems = items.map((item) => {
-          const itemCurrency = getTargetItemCurrency(categoryTarget.id, item.ticker, item.currency);
-          // 같은 종목을 여러 계좌에 나눠 담았으면 보유 자산이 여러 개다. 목표 비중은
-          // 종목 단위이므로 전부 더해야 한다. 하나만 보면 "매수 필요"가 부풀려진다.
-          const itemAssets = categoryAssets.filter((asset) => (
-            asset.name === item.name || (item.ticker && asset.ticker?.toUpperCase() === item.ticker.toUpperCase())
-          ));
-          itemAssets.forEach((asset) => matchedAssets.add(asset));
-          const matchedAsset = itemAssets[0];
-          const currentItemValue = itemAssets.reduce((sum, asset) => sum + (asset.currentKRW || 0), 0);
-          const itemTargetValue = itemTotalPercent > 0
-            ? groupTargetValue * ((Number(item.percent) || 0) / itemTotalPercent)
-            : 0;
-          const gapValue = itemTargetValue - currentItemValue;
-          const currentPriceKRW = matchedAsset
-            ? toKrwPrice(matchedAsset.nativeCurrentPrice, matchedAsset.currency)
-            : parseNumber(item.price);
-          const currentPriceNative = matchedAsset
-            ? matchedAsset.nativeCurrentPrice
-            : (parseNumber(item.nativePrice) || toNativePrice(currentPriceKRW, itemCurrency));
-
-          return {
-            ...item,
-            currency: itemCurrency,
-            currentValue: currentItemValue,
-            targetValue: itemTargetValue,
-            gapValue,
-            currentPriceKRW,
-            currentPriceNative,
-            quantityToBuy: gapValue > 0 && currentPriceKRW > 0 ? gapValue / currentPriceKRW : 0,
-            quantityToSell: gapValue < 0 && currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
-            adjustmentSide: gapValue > 0 ? 'buy' : gapValue < 0 ? 'sell' : 'hold',
-            adjustmentQuantity: currentPriceKRW > 0 ? Math.abs(gapValue) / currentPriceKRW : 0,
-            matchedQuantity: itemAssets.reduce((sum, asset) => sum + (Number(asset.quantity) || 0), 0),
-            // 이름·티커가 어긋나 매칭이 조용히 실패하면 "매수 필요"가 실제보다
-            // 크게 나오는데, 화면에는 원인이 안 보인다. 매칭 성공 여부를 그대로 넘긴다.
-            isMatched: Boolean(matchedAsset),
-          };
-        });
-
-        return {
-          ...group,
-          targetValue: groupTargetValue,
-          currentValue: enrichedItems.reduce((sum, item) => sum + item.currentValue, 0),
-          itemTotalPercent,
-          items: enrichedItems,
-        };
-      });
-
-      const unassignedAssets = categoryAssets.filter((asset) => !matchedAssets.has(asset));
-      // 표를 스크롤하지 않고도 이 분류에 매수/매도가 몇 건 필요한지 헤더에서
-      // 바로 보이게, 폴더별로 흩어진 종목 조정 방향을 한 번에 센다.
-      const buyCount = enrichedGroups.reduce((sum, group) => (
-        sum + group.items.filter((item) => item.adjustmentSide === 'buy' && Math.abs(item.gapValue) > 1).length
-      ), 0);
-      const sellCount = enrichedGroups.reduce((sum, group) => (
-        sum + group.items.filter((item) => item.adjustmentSide === 'sell' && Math.abs(item.gapValue) > 1).length
-      ), 0);
-
-      return {
-        ...categoryTarget,
-        currentValue,
-        targetValue,
-        gapValue: targetValue - currentValue,
-        currentPercent: targetBudgetKRW > 0 ? (currentValue / targetBudgetKRW) * 100 : 0,
-        groupTotalPercent,
-        groups: enrichedGroups,
-        buyCount,
-        sellCount,
-        // 목표 계획(폴더·종목)에 하나도 안 걸린 보유 자산. 팔아야 할지 계획에
-        // 추가해야 할지는 사용자가 판단하되, 최소한 눈에는 보이게 한다.
-        unassignedAssets,
-        unassignedValue: unassignedAssets.reduce((sum, asset) => sum + asset.currentKRW, 0),
-      };
-    });
-  }, [targetPortfolio, enhancedAssets, targetBudgetKRW, exchangeRate, jpyKrwRate, currencyRates]);
+  const targetPortfolioGuide = useMemo(() => buildTargetPortfolioGuide({
+    targetPortfolio, enhancedAssets, totalConvertedKRW, exchangeRate, jpyKrwRate, currencyRates,
+  }), [targetPortfolio, enhancedAssets, totalConvertedKRW, exchangeRate, jpyKrwRate, currencyRates]);
   const targetCurrentChartData = useMemo(() => {
     const grouped = Object.values(enhancedAssets.reduce((acc, asset) => {
       if (!acc[asset.category]) {
@@ -214,12 +120,17 @@ export const useTargetPortfolio = ({
     let cumulativePercent = 0;
     if (selectedTargetGroupGuide) {
       const items = selectedTargetGroupGuide.items.length > 0
-        ? selectedTargetGroupGuide.items
+        ? [...selectedTargetGroupGuide.items]
         : [{ id: `${selectedTargetGroupGuide.id}-empty`, name: '종목 없음', targetValue: selectedTargetGroupGuide.targetValue, percent: 100 }];
-      const itemTotalValue = items.reduce((sum, item) => sum + (Number(item.targetValue) || 0), 0);
+      const itemTotalPercent = items.reduce((sum, item) => sum + (Number(item.percent) || 0), 0);
+      if (itemTotalPercent < 100) items.push({
+        id: `${selectedTargetGroupGuide.id}-unallocated`, name: '아직 배분하지 않음',
+        targetValue: selectedTargetGroupGuide.targetValue * (100 - itemTotalPercent) / 100,
+        percent: 100 - itemTotalPercent,
+      });
 
       return items.map((item, index) => {
-        const percent = itemTotalValue > 0 ? ((Number(item.targetValue) || 0) / itemTotalValue) * 100 : 0;
+        const percent = Number(item.percent) || 0;
         const startPercent = cumulativePercent;
         cumulativePercent += percent;
 
@@ -330,19 +241,9 @@ export const useTargetPortfolio = ({
    * 그대로 두고 합만 100%로 비례 배분한다. 아직 아무것도 안 넣었으면(합계 0)
    * 똑같이 나눈다.
    */
-  const normalizePercentsToHundred = (entries, getPercent) => {
-    if (entries.length === 0) return [];
-    const total = entries.reduce((sum, entry) => sum + (Number(getPercent(entry)) || 0), 0);
-    if (!(total > 0)) {
-      const equalShare = Math.round((100 / entries.length) * 10) / 10;
-      return entries.map(() => equalShare);
-    }
-    return entries.map((entry) => Math.round(((Number(getPercent(entry)) || 0) / total) * 1000) / 10);
-  };
-
   const normalizeCategoryPercents = () => {
     setTargetPortfolio((prev) => {
-      const scaled = normalizePercentsToHundred(prev.categories, (category) => category.percent);
+      const scaled = normalizeTargetPercents(prev.categories);
       return {
         ...prev,
         categories: prev.categories.map((category, index) => ({ ...category, percent: scaled[index] })),
@@ -353,7 +254,7 @@ export const useTargetPortfolio = ({
   const normalizeGroupPercents = (categoryId) => {
     setTargetPortfolio((prev) => {
       const groups = getTargetGroups(prev, categoryId);
-      const scaled = normalizePercentsToHundred(groups, (group) => group.percent);
+      const scaled = normalizeTargetPercents(groups);
       return {
         ...prev,
         groups: {
@@ -370,7 +271,7 @@ export const useTargetPortfolio = ({
       const targetGroup = groups.find((group) => group.id === groupId);
       if (!targetGroup) return prev;
       const items = targetGroup.items || [];
-      const scaled = normalizePercentsToHundred(items, (item) => item.percent);
+      const scaled = normalizeTargetPercents(items);
       return {
         ...prev,
         groups: {
@@ -418,16 +319,19 @@ export const useTargetPortfolio = ({
   };
 
   const addTargetGroup = (categoryId) => {
-    setTargetPortfolio(prev => ({
-      ...prev,
-      groups: {
-        ...prev.groups,
-        [categoryId]: [
-          ...getTargetGroups(prev, categoryId),
-          { id: `${Date.now()}-${Math.random()}`, name: '새 폴더', percent: 0, items: [] },
-        ],
-      },
-    }));
+    setTargetPortfolio(prev => {
+      const groups = getTargetGroups(prev, categoryId);
+      return {
+        ...prev,
+        groups: {
+          ...prev.groups,
+          [categoryId]: [
+            ...groups,
+            { id: `${Date.now()}-${Math.random()}`, name: '새 묶음', allocationMode: 'percent', percent: groups.length ? 0 : 100, items: [] },
+          ],
+        },
+      };
+    });
   };
 
   const updateTargetGroup = (categoryId, groupId, patch) => {
@@ -448,6 +352,8 @@ export const useTargetPortfolio = ({
     }
     setTargetPortfolio(prev => ({
       ...prev,
+      // 삭제한 마지막 묶음 대신 오래된 flat items가 다시 나타나지 않게 한다.
+      items: { ...prev.items, [categoryId]: [] },
       groups: {
         ...prev.groups,
         [categoryId]: getTargetGroups(prev, categoryId).filter(group => group.id !== groupId),
@@ -455,23 +361,42 @@ export const useTargetPortfolio = ({
     }));
   };
 
-  const addTargetItem = (categoryId, groupId) => {
-    setTargetPortfolio(prev => ({
-      ...prev,
-      groups: {
-        ...prev.groups,
-        [categoryId]: getTargetGroups(prev, categoryId).map(group => (
-          group.id === groupId
-            ? {
-              ...group,
-              items: [
-                ...(group.items || []),
-                { id: `${Date.now()}-${Math.random()}`, name: '', ticker: '', percent: 0, price: '', nativePrice: '', currency: getTargetItemCurrency(categoryId) },
-              ],
-            }
-            : group
-        )),
-      },
+  const addTargetItem = (categoryId, groupId = null, asset = null) => {
+    setTargetPortfolio(prev => {
+      const groups = getTargetGroups(prev, categoryId);
+      const targetGroupId = groupId || groups.find((group) => group.isDefault)?.id || groups[0]?.id || `${categoryId}-default-group`;
+      if (!groups.length) groups.push({
+        id: targetGroupId, name: '직접 설정', percent: 100, isDefault: true, allocationMode: 'percent', items: [],
+      });
+      return {
+        ...prev,
+        setupStarted: true,
+        groups: {
+          ...prev.groups,
+          [categoryId]: groups.map(group => group.id === targetGroupId ? {
+            ...group,
+            items: [...group.items, {
+              id: `${Date.now()}-${Math.random()}`, name: asset?.name || '', ticker: asset?.ticker || '', percent: 0,
+              price: '', nativePrice: asset?.nativeCurrentPrice || '',
+              currency: getTargetItemCurrency(categoryId, asset?.ticker, asset?.currency),
+            }],
+          } : group),
+        },
+      };
+    });
+  };
+
+  const startTargetFromHoldings = () => {
+    setTargetPortfolio((prev) => buildTargetPortfolioFromHoldings(prev, enhancedAssets));
+    setSelectedTargetCategory(null);
+    setSelectedTargetGroup(null);
+  };
+
+  const startTargetManually = () => {
+    setTargetPortfolio((prev) => ({
+      ...prev, setupStarted: true,
+      budgetMode: prev.budgetMode || (prev.budget ? 'custom' : 'current'),
+      categories: prev.categories?.length ? prev.categories : [{ id: '국내주식', percent: 0 }, { id: '해외주식', percent: 0 }],
     }));
   };
 
@@ -485,7 +410,14 @@ export const useTargetPortfolio = ({
             ? {
               ...group,
               items: (group.items || []).map(item => (
-                item.id === itemId ? { ...item, ...patch } : item
+                item.id === itemId ? {
+                  ...item,
+                  ...(patch.ticker !== undefined && patch.ticker !== item.ticker ? {
+                    price: '', nativePrice: '', priceSource: '', priceUpdatedAt: '',
+                    currency: getSearchStockCurrency(categoryId, patch.ticker),
+                  } : {}),
+                  ...patch,
+                } : item
               )),
             }
             : group
@@ -497,13 +429,14 @@ export const useTargetPortfolio = ({
   const removeTargetItem = (categoryId, groupId, itemId) => {
     setTargetPortfolio(prev => ({
       ...prev,
+      items: { ...prev.items, [categoryId]: [] },
       groups: {
         ...prev.groups,
         [categoryId]: getTargetGroups(prev, categoryId).map(group => (
           group.id === groupId
             ? { ...group, items: (group.items || []).filter(item => item.id !== itemId) }
             : group
-        )),
+        )).filter(group => !group.isDefault || group.items.length > 0),
       },
     }));
   };
@@ -538,5 +471,7 @@ export const useTargetPortfolio = ({
     removeTargetItem,
     updateTargetItem,
     normalizeItemPercents,
+    startTargetFromHoldings,
+    startTargetManually,
   };
 };

@@ -102,9 +102,60 @@ try {
   await page.getByRole('heading', { name: '점검용 포트폴리오', exact: true }).waitFor();
   await page.getByRole('status').filter({ hasText: /^저장 완료$/ }).waitFor();
 
+  // A first-time investor can import their holdings, set a total budget, and
+  // see literal allocation percentages. An unfinished 30% must stay unfinished
+  // until they explicitly distribute the remaining amount.
+  await page.getByRole('button', { name: '목표', exact: true }).click();
+  const allocation = page.getByRole('region', { name: '자산 배분 계획', exact: true });
+  await allocation.getByRole('heading', { name: '목표 포트폴리오 설정', exact: true }).waitFor();
+  assert.equal(await page.getByRole('region', { name: '연도별 수익률', exact: true }).count(), 0);
+  await mkdir('test-results', { recursive: true });
+  await page.screenshot({ path: 'test-results/desktop-target-start.png', fullPage: true });
+  await allocation.getByRole('button', { name: '현재 보유 구성에서 시작', exact: true }).click();
+  await allocation.getByRole('button', { name: '총금액 직접 입력', exact: true }).click();
+  await allocation.getByLabel('목표를 계산할 총금액', { exact: true }).fill('2000000');
+  await page.screenshot({ path: 'test-results/desktop-target-budget.png', fullPage: true });
+  await allocation.getByRole('button', { name: '다음: 자산 비중', exact: true }).click();
+  assert.equal(await allocation.getByLabel('해외주식 전체 목표 비중', { exact: true }).inputValue(), '100');
+  await allocation.getByRole('button', { name: '다음: 종목 배분', exact: true }).click();
+  const itemPercent = allocation.getByLabel('테스트 주식 목표 비중', { exact: true });
+  assert.equal(await itemPercent.inputValue(), '100');
+  await itemPercent.fill('30');
+  assert.equal(await allocation.getByRole('button', { name: '계획 확인', exact: true }).isDisabled(), true);
+  await page.waitForFunction(() => {
+    const target = JSON.parse(localStorage.getItem('review-server')).targetPortfolio;
+    return Object.values(target?.groups || {}).flat().some(group => group.items?.some(item => item.ticker === 'TEST' && Number(item.percent) === 30));
+  });
+  await allocation.getByRole('button', { name: '입력한 비율대로 100% 맞추기', exact: true }).click();
+  assert.equal(await itemPercent.inputValue(), '100');
+  await allocation.getByRole('button', { name: '계획 확인', exact: true }).click();
+  await allocation.getByRole('heading', { name: '설정한 목표', exact: true }).waitFor();
+  await allocation.getByText('현재 총자산 기준 100%', { exact: true }).waitFor();
+  await allocation.getByText('₩2,000,000', { exact: true }).first().waitFor();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('review-server')).targetPortfolio?.budget === '2000000');
+  const savedTarget = await page.evaluate(() => JSON.parse(localStorage.getItem('review-server')).targetPortfolio);
+  assert.equal(savedTarget.categories.length, 1);
+  assert.equal(savedTarget.categories[0].id, '해외주식');
+  assert.equal(Number(savedTarget.categories[0].percent), 100);
+  assert.ok(JSON.stringify(savedTarget).includes('TEST'));
+  await page.reload();
+  await page.getByRole('button', { name: '목표', exact: true }).click();
+  await allocation.getByRole('heading', { name: '설정한 목표', exact: true }).waitFor();
+  await allocation.getByText('현재 총자산 기준 100%', { exact: true }).waitFor();
+  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('review-server')).targetPortfolio), savedTarget);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await mkdir('test-results', { recursive: true });
+  await page.screenshot({ path: 'test-results/desktop-target-allocation.png', fullPage: true });
+  await allocation.getByRole('button', { name: '구성 차트 보기', exact: true }).click();
+  await allocation.getByRole('button', { name: /해외주식 100\.0%/ }).first().click();
+  await allocation.getByRole('heading', { name: '해외주식 목표 구성', exact: true }).waitFor();
+  await allocation.getByRole('button', { name: '전체 목표', exact: true }).click();
+  await allocation.getByRole('button', { name: '구성 차트 접기', exact: true }).click();
+
   // A dividend-only year uses the actual invested cost in both modes. The same
   // paid receipts appear in income and targets, while October is still future.
   await page.getByRole('button', { name: '목표', exact: true }).click();
+  await page.getByRole('button', { name: '수익률 목표', exact: true }).click();
   const annualReturn = page.getByRole('region', { name: '연도별 수익률', exact: true });
   const goal = page.getByRole('region', { name: '목표 수익률', exact: true });
   const dividendSwitch = annualReturn.getByRole('switch', { name: '수익률에 확정 배당 포함' });
@@ -123,10 +174,12 @@ try {
   await paidIncome.getByRole('button', { name: '배당 이전 연도' }).click();
   await page.getByRole('region', { name: '2025년 수령 배당 합계', exact: true }).getByText('₩0', { exact: true }).waitFor();
   await page.getByRole('button', { name: '목표', exact: true }).click();
+  await page.getByRole('button', { name: '수익률 목표', exact: true }).click();
   await annualReturn.getByText('2025년 수령 배당 (확정)', { exact: true }).waitFor();
   await annualReturn.getByRole('button', { name: '다음 연도', exact: true }).click();
   await page.reload();
   await page.getByRole('button', { name: '목표', exact: true }).click();
+  await page.getByRole('button', { name: '수익률 목표', exact: true }).click();
   assert.equal(await dividendSwitch.isChecked(), true);
   await goal.getByText('+9.05%', { exact: true }).waitFor();
   await dividendSwitch.uncheck();
@@ -208,6 +261,33 @@ try {
   await mkdir('test-results', { recursive: true });
   await page.screenshot({ path: 'test-results/mobile-portfolio.png', fullPage: true });
   await page.getByRole('button', { name: '목표', exact: true }).click();
+  await allocation.getByRole('heading', { name: '설정한 목표', exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await page.screenshot({ path: 'test-results/mobile-target-allocation.png', fullPage: true });
+  await allocation.getByRole('button', { name: '목표 수정', exact: true }).click();
+  await allocation.getByRole('button', { name: '다음: 자산 비중', exact: true }).click();
+  await allocation.getByRole('button', { name: '다음: 종목 배분', exact: true }).click();
+  await page.screenshot({ path: 'test-results/mobile-target-editor.png', fullPage: true });
+  await allocation.getByRole('button', { name: '테스트 주식 목표 삭제', exact: true }).click();
+  assert.equal(await allocation.getByLabel('테스트 주식 목표 비중', { exact: true }).count(), 0);
+  assert.equal(await allocation.getByRole('button', { name: '계획 확인', exact: true }).isEnabled(), true);
+  await allocation.getByRole('button', { name: '되돌리기', exact: true }).click();
+  assert.equal(await allocation.getByLabel('테스트 주식 목표 비중', { exact: true }).inputValue(), '100');
+  await allocation.getByRole('button', { name: '종목 추가', exact: true }).click();
+  const targetPicker = page.getByRole('dialog', { name: '목표 종목 추가', exact: true });
+  await targetPicker.waitFor();
+  assert.equal(await targetPicker.getAttribute('aria-modal'), 'true');
+  await targetPicker.getByText('보유 종목이 모두 목표에 추가되어 있어요.', { exact: true }).waitFor();
+  await targetPicker.getByRole('button', { name: '찾는 종목이 없나요? 직접 입력하기', exact: true }).click();
+  await targetPicker.getByRole('textbox', { name: '종목명', exact: true }).fill('중복 입력 점검');
+  await targetPicker.getByRole('textbox', { name: '종목 코드 (티커)', exact: true }).fill('TEST');
+  await targetPicker.getByRole('button', { name: '이 종목 추가', exact: true }).click();
+  await targetPicker.getByRole('alert').getByText('이 종목은 이미 목표에 있어요. 기존 종목의 비중을 조정해 주세요.', { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
+  await page.screenshot({ path: 'test-results/mobile-target-picker.png', fullPage: true });
+  await page.keyboard.press('Escape');
+  await targetPicker.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: '수익률 목표', exact: true }).click();
   await dividendSwitch.check();
   await goal.getByText('+8.40%', { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), true);
@@ -225,7 +305,7 @@ try {
   assert.equal(await page.getByText('테스트 주식', { exact: true }).count(), 0);
   assert.equal(await page.evaluate(() => Boolean(localStorage.getItem('portfolio_sync_journal_v1::fixture-user'))), true);
   assert.deepEqual(errors, []);
-  console.log('Browser checks passed: shared paid dividend totals, return toggle/goal/year selection/persistence, October calendar/chart, desktop/mobile dialogs, FX date edit, offline sync, JPY, archival data, account isolation.');
+  console.log('Browser checks passed: target onboarding/holdings import/literal percentages/budget/persistence/mobile picker, shared paid dividend totals, return toggle/goal/year selection/persistence, October calendar/chart, desktop/mobile dialogs, FX date edit, offline sync, JPY, archival data, account isolation.');
 } finally {
   await context.close();
   await browser.close();

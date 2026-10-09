@@ -27,6 +27,7 @@ import { formatKoreanDate, getDateTimestampSeconds } from './utils/dates';
 import { getAssetInputCurrency, getTargetItemCurrency, normalizeInputTicker, resolveManualTradeAsset } from './utils/currencies';
 import {
   DEFAULT_TARGET_PORTFOLIO,
+  areTargetStocksSame,
   getTargetGroups,
   getTargetItemSnapshotKey,
 } from './utils/targetPortfolio';
@@ -1998,6 +1999,7 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
     addTargetCategory, removeTargetCategory, updateTargetCategoryPercent, normalizeCategoryPercents,
     addTargetGroup, removeTargetGroup, updateTargetGroup, normalizeGroupPercents,
     addTargetItem, removeTargetItem, updateTargetItem, normalizeItemPercents,
+    startTargetFromHoldings, startTargetManually,
   } = useTargetPortfolio({
     targetPortfolio,
     setTargetPortfolio,
@@ -2065,10 +2067,7 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
 
         const matchedAsset = enhancedAssets.find(asset => (
           asset.category === target.categoryId
-          && (
-            asset.ticker?.toUpperCase() === target.ticker
-            || (target.name && asset.name === target.name)
-          )
+          && areTargetStocksSame(asset, target)
         ));
 
         if (matchedAsset) {
@@ -3245,6 +3244,9 @@ const addBuyFeePreview = useMemo(() => calculateBuyFee(
 
         {activeTab === 'target' && (
           <TargetTab
+            enhancedAssets={enhancedAssets}
+            startTargetFromHoldings={startTargetFromHoldings}
+            startTargetManually={startTargetManually}
             targetPortfolio={targetPortfolio}
             setTargetPortfolio={setTargetPortfolio}
             targetBudgetKRW={targetBudgetKRW}
