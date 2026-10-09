@@ -28,7 +28,7 @@ const ledger = [{
 const now = new Date('2026-07-28T00:00:00.000Z').getTime();
 
 test('scopes source migrations without refreshing unrelated USD assets', () => {
-  assert.equal(getDividendRefreshVersion({ ticker: 'JEPI' }), 9);
+  assert.equal(getDividendRefreshVersion({ ticker: 'JEPI' }), 10);
   assert.equal(getDividendRefreshVersion({ ticker: 'SPY' }), DIVIDEND_REFRESH_VERSION);
   assert.equal(getDividendRefreshVersion({ ticker: 'QCOM' }), 9);
   // v12에서 국내 배당 자격일 버그를 고치면서 국내 3종목은 강제 재계산 대상이 됐다.

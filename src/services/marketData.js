@@ -1081,6 +1081,57 @@ const normalizePublicDividendDate = (value = '') => {
     : '';
 };
 
+const normalizeDividendTableHeader = (value = '') => (
+  String(value || '').toLowerCase().replace(/[^a-z]/g, '')
+);
+
+const getStockAnalysisColumnIndexes = (cells = []) => {
+  const normalizedHeaders = cells.map(normalizeDividendTableHeader);
+  const exDate = normalizedHeaders.findIndex((header) => (
+    header.includes('exdividenddate') || header.includes('exdivdate')
+  ));
+  const amount = normalizedHeaders.findIndex((header) => (
+    header === 'amount'
+    || header.includes('cashamount')
+    || header.includes('dividendamount')
+  ));
+  if (exDate < 0 || amount < 0) return null;
+
+  return {
+    exDate,
+    amount,
+    recordDate: normalizedHeaders.findIndex((header) => header.includes('recorddate')),
+    paymentDate: normalizedHeaders.findIndex((header) => (
+      header.includes('paydate') || header.includes('paymentdate')
+    )),
+  };
+};
+
+const addStockAnalysisDividend = (dividends, cells, indexes) => {
+  const exDate = normalizePublicDividendDate(cells[indexes.exDate]);
+  const amount = Number(String(cells[indexes.amount] || '').replace(/[^0-9.-]/g, ''));
+  if (!exDate || !Number.isFinite(amount) || amount <= 0) return;
+
+  const timestamp = Math.floor(new Date(`${exDate}T00:00:00Z`).getTime() / 1000);
+  dividends[timestamp] = {
+    date: timestamp,
+    amount,
+    recordDate: normalizePublicDividendDate(cells[indexes.recordDate]),
+    paymentDate: normalizePublicDividendDate(cells[indexes.paymentDate]),
+    source: 'stockanalysis',
+  };
+};
+
+const readHtmlTableCell = (value = '') => String(value || '')
+  .replace(/<!--[\s\S]*?-->/g, '')
+  .replace(/<[^>]*>/g, ' ')
+  .replace(/&nbsp;|&#160;/gi, ' ')
+  .replace(/&amp;/gi, '&')
+  .replace(/&ndash;|&#8211;/gi, '–')
+  .replace(/&mdash;|&#8212;/gi, '—')
+  .replace(/\s+/g, ' ')
+  .trim();
+
 export const parseStockAnalysisDividends = (text = '') => {
   const dividends = {};
   let columnIndexes = null;
@@ -1090,20 +1141,9 @@ export const parseStockAnalysisDividends = (text = '') => {
     const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
     if (cells.length < 4) return;
 
-    const normalizedHeaders = cells.map((cell) => cell.toLowerCase().replace(/[^a-z]/g, ''));
-    const exDateIndex = normalizedHeaders.findIndex((header) => header.includes('exdividenddate'));
-    const amountIndex = normalizedHeaders.findIndex((header) => (
-      header.includes('cashamount') || header.includes('dividendamount')
-    ));
-    if (exDateIndex >= 0 && amountIndex >= 0) {
-      columnIndexes = {
-        exDate: exDateIndex,
-        amount: amountIndex,
-        recordDate: normalizedHeaders.findIndex((header) => header.includes('recorddate')),
-        paymentDate: normalizedHeaders.findIndex((header) => (
-          header.includes('paydate') || header.includes('paymentdate')
-        )),
-      };
+    const headerIndexes = getStockAnalysisColumnIndexes(cells);
+    if (headerIndexes) {
+      columnIndexes = headerIndexes;
       return;
     }
 
@@ -1116,18 +1156,25 @@ export const parseStockAnalysisDividends = (text = '') => {
       paymentDate: 3,
     };
 
-    const exDate = normalizePublicDividendDate(cells[indexes.exDate]);
-    const amount = Number(String(cells[indexes.amount] || '').replace(/[^0-9.-]/g, ''));
-    if (!exDate || !Number.isFinite(amount) || amount <= 0) return;
+    addStockAnalysisDividend(dividends, cells, indexes);
+  });
 
-    const timestamp = Math.floor(new Date(`${exDate}T00:00:00Z`).getTime() / 1000);
-    dividends[timestamp] = {
-      date: timestamp,
-      amount,
-      recordDate: normalizePublicDividendDate(cells[indexes.recordDate]),
-      paymentDate: normalizePublicDividendDate(cells[indexes.paymentDate]),
-      source: 'stockanalysis',
-    };
+  // StockAnalysis can answer the direct browser request with rendered HTML.
+  // Previously only the Jina markdown table was understood, so a successful
+  // direct response silently produced zero rows and prevented the proxy
+  // fallback from ever being tried.
+  String(text || '').match(/<table\b[\s\S]*?<\/table>/gi)?.forEach((table) => {
+    const headerCells = [...table.matchAll(/<th\b[^>]*>([\s\S]*?)<\/th>/gi)]
+      .map((match) => readHtmlTableCell(match[1]));
+    const indexes = getStockAnalysisColumnIndexes(headerCells);
+    if (!indexes) return;
+
+    const body = table.match(/<tbody\b[^>]*>([\s\S]*?)<\/tbody>/i)?.[1] || table;
+    [...body.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)].forEach((rowMatch) => {
+      const cells = [...rowMatch[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)]
+        .map((match) => readHtmlTableCell(match[1]));
+      if (cells.length > 0) addStockAnalysisDividend(dividends, cells, indexes);
+    });
   });
 
   return dividends;

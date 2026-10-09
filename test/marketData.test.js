@@ -190,6 +190,41 @@ test('keeps ex, record, and payment dates from StockAnalysis dividend rows', () 
   assert.equal(row.paymentDate, '2026-08-03');
 });
 
+test('parses the current StockAnalysis HTML dividend table', () => {
+  const dividends = parseStockAnalysisDividends(`
+    <table>
+      <thead><tr>
+        <th>Ex-Div<span>idend</span> Date</th>
+        <th><span>Cash</span> Amount</th>
+        <th>Record Date</th>
+        <th>Pay Date</th>
+      </tr></thead>
+      <tbody><tr>
+        <td>Oct 1, 2026</td><td>$0.34134</td><td>Oct 1, 2026</td><td>Oct 5, 2026</td>
+      </tr></tbody>
+    </table>
+  `);
+  const row = Object.values(dividends)[0];
+
+  assert.equal(Object.keys(dividends).length, 1);
+  assert.equal(row.amount, 0.34134);
+  assert.equal(row.recordDate, '2026-10-01');
+  assert.equal(row.paymentDate, '2026-10-05');
+});
+
+test('accepts the shortened StockAnalysis markdown headers', () => {
+  const dividends = parseStockAnalysisDividends(`
+| Ex-Div Date | Amount | Record Date | Pay Date |
+| --- | --- | --- | --- |
+| Oct 1, 2026 | $0.34134 | Oct 1, 2026 | Oct 5, 2026 |
+  `);
+  const row = Object.values(dividends)[0];
+
+  assert.equal(Object.keys(dividends).length, 1);
+  assert.equal(row.amount, 0.34134);
+  assert.equal(row.paymentDate, '2026-10-05');
+});
+
 test('finds PG pay date by header instead of mistaking declaration date for payment', () => {
   const dividends = parseStockAnalysisDividends(`
 | Ex-Dividend Date | Cash Amount | Declaration Date | Record Date | Pay Date |

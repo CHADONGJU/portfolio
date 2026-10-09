@@ -16,7 +16,9 @@ const DIVIDEND_SOURCE_REFRESH_VERSION_BY_TICKER = new Map([
   ['477730', 12],
   // Force one clean rebuild for historical sold-position and monthly histories.
   ['QCOM', 9],
-  ['JEPI', 9],
+  // v10: StockAnalysis began serving a rendered HTML dividend table directly.
+  // Rebuild JEPI once so the October payment is added even when the old cache is fresh.
+  ['JEPI', 10],
   // Visa is the only USD position affected by the Korea-date eligibility
   // boundary migration. Do not rewrite every USD asset for a KRW source fix.
   ['V', 9],
