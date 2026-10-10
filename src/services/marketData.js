@@ -1189,81 +1189,79 @@ export const hasStockAnalysisDividendRows = (text = '') => (
   && Object.keys(parseStockAnalysisDividends(text)).length > 0
 );
 
-const getDividendHistoryOrgColumnIndexes = (cells = []) => {
-  const normalizedHeaders = cells.map(normalizeDividendTableHeader);
-  const exDate = normalizedHeaders.findIndex((header) => header.includes('exdividenddate'));
-  const paymentDate = normalizedHeaders.findIndex((header) => (
-    header.includes('payoutdate') || header.includes('paymentdate') || header.includes('paydate')
-  ));
-  const amount = normalizedHeaders.findIndex((header) => (
-    header.includes('cashamount') || header === 'amount'
-  ));
-  if (exDate < 0 || paymentDate < 0 || amount < 0) return null;
-
-  return {
-    exDate,
-    paymentDate,
-    amount,
-    status: normalizedHeaders.findIndex((header) => header.includes('status')),
-  };
+const readMarkdownTableCells = (line = '') => {
+  const source = String(line || '').trim();
+  if (!source.includes('|')) return [];
+  const cells = source.split('|').map((cell) => cell.trim());
+  if (cells[0] === '') cells.shift();
+  if (cells.at(-1) === '') cells.pop();
+  return cells;
 };
 
-const addDividendHistoryOrgDividend = (dividends, cells, indexes) => {
-  const status = indexes.status >= 0 ? String(cells[indexes.status] || '') : '';
-  if (/unconfirmed|estimated/i.test(status)) return;
+export const parseDividendVisionAmounts = (text = '') => {
+  const amounts = {};
+  let inPaymentTable = false;
 
-  const exDate = normalizePublicDividendDate(cells[indexes.exDate]);
-  const paymentDate = normalizePublicDividendDate(cells[indexes.paymentDate]);
-  const amount = Number(String(cells[indexes.amount] || '').replace(/[^0-9.-]/g, ''));
-  if (!exDate || !paymentDate || !Number.isFinite(amount) || amount <= 0) return;
-
-  const timestamp = Math.floor(new Date(`${exDate}T00:00:00Z`).getTime() / 1000);
-  dividends[timestamp] = {
-    date: timestamp,
-    amount,
-    paymentDate,
-    source: 'dividendhistory.org',
-  };
-};
-
-export const parseDividendHistoryOrgDividends = (text = '') => {
-  const source = unwrapJinaResponseText(text);
-  const dividends = {};
-  let columnIndexes = null;
-
-  source.split(/\r?\n/).forEach((line) => {
-    if (!line.trim().startsWith('|')) return;
-    const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
-    if (cells.length < 3) return;
-
-    const headerIndexes = getDividendHistoryOrgColumnIndexes(cells);
-    if (headerIndexes) {
-      columnIndexes = headerIndexes;
+  unwrapJinaResponseText(text).split(/\r?\n/).forEach((line) => {
+    const cells = readMarkdownTableCells(line);
+    const headers = cells.map(normalizeDividendTableHeader);
+    if (headers[0] === 'date' && headers[1]?.includes('amountshare')) {
+      inPaymentTable = true;
       return;
     }
-    if (!columnIndexes || cells.every((cell) => /^:?-{3,}:?$/.test(cell))) return;
-    addDividendHistoryOrgDividend(dividends, cells, columnIndexes);
+    if (!inPaymentTable || cells.length < 2 || cells.every((cell) => /^:?-{3,}:?$/.test(cell))) return;
+
+    const exDate = normalizePublicDividendDate(cells[0]);
+    const amount = Number(String(cells[1] || '').replace(/[^0-9.-]/g, ''));
+    if (exDate && Number.isFinite(amount) && amount > 0) amounts[exDate] = amount;
   });
 
-  for (const tableMatch of source.matchAll(/<table\b[^>]*>[\s\S]*?<\/table>/gi)) {
-    let htmlIndexes = null;
-    for (const rowMatch of tableMatch[0].matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
-      const cells = [...rowMatch[1].matchAll(/<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi)]
-        .map((match) => readHtmlTableCell(match[1]));
-      const headerIndexes = getDividendHistoryOrgColumnIndexes(cells);
-      if (headerIndexes) {
-        htmlIndexes = headerIndexes;
-        continue;
-      }
-      if (htmlIndexes) addDividendHistoryOrgDividend(dividends, cells, htmlIndexes);
-    }
-  }
+  return amounts;
+};
 
+export const parseSlickchartsPaymentDates = (text = '') => {
+  const paymentDates = {};
+  let inPaymentTable = false;
+
+  unwrapJinaResponseText(text).split(/\r?\n/).forEach((line) => {
+    const cells = readMarkdownTableCells(line);
+    const headers = cells.map(normalizeDividendTableHeader);
+    if (headers[0] === 'dividend' && headers[1]?.includes('exdivdate') && headers[2]?.includes('paydate')) {
+      inPaymentTable = true;
+      return;
+    }
+    if (!inPaymentTable || cells.length < 3 || cells.every((cell) => /^:?-{3,}:?$/.test(cell))) return;
+
+    const exDate = normalizePublicDividendDate(cells[1]);
+    const paymentDate = normalizePublicDividendDate(cells[2]);
+    if (exDate && paymentDate) paymentDates[exDate] = paymentDate;
+  });
+
+  return paymentDates;
+};
+
+export const combinePublicDividendHistory = (amounts = {}, paymentDates = {}) => {
+  const dividends = {};
+  Object.entries(amounts).forEach(([exDate, amount]) => {
+    const paymentDate = paymentDates[exDate];
+    if (!paymentDate) return;
+    const timestamp = Math.floor(new Date(`${exDate}T00:00:00Z`).getTime() / 1000);
+    dividends[timestamp] = {
+      date: timestamp,
+      amount,
+      paymentDate,
+      source: 'dividendvision+slickcharts',
+    };
+  });
   return dividends;
 };
 
-export const hasDividendHistoryOrgRows = (text = '') => (
-  Object.keys(parseDividendHistoryOrgDividends(text)).length > 0
+const hasDividendVisionRows = (text = '') => (
+  Object.keys(parseDividendVisionAmounts(text)).length > 0
+);
+
+const hasSlickchartsPaymentRows = (text = '') => (
+  Object.keys(parseSlickchartsPaymentDates(text)).length > 0
 );
 
 const normalizeJpmAdrDate = (value = '') => {
@@ -1380,19 +1378,30 @@ const fetchStockAnalysisDividends = async (input, ticker) => {
   return request;
 };
 
-const fetchDividendHistoryOrgDividends = async (input, ticker) => {
+const fetchPublicDividendHistory = async (input, ticker) => {
   const currency = String(input?.originalCurrency || input?.currency || '').toUpperCase();
   const cleanTicker = normalizeTicker(ticker).replace(/\.US$/, '');
   if (currency !== 'USD' || !/^[A-Z0-9]+(?:[./-][A-Z0-9]+)*$/.test(cleanTicker)) return null;
 
-  const requestKey = `dividendhistory.org:${cleanTicker}`;
+  const requestKey = `public-dividend-history:${cleanTicker}`;
   let request = dividendRequests.get(requestKey);
   if (!request) {
     request = (async () => {
-      const sourceUrl = `https://dividendhistory.org/payout/${encodeURIComponent(cleanTicker)}/`;
-      const content = await fetchTextWithSafeProxy(sourceUrl, hasDividendHistoryOrgRows);
-      if (!content) return null;
-      const dividends = parseDividendHistoryOrgDividends(content);
+      const [amountContent, paymentContent] = await Promise.all([
+        fetchTextWithSafeProxy(
+          `https://www.dividendvision.com/dividends/${encodeURIComponent(cleanTicker.toLowerCase())}-dividend-history`,
+          hasDividendVisionRows,
+        ),
+        fetchTextWithSafeProxy(
+          `https://www.slickcharts.com/symbol/${encodeURIComponent(cleanTicker)}/dividend`,
+          hasSlickchartsPaymentRows,
+        ),
+      ]);
+      if (!amountContent || !paymentContent) return null;
+      const dividends = combinePublicDividendHistory(
+        parseDividendVisionAmounts(amountContent),
+        parseSlickchartsPaymentDates(paymentContent),
+      );
       return Object.keys(dividends).length > 0 ? dividends : null;
     })().finally(() => dividendRequests.delete(requestKey));
     dividendRequests.set(requestKey, request);
@@ -1427,7 +1436,7 @@ export const fetchDividends = async (input) => {
 
   const paymentDateDividends = await Promise.any([
     requireDividendRows(fetchStockAnalysisDividends(input, tickers[0] || '')),
-    requireDividendRows(fetchDividendHistoryOrgDividends(input, tickers[0] || '')),
+    requireDividendRows(fetchPublicDividendHistory(input, tickers[0] || '')),
   ]).catch(() => null);
   if (paymentDateDividends) return paymentDateDividends;
   // Yahoo's dividend event feed does not include payment dates. Received USD

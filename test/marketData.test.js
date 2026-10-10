@@ -5,14 +5,15 @@ import {
   getKnownKodexFundId,
   getKnownTigerKsdFund,
   getTradingViewSymbolCandidates,
-  hasDividendHistoryOrgRows,
   hasStockAnalysisDividendRows,
   isFreshQuoteTimestamp,
-  parseDividendHistoryOrgDividends,
+  combinePublicDividendHistory,
+  parseDividendVisionAmounts,
   parseJpmAdrDividends,
   parseKodexDividends,
   parseProxyJson,
   parseStockAnalysisDividends,
+  parseSlickchartsPaymentDates,
   parseTigerDividends,
   pickMarketAwarePrice,
   readNaverQuote,
@@ -271,20 +272,23 @@ test('continues to another proxy when a successful response is only a security-c
   }
 });
 
-test('parses confirmed DividendHistory.org rows and excludes future estimates', () => {
-  const dividends = parseDividendHistoryOrgDividends(`
-# JEPI Dividend History
-| Ex-Dividend Date | Payout Date | Cash Amount | Change / Status |
-| --- | --- | --- | --- |
-| 2026-12-01 | 2026-12-03 | $0.34134 | unconfirmed/estimated |
-| 2026-10-01 | 2026-10-05 | $0.34134 | -8.1% |
+test('combines exact Dividend Vision amounts with Slickcharts payment dates', () => {
+  const amounts = parseDividendVisionAmounts(`
+| Date | Amount / share | Change |
+| --- | --- | --- |
+| Oct 1, 2026 | $0.34134 | -8.1% |
   `);
+  const paymentDates = parseSlickchartsPaymentDates(`
+| Dividend | Ex Div Date | Pay Date |
+| --- | --- | --- |
+| $0.34 | 2026-10-01 | 2026-10-05 |
+  `);
+  const dividends = combinePublicDividendHistory(amounts, paymentDates);
   const rows = Object.values(dividends);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].amount, 0.34134);
   assert.equal(rows[0].paymentDate, '2026-10-05');
-  assert.equal(rows[0].source, 'dividendhistory.org');
-  assert.equal(hasDividendHistoryOrgRows('Performing security verification'), false);
+  assert.equal(rows[0].source, 'dividendvision+slickcharts');
 });
 
 test('finds PG pay date by header instead of mistaking declaration date for payment', () => {
