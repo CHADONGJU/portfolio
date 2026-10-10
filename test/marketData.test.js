@@ -5,6 +5,7 @@ import {
   getKnownKodexFundId,
   getKnownTigerKsdFund,
   getTradingViewSymbolCandidates,
+  hasStockAnalysisDividendRows,
   isFreshQuoteTimestamp,
   parseJpmAdrDividends,
   parseKodexDividends,
@@ -16,6 +17,7 @@ import {
   readTradingViewQuote,
   requiresPaymentDateDividendSource,
   selectValidatedDomesticQuote,
+  fetchTextWithSafeProxy,
 } from '../src/services/marketData.js';
 
 test('uses stable official KODEX product ids for the two India ETFs', () => {
@@ -223,6 +225,48 @@ test('accepts the shortened StockAnalysis markdown headers', () => {
   assert.equal(Object.keys(dividends).length, 1);
   assert.equal(row.amount, 0.34134);
   assert.equal(row.paymentDate, '2026-10-05');
+});
+
+test('rejects a proxy security-check page that has no dividend rows', () => {
+  assert.equal(hasStockAnalysisDividendRows(`
+Title: Just a moment...
+Markdown Content:
+## Performing security verification
+This website verifies that you are not a bot.
+  `), false);
+});
+
+test('continues to another proxy when a successful response is only a security-check page', async () => {
+  const originalFetch = globalThis.fetch;
+  const requestedUrls = [];
+  const securityCheck = 'Dividend History\n## Performing security verification';
+  const dividendHtml = `
+    <h1>JEPI Dividend History</h1>
+    <table>
+      <thead><tr><th>Ex-Div Date</th><th>Amount</th><th>Record Date</th><th>Pay Date</th></tr></thead>
+      <tbody><tr><td>Oct 1, 2026</td><td>$0.34134</td><td>Oct 1, 2026</td><td>Oct 5, 2026</td></tr></tbody>
+    </table>
+  `;
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    return new Response(url.includes('api.allorigins.win/raw') ? dividendHtml : securityCheck, {
+      status: 200,
+      headers: { 'Content-Type': 'text/plain' },
+    });
+  };
+
+  try {
+    const content = await fetchTextWithSafeProxy(
+      'https://stockanalysis.com/etf/jepi/dividend/',
+      hasStockAnalysisDividendRows,
+    );
+    assert.match(content, /\$0\.34134/);
+    assert.ok(requestedUrls.some((url) => url.includes('api.allorigins.win/raw')));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('finds PG pay date by header instead of mistaking declaration date for payment', () => {

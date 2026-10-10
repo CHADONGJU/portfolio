@@ -293,8 +293,12 @@ export const fetchWithSafeProxy = async (url) => (
   fetchViaProxies(buildProxyList(url), parseProxyJson)
 );
 
-export const fetchTextWithSafeProxy = async (url) => (
-  fetchViaProxies(buildProxyList(url, { jinaFirst: true }), parseProxyText)
+export const fetchTextWithSafeProxy = async (url, isUsable = null) => (
+  fetchViaProxies(buildProxyList(url, { jinaFirst: true }), (text) => {
+    const content = parseProxyText(text);
+    if (content === null || content === undefined) return null;
+    return typeof isUsable !== 'function' || isUsable(content) ? content : null;
+  })
 );
 
 export const fetchKrwRateByDate = async (currency, date) => {
@@ -1180,6 +1184,11 @@ export const parseStockAnalysisDividends = (text = '') => {
   return dividends;
 };
 
+export const hasStockAnalysisDividendRows = (text = '') => (
+  /Dividend (Information|History)/i.test(text)
+  && Object.keys(parseStockAnalysisDividends(text)).length > 0
+);
+
 const normalizeJpmAdrDate = (value = '') => {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : '';
@@ -1277,9 +1286,8 @@ const fetchStockAnalysisDividends = async (input, ticker) => {
       for (const pathType of getStockAnalysisPathCandidates(input, cleanTicker)) {
         const sourceUrl = `https://stockanalysis.com/${pathType}/${cleanTicker.toLowerCase()}/dividend/`;
         try {
-          const content = await fetchTextWithSafeProxy(sourceUrl);
+          const content = await fetchTextWithSafeProxy(sourceUrl, hasStockAnalysisDividendRows);
           if (!content) continue;
-          if (!/Dividend (Information|History)/i.test(content)) continue;
           const dividends = parseStockAnalysisDividends(content);
           if (Object.keys(dividends).length > 0) return dividends;
         } catch {
