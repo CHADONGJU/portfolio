@@ -5,8 +5,10 @@ import {
   getKnownKodexFundId,
   getKnownTigerKsdFund,
   getTradingViewSymbolCandidates,
+  hasDividendHistoryOrgRows,
   hasStockAnalysisDividendRows,
   isFreshQuoteTimestamp,
+  parseDividendHistoryOrgDividends,
   parseJpmAdrDividends,
   parseKodexDividends,
   parseProxyJson,
@@ -267,6 +269,22 @@ test('continues to another proxy when a successful response is only a security-c
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('parses confirmed DividendHistory.org rows and excludes future estimates', () => {
+  const dividends = parseDividendHistoryOrgDividends(`
+# JEPI Dividend History
+| Ex-Dividend Date | Payout Date | Cash Amount | Change / Status |
+| --- | --- | --- | --- |
+| 2026-12-01 | 2026-12-03 | $0.34134 | unconfirmed/estimated |
+| 2026-10-01 | 2026-10-05 | $0.34134 | -8.1% |
+  `);
+  const rows = Object.values(dividends);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].amount, 0.34134);
+  assert.equal(rows[0].paymentDate, '2026-10-05');
+  assert.equal(rows[0].source, 'dividendhistory.org');
+  assert.equal(hasDividendHistoryOrgRows('Performing security verification'), false);
 });
 
 test('finds PG pay date by header instead of mistaking declaration date for payment', () => {
